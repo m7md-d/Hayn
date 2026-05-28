@@ -116,4 +116,10 @@ flutter test      # must be green
 
 ## License
 
-Source is open. Final license decision lives in [docs/03-FORMATS.md](docs/03-FORMATS.md) (it's tied to the encoder choices). Until then, treat the code as source-available, attribution-required, no commercial redistribution.
+[GNU General Public License v3.0](LICENSE).
+
+This is a strong copyleft license: you're free to run, study, modify, redistribute and even commercially use Hayn, but any redistributed version — including modified forks — must stay under the same GPL-3.0 license and ship its complete source. Contributors grant patent rights as part of the licence; there is no warranty.
+
+The codec stack is chosen so that the binary itself never carries
+patent-encumbered code (no `libx264` / `libx265` linked in). The
+reasoning is in [docs/03-FORMATS.md](docs/03-FORMATS.md).
