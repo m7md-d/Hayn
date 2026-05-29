@@ -35,27 +35,24 @@ class LibraryScreen extends ConsumerStatefulWidget {
 }
 
 class _LibraryScreenState extends ConsumerState<LibraryScreen> {
-  final _scroll = ScrollController();
-
   @override
   void initState() {
     super.initState();
-    _scroll.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(libraryProvider.notifier).init();
     });
   }
 
-  @override
-  void dispose() {
-    _scroll.dispose();
-    super.dispose();
-  }
-
-  void _onScroll() {
-    if (_scroll.position.extentAfter < 800) {
+  // Pagination is driven by scroll notifications rather than a ScrollController,
+  // so the grid can stay `primary: true` — which is what wires up the iOS
+  // "tap the status bar to scroll back to the top" gesture (lost the moment a
+  // custom controller is attached). The loadMore re-entrancy guard makes the
+  // high-frequency firing here harmless.
+  bool _onScrollNotification(ScrollNotification n) {
+    if (n.metrics.axis == Axis.vertical && n.metrics.extentAfter < 800) {
       ref.read(libraryProvider.notifier).loadMore();
     }
+    return false;
   }
 
   @override
@@ -72,12 +69,16 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
 
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
-      body: CustomScrollView(
-        controller: _scroll,
-        physics: const BouncingScrollPhysics(
-          parent: AlwaysScrollableScrollPhysics(),
-        ),
-        slivers: [
+      body: NotificationListener<ScrollNotification>(
+        onNotification: _onScrollNotification,
+        child: CustomScrollView(
+          // primary: true → attaches to the PrimaryScrollController so iOS
+          // status-bar-tap scrolls back to top. No custom controller allowed.
+          primary: true,
+          physics: const BouncingScrollPhysics(
+            parent: AlwaysScrollableScrollPhysics(),
+          ),
+          slivers: [
           // ── Large-title app bar ─────────────────────────────────────────
           SliverAppBar.large(
             pinned: true,
@@ -255,6 +256,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
           // Padding for bottom nav / safe area
           const SliverPadding(padding: EdgeInsets.only(bottom: 96)),
         ],
+        ),
       ),
     );
   }
@@ -268,8 +270,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     if (state.isLoading && state.assets.isEmpty) {
       return [
         SliverPadding(
-          padding: const EdgeInsetsDirectional.symmetric(
-              horizontal: AppSpacing.md),
+          padding: EdgeInsets.zero,
           sliver: SliverGrid(
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 3,
@@ -326,8 +327,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     final visible = state.displayAssets;
     return [
       SliverPadding(
-        padding:
-            const EdgeInsetsDirectional.symmetric(horizontal: AppSpacing.md),
+        // Edge-to-edge: thumbnails reach the screen edges (no dark side
+        // strips). Gaps between tiles remain.
+        padding: EdgeInsets.zero,
         sliver: SliverGrid(
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 3,

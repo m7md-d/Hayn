@@ -105,6 +105,13 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
     );
   }
 
+  /// Live follow while the filmstrip is scrubbed: snap the main image to the
+  /// centred tile instantly (no animation). `onPageChanged` syncs _currentIndex.
+  void _scrubToIndex(int i) {
+    if (_ctrl == null || i == _currentIndex) return;
+    _ctrl!.jumpToPage(i);
+  }
+
   void _openInfo(BuildContext context) {
     showHaynSheet(
       context: context,
@@ -272,6 +279,7 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
                             assets: _assets,
                             currentIndex: _currentIndex,
                             onSelect: _jumpToIndex,
+                            onScrub: _scrubToIndex,
                           ),
                         _DetailActionBar(
                           isVideo: isVideo,

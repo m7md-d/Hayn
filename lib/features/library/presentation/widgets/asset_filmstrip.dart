@@ -16,12 +16,19 @@ class AssetFilmstrip extends StatefulWidget {
     required this.assets,
     required this.currentIndex,
     required this.onSelect,
+    required this.onScrub,
     super.key,
   });
 
   final List<AssetEntity> assets;
   final int currentIndex;
+
+  /// Tap on a tile → jump (animated) to it.
   final ValueChanged<int> onSelect;
+
+  /// The tile under the centre line changed while dragging/flinging the strip
+  /// → the main image should follow it immediately (no animation).
+  final ValueChanged<int> onScrub;
 
   static const tileSize = 40.0;
   static const tileGap = 4.0;
@@ -33,33 +40,61 @@ class AssetFilmstrip extends StatefulWidget {
 class _AssetFilmstripState extends State<AssetFilmstrip> {
   final _ctrl = ScrollController();
 
-  @override
-  void didUpdateWidget(AssetFilmstrip old) {
-    super.didUpdateWidget(old);
-    if (old.currentIndex != widget.currentIndex) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _centerOnCurrent());
-    }
-  }
+  // The padding centres tile 0 at offset 0, so offset = index * stride lands
+  // tile `index` exactly on the screen centre. No viewport math needed.
+  static const _stride = AssetFilmstrip.tileSize + AssetFilmstrip.tileGap;
+
+  // True only while the user is driving the strip (drag + the fling after it),
+  // so we don't re-centre underneath their finger or echo our own jumps back.
+  bool _userDriving = false;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _centerOnCurrent());
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _centerOnCurrent(animate: false));
   }
 
-  void _centerOnCurrent() {
+  @override
+  void didUpdateWidget(AssetFilmstrip old) {
+    super.didUpdateWidget(old);
+    // Re-centre only when the index changed from elsewhere (a main-image
+    // swipe) — never while the user is scrubbing the strip itself.
+    if (old.currentIndex != widget.currentIndex && !_userDriving) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _centerOnCurrent());
+    }
+  }
+
+  void _centerOnCurrent({bool animate = true}) {
     if (!_ctrl.hasClients) return;
-    // The horizontal SafeArea padding is set to (screen/2 - tile/2), which
-    // means: offset = index * stride lands the centre of the current tile
-    // exactly on the screen centre. No viewport math needed.
-    const itemStride = AssetFilmstrip.tileSize + AssetFilmstrip.tileGap;
-    final target = widget.currentIndex * itemStride;
-    final clamped = target.clamp(0.0, _ctrl.position.maxScrollExtent);
-    _ctrl.animateTo(
-      clamped,
-      duration: AppDuration.normal,
-      curve: AppCurves.standard,
-    );
+    final target =
+        (widget.currentIndex * _stride).clamp(0.0, _ctrl.position.maxScrollExtent);
+    if (animate) {
+      _ctrl.animateTo(target,
+          duration: AppDuration.normal, curve: AppCurves.standard);
+    } else {
+      _ctrl.jumpTo(target);
+    }
+  }
+
+  int _centeredIndex() =>
+      (_ctrl.offset / _stride).round().clamp(0, widget.assets.length - 1);
+
+  bool _onNotification(ScrollNotification n) {
+    if (n is ScrollStartNotification) {
+      // dragDetails != null ⇒ a real finger drag (not our programmatic centre).
+      _userDriving = n.dragDetails != null;
+    } else if (n is ScrollUpdateNotification && _userDriving) {
+      final c = _centeredIndex();
+      if (c != widget.currentIndex) widget.onScrub(c);
+    } else if (n is ScrollEndNotification && _userDriving) {
+      _userDriving = false;
+      final c = _centeredIndex();
+      if (c != widget.currentIndex) widget.onScrub(c);
+      // Settle exactly onto the centred tile.
+      WidgetsBinding.instance.addPostFrameCallback((_) => _centerOnCurrent());
+    }
+    return false;
   }
 
   @override
@@ -72,27 +107,31 @@ class _AssetFilmstripState extends State<AssetFilmstrip> {
   Widget build(BuildContext context) {
     return SizedBox(
       height: AssetFilmstrip.tileSize + 16,
-      child: ListView.separated(
-        controller: _ctrl,
-        scrollDirection: Axis.horizontal,
-        padding: EdgeInsets.symmetric(
-          horizontal:
-              MediaQuery.sizeOf(context).width / 2 - AssetFilmstrip.tileSize / 2,
-          vertical: 8,
+      child: NotificationListener<ScrollNotification>(
+        onNotification: _onNotification,
+        child: ListView.separated(
+          controller: _ctrl,
+          scrollDirection: Axis.horizontal,
+          physics: const BouncingScrollPhysics(),
+          padding: EdgeInsets.symmetric(
+            horizontal: MediaQuery.sizeOf(context).width / 2 -
+                AssetFilmstrip.tileSize / 2,
+            vertical: 8,
+          ),
+          itemCount: widget.assets.length,
+          separatorBuilder: (_, __) =>
+              const SizedBox(width: AssetFilmstrip.tileGap),
+          itemBuilder: (ctx, i) {
+            return _FilmTile(
+              asset: widget.assets[i],
+              active: i == widget.currentIndex,
+              onTap: () {
+                HapticFeedback.selectionClick();
+                widget.onSelect(i);
+              },
+            );
+          },
         ),
-        itemCount: widget.assets.length,
-        separatorBuilder: (_, __) =>
-            const SizedBox(width: AssetFilmstrip.tileGap),
-        itemBuilder: (ctx, i) {
-          return _FilmTile(
-            asset: widget.assets[i],
-            active: i == widget.currentIndex,
-            onTap: () {
-              HapticFeedback.selectionClick();
-              widget.onSelect(i);
-            },
-          );
-        },
       ),
     );
   }
