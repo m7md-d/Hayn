@@ -32,7 +32,21 @@ class AppShell extends ConsumerStatefulWidget {
 class _AppShellState extends ConsumerState<AppShell> {
   void _switchTo(int newIndex) {
     if (newIndex == widget.navigationShell.currentIndex) {
-      // tapping the active tab again — pop to root of branch.
+      // Re-tapping the active tab. For Library, jump its grid to the top — the
+      // reliable stand-in for the iOS status-bar tap (which the new scene-based
+      // iOS template doesn't deliver to the app). Other tabs pop to root.
+      if (newIndex == 0) {
+        final controller = ref.read(libraryScrollControllerProvider);
+        if (controller != null && controller.hasClients) {
+          HapticFeedback.selectionClick();
+          controller.animateTo(
+            0,
+            duration: const Duration(milliseconds: 450),
+            curve: Curves.easeOutCubic,
+          );
+          return;
+        }
+      }
       widget.navigationShell.goBranch(newIndex, initialLocation: true);
       return;
     }

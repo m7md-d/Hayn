@@ -242,6 +242,38 @@ class MediaIndexDatabase extends _$MediaIndexDatabase {
     return q.get();
   }
 
+  /// Every matching row in order — the full "spine" for a virtualized grid.
+  /// Lightweight (no AssetEntity); a few MB for 10k. childCount = its length.
+  Future<List<MediaAsset>> entries({
+    int? typeFilter,
+    int? minSize,
+    int? maxSize,
+    List<String> formatNeedles = const [],
+    AssetSortColumn sortColumn = AssetSortColumn.createdDate,
+    bool descending = true,
+  }) {
+    final q = select(mediaAssets);
+    final pred = _predicate(
+      typeFilter: typeFilter,
+      minSize: minSize,
+      maxSize: maxSize,
+      formatNeedles: formatNeedles,
+    );
+    if (pred != null) q.where((_) => pred);
+
+    final col = sortColumn == AssetSortColumn.sizeBytes
+        ? mediaAssets.sizeBytes
+        : mediaAssets.createdDate;
+    q.orderBy([
+      (_) => OrderingTerm(
+            expression: col,
+            mode: descending ? OrderingMode.desc : OrderingMode.asc,
+          ),
+      (_) => OrderingTerm(expression: mediaAssets.id, mode: OrderingMode.asc),
+    ]);
+    return q.get();
+  }
+
   Expression<bool>? _predicate({
     int? typeFilter,
     int? minSize,

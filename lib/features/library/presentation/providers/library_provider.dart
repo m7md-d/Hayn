@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/services.dart' show MethodCall;
+import 'package:flutter/widgets.dart' show ScrollController;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_manager/photo_manager.dart';
 import '../../../../core/async/concurrency_limiter.dart';
@@ -588,3 +589,10 @@ class LibraryNotifier extends Notifier<LibraryState> {
 
 final libraryProvider =
     NotifierProvider<LibraryNotifier, LibraryState>(LibraryNotifier.new);
+
+/// Exposes the Library grid's scroll controller so the shell can jump it to the
+/// top when the user re-taps the active Library tab. This is the reliable
+/// substitute for the iOS status-bar tap, which the new scene-based iOS
+/// template does not deliver to the app (flutter/flutter#182403).
+final libraryScrollControllerProvider =
+    StateProvider<ScrollController?>((ref) => null);

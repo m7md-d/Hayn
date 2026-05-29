@@ -46,6 +46,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(libraryProvider.notifier).init();
+      // Publish the controller so the shell can scroll-to-top on tab re-tap.
+      ref.read(libraryScrollControllerProvider.notifier).state =
+          _primaryController;
     });
   }
 
