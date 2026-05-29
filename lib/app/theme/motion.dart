@@ -151,8 +151,12 @@ class HaynStagger extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (prefersReducedMotion(context)) return child;
-    final clampedIndex = index.clamp(0, maxIndex);
-    final delay = delayPerItem * clampedIndex;
+    // Only the first screenful staggers in. Past maxIndex we return the child
+    // untouched — no AnimationController per tile — so flinging through a huge
+    // grid never spins up (and tears down) thousands of tickers mid-scroll.
+    // The entrance flourish is for the initial reveal, not for deep scrolling.
+    if (index > maxIndex) return child;
+    final delay = delayPerItem * index;
 
     return _DelayedFadeSlide(
       delay: delay,

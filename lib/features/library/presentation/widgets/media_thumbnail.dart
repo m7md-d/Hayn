@@ -77,21 +77,29 @@ class _MediaThumbnailState extends State<MediaThumbnail> {
   }
 
   Future<void> _loadThumb() async {
-    final data = await widget.asset.thumbnailDataWithSize(
-      const ThumbnailSize.square(360),
+    // Capture the target so a recycled tile (asset changed mid-flight) or one
+    // that scrolled off (unmounted) skips the native decode and never writes
+    // a stale image into state.
+    final asset = widget.asset;
+    final data = await ThumbnailCache.load(
+      asset,
+      cancelled: () => !mounted || widget.asset.id != asset.id,
     );
-    if (data != null) ThumbnailCache.put(widget.asset.id, data);
-    if (mounted) {
-      setState(() {
-        _thumb = data;
-        _loaded = true;
-      });
-    }
+    if (data == null || !mounted || widget.asset.id != asset.id) return;
+    setState(() {
+      _thumb = data;
+      _loaded = true;
+    });
   }
 
   Future<void> _loadSize() async {
-    final size = await AssetSizeCache.load(widget.asset);
-    if (mounted && size != null) setState(() => _sizeBytes = size);
+    final asset = widget.asset;
+    final size = await AssetSizeCache.load(
+      asset,
+      cancelled: () => !mounted || widget.asset.id != asset.id,
+    );
+    if (size == null || !mounted || widget.asset.id != asset.id) return;
+    setState(() => _sizeBytes = size);
   }
 
   String _formatBytes(int bytes) {

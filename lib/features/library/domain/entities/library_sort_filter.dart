@@ -27,6 +27,14 @@ class LibrarySortFilter {
       sizeFilter != LibrarySizeFilter.any ||
       formatFilter != null;
 
+  /// True when the active sort/filter depends on per-asset byte sizes, so the
+  /// caller must warm [AssetSizeCache] for the assets in play before deriving
+  /// the display list.
+  bool get needsSizes =>
+      sort == LibrarySort.largestFirst ||
+      sort == LibrarySort.smallestFirst ||
+      sizeFilter != LibrarySizeFilter.any;
+
   LibrarySortFilter copyWith({
     LibrarySort? sort,
     LibrarySizeFilter? sizeFilter,

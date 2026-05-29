@@ -25,6 +25,7 @@ class LibraryState {
     this.albums = const [],
     this.selectedAlbumId,
     this.assets = const [],
+    this.displayAssets = const [],
     this.selectedIds = const {},
     this.isSelecting = false,
     this.totalCount = 0,
@@ -38,6 +39,13 @@ class LibraryState {
   final List<AssetPathEntity> albums;
   final String? selectedAlbumId;
   final List<AssetEntity> assets;
+
+  /// Sorted + filtered view of [assets], precomputed when the inputs change.
+  /// The grid reads this directly; raw [assets] stays untouched for pagination
+  /// math. Carried by reference across selection toggles, so tapping tiles
+  /// never re-runs the sort/filter.
+  final List<AssetEntity> displayAssets;
+
   final Set<String> selectedIds;
   final bool isSelecting;
   final int totalCount;
@@ -51,21 +59,33 @@ class LibraryState {
     List<AssetPathEntity>? albums,
     Object? selectedAlbumId = _absent,
     List<AssetEntity>? assets,
+    List<AssetEntity>? displayAssets,
     Set<String>? selectedIds,
     bool? isSelecting,
     int? totalCount,
     bool? hasMore,
   }) {
+    final nextAssets = assets ?? this.assets;
+    final nextSort = sortFilter ?? this.sortFilter;
+    // Recompute the derived view only when its inputs change. Selection toggles
+    // pass neither `assets` nor `sortFilter`, so they carry the existing list
+    // by reference — the hot path never re-sorts. An explicit `displayAssets`
+    // forces a refresh (used after warming sizes, where only the cache moved).
+    final nextDisplay = displayAssets ??
+        ((assets != null || sortFilter != null)
+            ? _computeDisplay(nextAssets, nextSort)
+            : this.displayAssets);
     return LibraryState(
       permissionStatus: permissionStatus ?? this.permissionStatus,
       filter: filter ?? this.filter,
-      sortFilter: sortFilter ?? this.sortFilter,
+      sortFilter: nextSort,
       isLoading: isLoading ?? this.isLoading,
       albums: albums ?? this.albums,
       selectedAlbumId: identical(selectedAlbumId, _absent)
           ? this.selectedAlbumId
           : selectedAlbumId as String?,
-      assets: assets ?? this.assets,
+      assets: nextAssets,
+      displayAssets: nextDisplay,
       selectedIds: selectedIds ?? this.selectedIds,
       isSelecting: isSelecting ?? this.isSelecting,
       totalCount: totalCount ?? this.totalCount,
@@ -73,9 +93,12 @@ class LibraryState {
     );
   }
 
-  /// Sorted + filtered view derived from `assets` and the cached sizes/mime.
-  /// Used by the grid; raw `assets` stays untouched for pagination math.
-  List<AssetEntity> get displayAssets {
+  /// Pure sort + filter pipeline. Reads the live [AssetSizeCache] for size
+  /// ordering/filtering, so it must be re-run after sizes are warmed.
+  static List<AssetEntity> _computeDisplay(
+    List<AssetEntity> assets,
+    LibrarySortFilter sortFilter,
+  ) {
     var list = assets;
 
     // ── Sort
@@ -200,6 +223,16 @@ class LibraryNotifier extends Notifier<LibraryState> {
       assets: [...state.assets, ...more],
       hasMore: end < state.totalCount,
     );
+    // Under a size-based sort/filter, the freshly paged-in assets sort as 0
+    // until their sizes are known. Warm just the new page, then re-derive so
+    // ordering stays correct as the user scrolls deeper.
+    if (state.sortFilter.needsSizes && more.isNotEmpty) {
+      await AssetSizeCache.warm(more);
+      state = state.copyWith(
+        displayAssets:
+            LibraryState._computeDisplay(state.assets, state.sortFilter),
+      );
+    }
   }
 
   void enterSelectionMode([String? id]) {
@@ -235,17 +268,17 @@ class LibraryNotifier extends Notifier<LibraryState> {
   }
 
   Future<void> setSortFilter(LibrarySortFilter sortFilter) async {
-    final needsSizes = sortFilter.sort == LibrarySort.largestFirst ||
-        sortFilter.sort == LibrarySort.smallestFirst ||
-        sortFilter.sizeFilter != LibrarySizeFilter.any;
-
     state = state.copyWith(sortFilter: sortFilter, isLoading: true);
     await _loadAlbumsAndAssets();
 
-    if (needsSizes && state.assets.isNotEmpty) {
+    if (sortFilter.needsSizes && state.assets.isNotEmpty) {
       await AssetSizeCache.warm(state.assets);
-      // Trigger a rebuild so the UI re-derives the sorted list.
-      state = state.copyWith();
+      // Sizes moved but assets/sortFilter didn't — force a fresh derive so the
+      // newly-known sizes feed the sort/filter.
+      state = state.copyWith(
+        displayAssets:
+            LibraryState._computeDisplay(state.assets, state.sortFilter),
+      );
     }
   }
 
