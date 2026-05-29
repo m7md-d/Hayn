@@ -364,7 +364,11 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
       return;
     }
     HapticFeedback.selectionClick();
-    context.push('/asset/${asset.id}');
+    // iOS PhotoKit ids look like `UUID/L0/001` — the slashes would be read as
+    // extra path segments and miss the `/asset/:id` route (Android ids are
+    // plain numbers, so this only ever bit iOS). Encode so the id stays a
+    // single segment; go_router decodes it back on the other side.
+    context.push('/asset/${Uri.encodeComponent(asset.id)}');
   }
 
   void _onLongPress(AssetEntity asset) {
