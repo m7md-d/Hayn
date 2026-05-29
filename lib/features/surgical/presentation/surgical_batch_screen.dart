@@ -7,6 +7,7 @@ import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
 import '../../../core/batch/batch_savings_estimator.dart';
 import '../../../core/capabilities/format_capabilities.dart';
+import '../../../data/index/index_providers.dart';
 import '../../../shared/widgets/widgets.dart';
 import '../../library/presentation/providers/library_provider.dart';
 import '../../settings/providers/preferences_providers.dart';
@@ -68,11 +69,18 @@ class _SurgicalBatchScreenState
     final key = Object.hash(_mode, _quality.round(), effective);
     if (key == _lastKey) return;
     _lastKey = key;
-    _future = BatchSavingsEstimator.estimate(
-      assets: _assets,
-      format: effective,
-      quality: _mode == _BatchMode.auto ? 80 : _quality.round(),
-    );
+    final quality = _mode == _BatchMode.auto ? 80 : _quality.round();
+    _future = _estimateFromIndex(effective, quality);
+  }
+
+  Future<BatchSavingsEstimate> _estimateFromIndex(
+      DefaultFormat format, int quality) async {
+    // Facts (size + dimensions) from the index cover every selected id, and
+    // the estimate models output from dimensions × format — no asset.file.
+    final facts =
+        await ref.read(mediaIndexDatabaseProvider).factsFor(widget.assetIds);
+    return BatchSavingsEstimator.estimate(
+        facts: facts, format: format, quality: quality);
   }
 
   Future<void> _confirm() async {

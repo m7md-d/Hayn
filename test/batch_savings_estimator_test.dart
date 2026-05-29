@@ -52,9 +52,9 @@ void main() {
   });
 
   group('BatchSavingsEstimator.estimate', () {
-    test('Empty selection returns a zeroed estimate, not a crash', () async {
-      final r = await BatchSavingsEstimator.estimate(
-        assets: const [],
+    test('Empty selection returns a zeroed estimate, not a crash', () {
+      final r = BatchSavingsEstimator.estimate(
+        facts: const [],
         format: DefaultFormat.avif,
         quality: 80,
       );
@@ -62,7 +62,39 @@ void main() {
       expect(r.totalOriginalBytes, 0);
       expect(r.estimatedNewBytes, 0);
       expect(r.savedPercent, 0);
-      expect(r.isApproximation, false);
+    });
+
+    test('models output from dimensions and reports real savings', () {
+      // A 12 MP photo at 5 MB → AVIF is far denser, so it clearly shrinks.
+      final r = BatchSavingsEstimator.estimate(
+        facts: const [(sizeBytes: 5000000, width: 4000, height: 3000)],
+        format: DefaultFormat.avif,
+        quality: 80,
+      );
+      expect(r.assetCount, 1);
+      expect(r.totalOriginalBytes, 5000000);
+      expect(r.estimatedNewBytes, greaterThan(0));
+      expect(r.estimatedNewBytes, lessThan(5000000));
+      expect(r.savedPercent, greaterThan(0));
+    });
+
+    test('never grows a file: output is capped at the original size', () {
+      final r = BatchSavingsEstimator.estimate(
+        facts: const [(sizeBytes: 1000, width: 4000, height: 3000)],
+        format: DefaultFormat.jpeg,
+        quality: 100,
+      );
+      expect(r.estimatedNewBytes, lessThanOrEqualTo(1000));
+      expect(r.savedPercent, greaterThanOrEqualTo(0));
+    });
+
+    test('AVIF estimates fewer output bytes than JPEG for the same image', () {
+      const facts = [(sizeBytes: 8000000, width: 4000, height: 3000)];
+      final avif = BatchSavingsEstimator.estimate(
+          facts: facts, format: DefaultFormat.avif, quality: 80);
+      final jpeg = BatchSavingsEstimator.estimate(
+          facts: facts, format: DefaultFormat.jpeg, quality: 80);
+      expect(avif.estimatedNewBytes, lessThan(jpeg.estimatedNewBytes));
     });
   });
 }

@@ -161,6 +161,22 @@ class MediaIndexDatabase extends _$MediaIndexDatabase {
     return out;
   }
 
+  /// Size + pixel dimensions for the given ids (only rows with a known, real
+  /// size). Feeds the savings estimator so it can model output from dimensions
+  /// across the WHOLE selection, not just the loaded pages.
+  Future<List<({int sizeBytes, int width, int height})>> factsFor(
+    List<String> ids,
+  ) async {
+    if (ids.isEmpty) return const [];
+    final q = select(mediaAssets)
+      ..where((t) => t.id.isIn(ids) & t.sizeBytes.isBiggerThanValue(0));
+    final rows = await q.get();
+    return [
+      for (final r in rows)
+        (sizeBytes: r.sizeBytes!, width: r.width, height: r.height),
+    ];
+  }
+
   /// Ids missing a resolved byte size — the size pass works through these.
   Future<List<String>> idsMissingSize({int limit = 200}) async {
     final q = selectOnly(mediaAssets)

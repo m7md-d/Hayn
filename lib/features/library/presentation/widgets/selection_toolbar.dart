@@ -6,7 +6,9 @@ import '../../../../app/l10n/app_localizations.dart';
 import '../../../../app/theme/app_theme_extension.dart';
 import '../../../../app/theme/design_tokens.dart';
 import '../../../../core/batch/batch_savings_estimator.dart';
+import '../../../../data/index/index_providers.dart';
 import '../../../settings/providers/preferences_providers.dart';
+import '../providers/library_provider.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SelectionToolbar — replaces the bottom nav while the user is selecting
@@ -63,7 +65,7 @@ class SelectionToolbar extends ConsumerWidget {
                 padding: const EdgeInsets.fromLTRB(
                   AppSpacing.md, AppSpacing.s2, AppSpacing.md, 0,
                 ),
-                child: _SavingsChip(assets: selectedAssets),
+                child: const _SavingsChip(),
               ),
             // ── Action row ───────────────────────────────────────────────
             SizedBox(
@@ -123,8 +125,7 @@ class SelectionToolbar extends ConsumerWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _SavingsChip extends ConsumerStatefulWidget {
-  const _SavingsChip({required this.assets});
-  final List<AssetEntity> assets;
+  const _SavingsChip();
 
   @override
   ConsumerState<_SavingsChip> createState() => _SavingsChipState();
@@ -134,24 +135,24 @@ class _SavingsChipState extends ConsumerState<_SavingsChip> {
   Future<BatchSavingsEstimate>? _future;
   int? _lastKey;
 
+  Future<BatchSavingsEstimate> _estimate(
+      List<String> ids, DefaultFormat format, int quality) async {
+    // Facts come from the index, so the estimate spans the WHOLE selection
+    // (even select-all over thousands), not just the loaded grid pages.
+    final facts = await ref.read(mediaIndexDatabaseProvider).factsFor(ids);
+    return BatchSavingsEstimator.estimate(
+        facts: facts, format: format, quality: quality);
+  }
+
   @override
   Widget build(BuildContext context) {
     final format = ref.watch(defaultFormatProvider);
     final quality = _qualityToInt(ref.watch(defaultQualityProvider));
-    final key = Object.hash(
-      widget.assets.length,
-      widget.assets.isEmpty ? 0 : widget.assets.first.id,
-      widget.assets.isEmpty ? 0 : widget.assets.last.id,
-      format,
-      quality,
-    );
+    final ids = ref.watch(libraryProvider.select((s) => s.selectedIds));
+    final key = Object.hash(ids.length, format, quality);
     if (key != _lastKey) {
       _lastKey = key;
-      _future = BatchSavingsEstimator.estimate(
-        assets: widget.assets,
-        format: format,
-        quality: quality,
-      );
+      _future = _estimate(ids.toList(), format, quality);
     }
 
     return FutureBuilder<BatchSavingsEstimate>(

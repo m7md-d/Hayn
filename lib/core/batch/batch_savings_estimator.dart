@@ -1,19 +1,19 @@
-import 'package:photo_manager/photo_manager.dart';
-import '../../features/library/presentation/providers/asset_size_cache.dart';
 import '../../features/settings/providers/preferences_providers.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BatchSavingsEstimator — predicts how many bytes the user will save when
-// running compress / surgical-replace on a selection.
+// BatchSavingsEstimator — predicts how many bytes a compress / surgical-replace
+// run will save on a selection.
 //
-// Strategy:
-//   • ≤ [exactThreshold] assets → read every file size (exact totals).
-//   • > [exactThreshold] assets → sample [sampleSize] assets, average their
-//     real sizes, multiply by the selection count (heuristic totals).
-//
-// The format-specific compression ratio matches the one used inside
-// CompressEstimateCard so the same numbers appear across screens.
+// Works off per-asset facts pulled from the on-device index (size + pixel
+// dimensions), so it covers EVERY selected item — not just the pages currently
+// loaded in the grid. Output size is modelled from dimensions × a format/
+// quality bytes-per-pixel factor and capped at the original (a compression
+// pass never grows a file), which tracks reality far better than a flat ratio
+// of the original byte size.
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Minimal per-asset facts the estimate needs (from the index).
+typedef AssetSizeFacts = ({int sizeBytes, int width, int height});
 
 class BatchSavingsEstimate {
   const BatchSavingsEstimate({
@@ -28,82 +28,68 @@ class BatchSavingsEstimate {
   final int estimatedNewBytes;
   final int savedPercent;
 
-  /// True when the estimator extrapolated from a small sample rather than
-  /// summing every file in the selection.
+  /// Always true here: the bytes-per-pixel model is a heuristic, not a real
+  /// encode.
   final bool isApproximation;
   final int assetCount;
+
+  static const empty = BatchSavingsEstimate(
+    totalOriginalBytes: 0,
+    estimatedNewBytes: 0,
+    savedPercent: 0,
+    isApproximation: false,
+    assetCount: 0,
+  );
 }
 
 abstract final class BatchSavingsEstimator {
-  static const int exactThreshold = 5;
-  static const int sampleSize = 5;
-
-  static Future<BatchSavingsEstimate> estimate({
-    required List<AssetEntity> assets,
+  static BatchSavingsEstimate estimate({
+    required List<AssetSizeFacts> facts,
     required DefaultFormat format,
     required int quality,
-  }) async {
-    if (assets.isEmpty) {
-      return const BatchSavingsEstimate(
-        totalOriginalBytes: 0,
-        estimatedNewBytes: 0,
-        savedPercent: 0,
-        isApproximation: false,
-        assetCount: 0,
-      );
+  }) {
+    if (facts.isEmpty) return BatchSavingsEstimate.empty;
+
+    final bpp = bytesPerPixel(format, quality);
+    var totalOriginal = 0;
+    var totalOutput = 0;
+    for (final f in facts) {
+      totalOriginal += f.sizeBytes;
+      var out = (f.width * f.height * bpp).round();
+      // Compression never grows a file: cap the estimate at the original.
+      if (f.sizeBytes > 0 && out > f.sizeBytes) out = f.sizeBytes;
+      totalOutput += out;
     }
 
-    final int totalOriginal;
-    final bool isApprox;
-    if (assets.length <= exactThreshold) {
-      totalOriginal = _sumSizes(assets);
-      isApprox = false;
-    } else {
-      final sample = _pickSample(assets, sampleSize);
-      final sampleSum = _sumSizes(sample);
-      final avg = sampleSum / sample.length;
-      totalOriginal = (avg * assets.length).round();
-      isApprox = true;
-    }
-
-    final ratio = _ratio(format, quality);
-    final estimatedNew = (totalOriginal * ratio).round();
-    final savedPercent = totalOriginal == 0
-        ? 0
-        : (((totalOriginal - estimatedNew) / totalOriginal) * 100).round();
+    final saved = (totalOriginal - totalOutput).clamp(0, totalOriginal);
+    final savedPercent =
+        totalOriginal == 0 ? 0 : ((saved / totalOriginal) * 100).round();
 
     return BatchSavingsEstimate(
       totalOriginalBytes: totalOriginal,
-      estimatedNewBytes: estimatedNew,
+      estimatedNewBytes: totalOutput,
       savedPercent: savedPercent,
-      isApproximation: isApprox,
-      assetCount: assets.length,
+      isApproximation: true,
+      assetCount: facts.length,
     );
   }
 
-  /// Picks an evenly-spread sample across the selection so we don't bias
-  /// toward only the first few assets (e.g. when a selection spans a wide
-  /// timeline).
-  static List<AssetEntity> _pickSample(List<AssetEntity> assets, int n) {
-    if (assets.length <= n) return assets;
-    final step = assets.length / n;
-    return [
-      for (var i = 0; i < n; i++) assets[(i * step).floor()],
-    ];
+  /// Rough output bytes per output pixel for a format at a quality. AVIF is the
+  /// most efficient, JPEG the least; higher quality → more bytes.
+  static double bytesPerPixel(DefaultFormat format, int quality) {
+    final base = switch (format) {
+      DefaultFormat.avif => 0.14,
+      DefaultFormat.heic => 0.20,
+      DefaultFormat.webp => 0.28,
+      DefaultFormat.jpeg => 0.42,
+      DefaultFormat.auto => 0.16,
+    };
+    final q = quality.clamp(30, 100);
+    final qFactor = 0.5 + ((q - 30) / 70) * 1.0; // q30→0.5×, q100→1.5×
+    return base * qFactor;
   }
 
-  // Reads sizes from the index-seeded cache (sync, never asset.file). Assets
-  // not yet in the cache count as 0; the estimate is approximate by design.
-  static int _sumSizes(List<AssetEntity> assets) {
-    var sum = 0;
-    for (final a in assets) {
-      sum += AssetSizeCache.get(a.id) ?? 0;
-    }
-    return sum;
-  }
-
-  /// Mirrors CompressEstimateCard._ratio so screens stay consistent.
-  /// Exposed for tests + reuse by the surgical heuristic.
+  /// Legacy flat-ratio heuristic, kept for the single-image compress preview.
   static double compressionRatio(DefaultFormat format, int quality) {
     final formatMul = switch (format) {
       DefaultFormat.avif => 0.32,
@@ -115,7 +101,4 @@ abstract final class BatchSavingsEstimator {
     final qFactor = 0.7 + ((quality - 30) / 70) * 0.7;
     return (formatMul * qFactor).clamp(0.05, 0.95);
   }
-
-  static double _ratio(DefaultFormat format, int quality) =>
-      compressionRatio(format, quality);
 }
