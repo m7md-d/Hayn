@@ -1,6 +1,11 @@
+import 'dart:async';
 import 'dart:math';
+import 'package:flutter/services.dart' show MethodCall;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_manager/photo_manager.dart';
+import '../../../../core/async/concurrency_limiter.dart';
+import '../../../../data/index/index_providers.dart';
+import '../../../../data/index/media_index_database.dart';
 import '../../domain/entities/library_sort_filter.dart';
 import '../../domain/entities/media_filter.dart';
 import 'asset_size_cache.dart';
@@ -160,6 +165,20 @@ class LibraryState {
 
 class LibraryNotifier extends Notifier<LibraryState> {
   AssetPathEntity? _currentPath;
+  bool _indexReady = false;
+  bool _syncing = false;
+  Timer? _changeDebounce;
+
+  // Bounds the AssetEntity.fromId fan-out when materialising an index page.
+  static final ConcurrencyLimiter _fromIdLimiter = ConcurrencyLimiter(8);
+
+  /// Index-backed mode powers sort/filter across the *whole* library. It only
+  /// kicks in for the unfiltered-by-album view once the index is populated;
+  /// otherwise the original photo_manager paging path runs, unchanged.
+  bool get _dbMode =>
+      _indexReady &&
+      state.selectedAlbumId == null &&
+      state.sortFilter.hasAnyActive;
 
   @override
   LibraryState build() => const LibraryState();
@@ -177,7 +196,30 @@ class LibraryNotifier extends Notifier<LibraryState> {
       return;
     }
 
+    // The index lets sort/filter span the WHOLE library, not just loaded
+    // pages. Note whether it's already populated, kick a background refresh,
+    // then load page 0. The default view (newest, no filter) always takes the
+    // fast photo_manager path — the index only powers sort/filter.
+    _indexReady = (await ref.read(mediaIndexDatabaseProvider).totalCount()) > 0;
+    unawaited(_ensureSync());
+
+    // Keep the index live: when the device library changes (a photo taken,
+    // deleted, edited while the app is open), re-sync after a short debounce.
+    PhotoManager.addChangeCallback(_onLibraryChanged);
+    PhotoManager.startChangeNotify();
+    ref.onDispose(() {
+      _changeDebounce?.cancel();
+      PhotoManager.removeChangeCallback(_onLibraryChanged);
+      PhotoManager.stopChangeNotify();
+    });
+
     await _loadAlbumsAndAssets();
+  }
+
+  void _onLibraryChanged(MethodCall _) {
+    _changeDebounce?.cancel();
+    _changeDebounce =
+        Timer(const Duration(seconds: 2), () => unawaited(_ensureSync()));
   }
 
   Future<void> requestPermissionAndRetry() async {
@@ -202,7 +244,7 @@ class LibraryNotifier extends Notifier<LibraryState> {
       isLoading: true,
       selectedAlbumId: null,
     );
-    await _loadAlbumsAndAssets();
+    await _reload();
   }
 
   Future<void> selectAlbum(String? albumId) async {
@@ -211,11 +253,16 @@ class LibraryNotifier extends Notifier<LibraryState> {
       selectedAlbumId: albumId,
       isLoading: true,
     );
-    await _loadAlbumsAndAssets();
+    await _reload();
   }
 
   Future<void> loadMore() async {
-    if (!state.hasMore || state.isLoading || _currentPath == null) return;
+    if (state.isLoading || !state.hasMore) return;
+    if (_dbMode) {
+      await _loadIndexPage(reset: false);
+      return;
+    }
+    if (_currentPath == null) return;
     final start = state.assets.length;
     final end = min(state.totalCount, start + _pageSize);
     final more = await _currentPath!.getAssetListRange(start: start, end: end);
@@ -223,9 +270,9 @@ class LibraryNotifier extends Notifier<LibraryState> {
       assets: [...state.assets, ...more],
       hasMore: end < state.totalCount,
     );
-    // Under a size-based sort/filter, the freshly paged-in assets sort as 0
-    // until their sizes are known. Warm just the new page, then re-derive so
-    // ordering stays correct as the user scrolls deeper.
+    // Under a size-based sort/filter (legacy path), the freshly paged-in assets
+    // sort as 0 until their sizes are known. Warm just the new page, then
+    // re-derive so ordering stays correct as the user scrolls deeper.
     if (state.sortFilter.needsSizes && more.isNotEmpty) {
       await AssetSizeCache.warm(more);
       state = state.copyWith(
@@ -269,17 +316,7 @@ class LibraryNotifier extends Notifier<LibraryState> {
 
   Future<void> setSortFilter(LibrarySortFilter sortFilter) async {
     state = state.copyWith(sortFilter: sortFilter, isLoading: true);
-    await _loadAlbumsAndAssets();
-
-    if (sortFilter.needsSizes && state.assets.isNotEmpty) {
-      await AssetSizeCache.warm(state.assets);
-      // Sizes moved but assets/sortFilter didn't — force a fresh derive so the
-      // newly-known sizes feed the sort/filter.
-      state = state.copyWith(
-        displayAssets:
-            LibraryState._computeDisplay(state.assets, state.sortFilter),
-      );
-    }
+    await _reload();
   }
 
   Future<void> clearSortFilter() async {
@@ -288,6 +325,95 @@ class LibraryNotifier extends Notifier<LibraryState> {
   }
 
   // ── Private ────────────────────────────────────────────────────
+
+  /// Routes a fresh load to the index (global sort/filter) or the legacy
+  /// photo_manager path, depending on [_dbMode].
+  Future<void> _reload() async {
+    if (_dbMode) {
+      await _loadIndexPage(reset: true);
+      return;
+    }
+    await _loadAlbumsAndAssets();
+    // Legacy path (index not ready yet, or an album is selected): keep the
+    // client-side size sort/filter working over the loaded pages.
+    if (state.sortFilter.needsSizes && state.assets.isNotEmpty) {
+      await AssetSizeCache.warm(state.assets);
+      state = state.copyWith(
+        displayAssets:
+            LibraryState._computeDisplay(state.assets, state.sortFilter),
+      );
+    }
+  }
+
+  /// Background: bring the index up to date, then refresh the view if the user
+  /// is sorting/filtering so results expand to the whole library.
+  Future<void> _ensureSync() async {
+    if (_syncing) return;
+    _syncing = true;
+    try {
+      final index = ref.read(mediaIndexServiceProvider);
+      final db = ref.read(mediaIndexDatabaseProvider);
+      await index.syncMetadata();
+      _indexReady = (await db.totalCount()) > 0;
+      if (_dbMode) await _loadIndexPage(reset: true);
+      await index.resolveSizes();
+      if (_dbMode && state.sortFilter.needsSizes) {
+        await _loadIndexPage(reset: true);
+      }
+    } catch (_) {
+      // Best-effort: the photo_manager path keeps the library usable.
+    } finally {
+      _syncing = false;
+    }
+  }
+
+  /// One page from the index: query ordered/filtered rows, seed the size cache
+  /// from them (instant badges, no per-tile file read), then materialise the
+  /// AssetEntities the grid needs to render.
+  Future<void> _loadIndexPage({required bool reset}) async {
+    final db = ref.read(mediaIndexDatabaseProvider);
+    final q = queryParamsFor(state.filter, state.sortFilter);
+    final offset = reset ? 0 : state.assets.length;
+
+    final total = await db.count(
+      typeFilter: q.typeFilter,
+      minSize: q.minSize,
+      maxSize: q.maxSize,
+      formatNeedles: q.formatNeedles,
+    );
+    final rows = await db.page(
+      typeFilter: q.typeFilter,
+      minSize: q.minSize,
+      maxSize: q.maxSize,
+      formatNeedles: q.formatNeedles,
+      sortColumn: q.sortColumn,
+      descending: q.descending,
+      limit: _pageSize,
+      offset: offset,
+    );
+    for (final r in rows) {
+      final s = r.sizeBytes;
+      if (s != null && s > 0) AssetSizeCache.put(r.id, s);
+    }
+    final entities = await _entitiesForIds([for (final r in rows) r.id]);
+    final merged =
+        reset ? entities : <AssetEntity>[...state.assets, ...entities];
+    state = state.copyWith(
+      assets: merged,
+      // The DB already applied the sort + filter; show the list verbatim.
+      displayAssets: merged,
+      totalCount: total,
+      hasMore: offset + rows.length < total,
+      isLoading: false,
+    );
+  }
+
+  Future<List<AssetEntity>> _entitiesForIds(List<String> ids) async {
+    final fetched = await Future.wait(
+      ids.map((id) => _fromIdLimiter.run(() => AssetEntity.fromId(id))),
+    );
+    return [for (final a in fetched) if (a != null) a];
+  }
 
   Future<void> _loadAlbumsAndAssets() async {
     try {
@@ -365,6 +491,66 @@ class LibraryNotifier extends Notifier<LibraryState> {
         MediaFilter.photos => RequestType.image,
         MediaFilter.videos => RequestType.video,
       };
+
+  /// Pure mapping from the high-level filter/sort to index query params. Kept
+  /// static + free of state so it can be unit-tested directly. Size-bucket
+  /// boundaries mirror the client-side path in [LibraryState._computeDisplay].
+  static ({
+    int? typeFilter,
+    int? minSize,
+    int? maxSize,
+    List<String> formatNeedles,
+    AssetSortColumn sortColumn,
+    bool descending,
+  }) queryParamsFor(MediaFilter filter, LibrarySortFilter sf) {
+    final typeFilter = switch (filter) {
+      MediaFilter.all => null,
+      MediaFilter.photos => AssetType.image.index,
+      MediaFilter.videos => AssetType.video.index,
+    };
+
+    int? minSize;
+    int? maxSize;
+    switch (sf.sizeFilter) {
+      case LibrarySizeFilter.any:
+        break;
+      case LibrarySizeFilter.small:
+        maxSize = 1024 * 1024;
+      case LibrarySizeFilter.medium:
+        minSize = 1024 * 1024;
+        maxSize = 10 * 1024 * 1024;
+      case LibrarySizeFilter.large:
+        minSize = 10 * 1024 * 1024;
+    }
+
+    final needles = <String>[];
+    final fmt = sf.formatFilter;
+    if (fmt != null) {
+      if (fmt == 'jpeg') {
+        needles.addAll(['jpeg', 'jpg']);
+      } else if (fmt == 'mov') {
+        needles.addAll(['mov', 'quicktime']);
+      } else {
+        needles.add(fmt);
+      }
+    }
+
+    final (AssetSortColumn sortColumn, bool descending) = switch (sf.sort) {
+      LibrarySort.newestFirst => (AssetSortColumn.createdDate, true),
+      LibrarySort.oldestFirst => (AssetSortColumn.createdDate, false),
+      LibrarySort.largestFirst => (AssetSortColumn.sizeBytes, true),
+      LibrarySort.smallestFirst => (AssetSortColumn.sizeBytes, false),
+    };
+
+    return (
+      typeFilter: typeFilter,
+      minSize: minSize,
+      maxSize: maxSize,
+      formatNeedles: needles,
+      sortColumn: sortColumn,
+      descending: descending,
+    );
+  }
 }
 
 final libraryProvider =

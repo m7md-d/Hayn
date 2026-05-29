@@ -1,0 +1,102 @@
+import 'dart:math' as math;
+
+import 'package:drift/native.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:hayn/data/index/media_index_database.dart';
+import 'package:hayn/data/index/media_index_service.dart';
+import 'package:photo_manager/photo_manager.dart';
+
+AssetEntity _a(String id, {int type = 1, int created = 0}) => AssetEntity(
+      id: id,
+      typeInt: type,
+      width: 100,
+      height: 100,
+      createDateSecond: created,
+    );
+
+class _FakeSource implements AssetMetadataSource {
+  _FakeSource(this.assets);
+  List<AssetEntity> assets;
+
+  @override
+  Future<int> count() async => assets.length;
+
+  @override
+  Future<List<AssetEntity>> range(int start, int end) async =>
+      assets.sublist(start, math.min(end, assets.length));
+}
+
+void main() {
+  late MediaIndexDatabase db;
+  setUp(() => db = MediaIndexDatabase(NativeDatabase.memory()));
+  tearDown(() => db.close());
+
+  test('syncMetadata indexes every asset from the source', () async {
+    final source = _FakeSource([_a('a'), _a('b'), _a('c')]);
+    final svc = MediaIndexService(
+      db: db,
+      source: source,
+      sizeLookup: (_) async => {},
+      fallbackSize: (_) async => null,
+    );
+
+    await svc.syncMetadata(batch: 2); // exercises multi-batch paging
+    expect(await db.allIds(), {'a', 'b', 'c'});
+  });
+
+  test('re-sync prunes assets that disappeared from the library', () async {
+    final source = _FakeSource([_a('a'), _a('b'), _a('c')]);
+    final svc = MediaIndexService(
+      db: db,
+      source: source,
+      sizeLookup: (_) async => {},
+      fallbackSize: (_) async => null,
+    );
+    await svc.syncMetadata();
+
+    source.assets = [_a('a'), _a('c')]; // 'b' deleted on device
+    await svc.syncMetadata();
+
+    expect(await db.allIds(), {'a', 'c'});
+  });
+
+  test('re-sync preserves an already-resolved byte size', () async {
+    final source = _FakeSource([_a('a')]);
+    final svc = MediaIndexService(
+      db: db,
+      source: source,
+      sizeLookup: (_) async => {},
+      fallbackSize: (_) async => null,
+    );
+    await svc.syncMetadata();
+    await db.setSize('a', 4242);
+
+    await svc.syncMetadata(); // metadata refresh must not wipe the size
+    final row = (await db.page(limit: 1, offset: 0)).single;
+    expect(row.sizeBytes, 4242);
+  });
+
+  test('resolveSizes uses native first, then fallback, sentinel for the rest',
+      () async {
+    final source = _FakeSource([_a('a'), _a('b'), _a('c'), _a('d')]);
+    final svc = MediaIndexService(
+      db: db,
+      source: source,
+      sizeLookup: (ids) async => {'a': 10, 'b': 20}, // native resolves a,b
+      fallbackSize: (id) async => id == 'c' ? 30 : null, // c via file, d fails
+    );
+    await svc.syncMetadata();
+
+    await svc.resolveSizes(batch: 10);
+
+    final byId = {
+      for (final r in await db.page(limit: 10, offset: 0)) r.id: r.sizeBytes,
+    };
+    expect(byId['a'], 10);
+    expect(byId['b'], 20);
+    expect(byId['c'], 30);
+    expect(byId['d'], MediaIndexService.unknownSize); // 0 = tried, unknown
+    // And the pass terminated — nothing left marked missing.
+    expect(await db.idsMissingSize(), isEmpty);
+  });
+}

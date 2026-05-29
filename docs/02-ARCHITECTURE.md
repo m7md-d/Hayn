@@ -22,7 +22,18 @@
 
 - **Riverpod**: حالة قابلة للاختبار، تتعامل جيدًا مع async/streams (تقدّم المهام).
 - **Isolates**: Dart أحادي الخيط على الـ main isolate. أي عمل CPU (معالجة بكسلات، تنسيق، انتظار FFmpeg، تشغيل ONNX) يجب أن يكون في isolate حتى لا تتجمّد الواجهة. استخدم `Isolate.run` للمهام القصيرة و isolate طويل العمر مع `SendPort` للطوابير.
-- **DB (drift/isar)**: لفهرسة المصغّرات وحالة المهام وسجلّ المعاملات الجراحية (journal). لا نخزّن الميديا نفسها في DB.
+- **DB — drift (SQLite)**: اختير drift (لا isar — صيانته غير مستقرّة). يشغّل فهرس الميديا (القسم التالي)، ولاحقًا حالة المهام وسجلّ المعاملات الجراحية (journal). لا نخزّن الميديا نفسها في DB.
+
+## فهرس الميديا (Media Index)
+
+الفرز/الفلترة الصحيحة على مكتبة ضخمة تتطلّب معرفة **المكتبة كاملة**، و`photo_manager` يرقّم فقط (لا يفرز عالميًا). الحل: مرآة خفيفة لبيانات كل أصل في SQLite (drift).
+
+- **الجدول `media_assets`**: `id`, `type`, `createdDate`, `modifiedDate`, `width`, `height`, `durationMs`, `sizeBytes` (nullable)، `title`, `mimeType` — مع فهارس على أعمدة الفرز (`created`/`size`/`type`). ≈250 بايت للأصل → بضعة ميجابايت لـ10 آلاف. لا تُخزَّن بايتات الميديا.
+- **مسار مزدوج في `LibraryNotifier`**: التصفّح الافتراضي (الأحدث، بلا فلتر، أو ألبوم محدّد) يبقى على `photo_manager` السريع بلا تغيير؛ أما عند تفعيل فرز/فلترة على كل المكتبة فيُخدَم عبر استعلام DB مفهرس (`page`/`count`) ثم `AssetEntity.fromId` لإحضار الكيانات اللازمة للعرض (بحدّ تزامن).
+- **الحجم بالبايت** عبر `MediaSizeChannel` (قناة native): Android من `MediaStore._size`، iOS من `PHAssetResource.fileSize` — **بلا فتح/تصدير الملف**. أي مُعرّف لا يحلّه النظام يسقط تلقائيًا إلى `asset.file` (محدود التزامن). فشل القناة لا يكسر شيئًا، فقط يبطّئ.
+- **المزامنة** (`MediaIndexService`): مسح أوّلي على دفعات (upsert + حذف ما اختفى)، ثم تمرير حجم (native أولًا ثم fallback)، ويُحدَّث عند الإقلاع وعند `addChangeCallback` (debounce). إعادة المسح تحفظ الأحجام المحلولة.
+
+> الاختبارات تغطّي منطق الاستعلام (`media_index_database_test`)، عقد القناة (`media_size_channel_test`)، المزامنة/الفروق (`media_index_service_test`)، وتحويل الفلتر→استعلام (`library_query_params_test`).
 
 ## طابور المهام (Task Queue)
 

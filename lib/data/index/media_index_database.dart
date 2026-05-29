@@ -87,6 +87,20 @@ class MediaIndexDatabase extends _$MediaIndexDatabase {
         .write(MediaAssetsCompanion(sizeBytes: Value(bytes)));
   }
 
+  /// Batched size writes — the size pass resolves a page at a time.
+  Future<void> setSizes(Map<String, int> sizes) async {
+    if (sizes.isEmpty) return;
+    await batch((b) {
+      for (final e in sizes.entries) {
+        b.update(
+          mediaAssets,
+          MediaAssetsCompanion(sizeBytes: Value(e.value)),
+          where: (t) => t.id.equals(e.key),
+        );
+      }
+    });
+  }
+
   Future<void> deleteIds(Iterable<String> ids) async {
     final list = ids.toList();
     if (list.isEmpty) return;
