@@ -16,6 +16,10 @@ class AboutScreen extends StatelessWidget {
   const AboutScreen({super.key});
 
   static const _appVersion = '1.0.0';
+  // Set per build via --dart-define=BUILD_TAG=… so the running build is
+  // identifiable on-device (defaults to 'dev' for plain builds).
+  static const _buildTag =
+      String.fromEnvironment('BUILD_TAG', defaultValue: 'dev');
   static const _repoUrl = 'https://github.com/m7md-d/hayn';
 
   @override
@@ -49,7 +53,7 @@ class AboutScreen extends StatelessWidget {
               Text(l.appName, style: theme.textTheme.displaySmall),
               const SizedBox(height: AppSpacing.s1),
               Text(
-                '${l.settingsVersion} $_appVersion',
+                '${l.settingsVersion} $_appVersion · build $_buildTag',
                 style: theme.textTheme.labelMedium?.copyWith(color: hc.text2),
               ),
               const SizedBox(height: AppSpacing.md),
