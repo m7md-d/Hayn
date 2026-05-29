@@ -48,6 +48,5 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   generate: true
-
-  assets:
-    - assets/i18n/
+  # Localisation is gen-l10n from lib/app/l10n (see l10n.yaml) — not runtime
+  # assets. The bundled ONNX model under assets/ lands with the audio phase.
