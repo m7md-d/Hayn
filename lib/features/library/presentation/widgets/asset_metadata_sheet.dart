@@ -51,7 +51,10 @@ class _AssetMetadataSheetState extends State<AssetMetadataSheet> {
         future: _facts,
         builder: (ctx, snap) {
           final facts = snap.data;
-          return Padding(
+          // Scrollable so the content can't overflow when the sheet is shown at
+          // a constrained height (e.g. the swipe-up reveal's fixed panel).
+          return SingleChildScrollView(
+            child: Padding(
             padding: const EdgeInsets.only(bottom: AppSpacing.md),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -120,6 +123,7 @@ class _AssetMetadataSheetState extends State<AssetMetadataSheet> {
                     ),
                   ),
               ],
+            ),
             ),
           );
         },
