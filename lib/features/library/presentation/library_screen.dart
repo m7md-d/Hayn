@@ -35,6 +35,12 @@ class LibraryScreen extends ConsumerStatefulWidget {
 }
 
 class _LibraryScreenState extends ConsumerState<LibraryScreen> {
+  // Shared explicitly so BOTH the grid (via primary) and the Scaffold (via
+  // PrimaryScrollController.maybeOf in handleStatusBarTap) reference the SAME
+  // controller — that link is what makes the iOS status-bar tap scroll to top,
+  // and it was missing before (no PrimaryScrollController in scope).
+  final ScrollController _primaryController = ScrollController();
+
   @override
   void initState() {
     super.initState();
@@ -43,11 +49,15 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     });
   }
 
-  // Pagination is driven by scroll notifications rather than a ScrollController,
-  // so the grid can stay `primary: true` — which is what wires up the iOS
-  // "tap the status bar to scroll back to the top" gesture (lost the moment a
-  // custom controller is attached). The loadMore re-entrancy guard makes the
-  // high-frequency firing here harmless.
+  @override
+  void dispose() {
+    _primaryController.dispose();
+    super.dispose();
+  }
+
+  // Pagination is driven by scroll notifications, so the grid keeps a stable
+  // controller. The loadMore re-entrancy guard makes the high-frequency firing
+  // here harmless.
   bool _onScrollNotification(ScrollNotification n) {
     if (n.metrics.axis == Axis.vertical && n.metrics.extentAfter < 800) {
       ref.read(libraryProvider.notifier).loadMore();
@@ -67,14 +77,16 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         ? l.librarySelectedCount(state.selectedIds.length)
         : l.libraryTitle;
 
-    return Scaffold(
+    return PrimaryScrollController(
+      // The Scaffold's handleStatusBarTap reads PrimaryScrollController.maybeOf
+      // — provide it here so it resolves to the same controller the grid uses.
+      controller: _primaryController,
+      child: Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       body: NotificationListener<ScrollNotification>(
         onNotification: _onScrollNotification,
         child: CustomScrollView(
-          // primary: true → attaches to the PrimaryScrollController so iOS
-          // status-bar-tap scrolls back to top. No custom controller allowed.
-          primary: true,
+          controller: _primaryController,
           physics: const BouncingScrollPhysics(
             parent: AlwaysScrollableScrollPhysics(),
           ),
@@ -257,6 +269,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
           const SliverPadding(padding: EdgeInsets.only(bottom: 96)),
         ],
         ),
+      ),
       ),
     );
   }

@@ -84,14 +84,13 @@ class _AssetFilmstripState extends State<AssetFilmstrip> {
     if (n is ScrollStartNotification) {
       // dragDetails != null ⇒ a real finger drag (not our programmatic centre).
       _userDriving = n.dragDetails != null;
-    } else if (n is ScrollUpdateNotification && _userDriving) {
-      final c = _centeredIndex();
-      if (c != widget.currentIndex) widget.onScrub(c);
     } else if (n is ScrollEndNotification && _userDriving) {
       _userDriving = false;
+      // Commit ONCE, on release. Jumping the heavy 1080-px PageView on every
+      // scroll frame is what made scrubbing stutter; the centre frame already
+      // shows the target live, so the main image just snaps when you let go.
       final c = _centeredIndex();
       if (c != widget.currentIndex) widget.onScrub(c);
-      // Settle exactly onto the centred tile.
       WidgetsBinding.instance.addPostFrameCallback((_) => _centerOnCurrent());
     }
     return false;
@@ -105,33 +104,48 @@ class _AssetFilmstripState extends State<AssetFilmstrip> {
 
   @override
   Widget build(BuildContext context) {
+    final hc = context.hc;
     return SizedBox(
       height: AssetFilmstrip.tileSize + 16,
-      child: NotificationListener<ScrollNotification>(
-        onNotification: _onNotification,
-        child: ListView.separated(
-          controller: _ctrl,
-          scrollDirection: Axis.horizontal,
-          physics: const BouncingScrollPhysics(),
-          padding: EdgeInsets.symmetric(
-            horizontal: MediaQuery.sizeOf(context).width / 2 -
-                AssetFilmstrip.tileSize / 2,
-            vertical: 8,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          NotificationListener<ScrollNotification>(
+            onNotification: _onNotification,
+            child: ListView.separated(
+              controller: _ctrl,
+              scrollDirection: Axis.horizontal,
+              physics: const BouncingScrollPhysics(),
+              padding: EdgeInsets.symmetric(
+                horizontal: MediaQuery.sizeOf(context).width / 2 -
+                    AssetFilmstrip.tileSize / 2,
+                vertical: 8,
+              ),
+              itemCount: widget.assets.length,
+              separatorBuilder: (_, __) =>
+                  const SizedBox(width: AssetFilmstrip.tileGap),
+              itemBuilder: (ctx, i) => _FilmTile(
+                asset: widget.assets[i],
+                onTap: () {
+                  HapticFeedback.selectionClick();
+                  widget.onSelect(i);
+                },
+              ),
+            ),
           ),
-          itemCount: widget.assets.length,
-          separatorBuilder: (_, __) =>
-              const SizedBox(width: AssetFilmstrip.tileGap),
-          itemBuilder: (ctx, i) {
-            return _FilmTile(
-              asset: widget.assets[i],
-              active: i == widget.currentIndex,
-              onTap: () {
-                HapticFeedback.selectionClick();
-                widget.onSelect(i);
-              },
-            );
-          },
-        ),
+          // Fixed centre frame: the tile sitting under it is the selection,
+          // so it's obvious which one you'll land on as you scrub.
+          IgnorePointer(
+            child: Container(
+              width: AssetFilmstrip.tileSize + 8,
+              height: AssetFilmstrip.tileSize + 8,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(AppRadius.xs + 4),
+                border: Border.all(color: hc.accent, width: 2.5),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -140,11 +154,9 @@ class _AssetFilmstripState extends State<AssetFilmstrip> {
 class _FilmTile extends StatefulWidget {
   const _FilmTile({
     required this.asset,
-    required this.active,
     required this.onTap,
   });
   final AssetEntity asset;
-  final bool active;
   final VoidCallback onTap;
 
   @override
@@ -175,40 +187,29 @@ class _FilmTileState extends State<_FilmTile> {
 
   @override
   Widget build(BuildContext context) {
-    final hc = context.hc;
+    // Uniform tiles — the fixed centre frame indicates the selection, so tiles
+    // don't need per-item borders/opacity (which also keeps scrubbing cheap).
     return GestureDetector(
       onTap: widget.onTap,
-      child: AnimatedContainer(
-        duration: AppDuration.fast,
+      child: SizedBox(
         width: AssetFilmstrip.tileSize,
         height: AssetFilmstrip.tileSize,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(AppRadius.xs + 2),
-          border: Border.all(
-            color: widget.active ? hc.accent : Colors.transparent,
-            width: 2,
-          ),
-        ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(AppRadius.xs),
-          child: AnimatedOpacity(
-            duration: AppDuration.fast,
-            opacity: widget.active ? 1.0 : 0.55,
-            child: _thumb == null
-                ? Container(color: Colors.white12)
-                : Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      Image.memory(_thumb!,
-                          fit: BoxFit.cover, gaplessPlayback: true),
-                      if (widget.asset.type == AssetType.video)
-                        const Center(
-                          child: Icon(Icons.play_arrow_rounded,
-                              color: Colors.white, size: 16),
-                        ),
-                    ],
-                  ),
-          ),
+          child: _thumb == null
+              ? Container(color: Colors.white12)
+              : Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Image.memory(_thumb!,
+                        fit: BoxFit.cover, gaplessPlayback: true),
+                    if (widget.asset.type == AssetType.video)
+                      const Center(
+                        child: Icon(Icons.play_arrow_rounded,
+                            color: Colors.white, size: 16),
+                      ),
+                  ],
+                ),
         ),
       ),
     );
