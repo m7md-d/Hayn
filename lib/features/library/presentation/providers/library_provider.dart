@@ -167,18 +167,19 @@ class LibraryNotifier extends Notifier<LibraryState> {
   AssetPathEntity? _currentPath;
   bool _indexReady = false;
   bool _syncing = false;
+  bool _loadingMore = false;
   Timer? _changeDebounce;
 
   // Bounds the AssetEntity.fromId fan-out when materialising an index page.
   static final ConcurrencyLimiter _fromIdLimiter = ConcurrencyLimiter(8);
 
-  /// Index-backed mode powers sort/filter across the *whole* library. It only
-  /// kicks in for the unfiltered-by-album view once the index is populated;
-  /// otherwise the original photo_manager paging path runs, unchanged.
-  bool get _dbMode =>
-      _indexReady &&
-      state.selectedAlbumId == null &&
-      state.sortFilter.hasAnyActive;
+  /// Index-backed mode drives the whole library view (default browse AND
+  /// sort/filter) once the index is populated — so byte sizes come from the
+  /// index (no `asset.file`), select-all spans everything, and scrolling stays
+  /// smooth. Only an album selection drops back to photo_manager paging (the
+  /// index doesn't track album membership yet); the first launch before the
+  /// index exists also falls back until the build completes.
+  bool get _dbMode => _indexReady && state.selectedAlbumId == null;
 
   @override
   LibraryState build() => const LibraryState();
@@ -196,12 +197,11 @@ class LibraryNotifier extends Notifier<LibraryState> {
       return;
     }
 
-    // The index lets sort/filter span the WHOLE library, not just loaded
-    // pages. Note whether it's already populated, kick a background refresh,
-    // then load page 0. The default view (newest, no filter) always takes the
-    // fast photo_manager path — the index only powers sort/filter.
+    // Reclaim any file-cache bloat left by earlier asset.file usage (on iOS
+    // that exported full-size copies of originals just to read their lengths).
+    unawaited(PhotoManager.clearFileCache());
+
     _indexReady = (await ref.read(mediaIndexDatabaseProvider).totalCount()) > 0;
-    unawaited(_ensureSync());
 
     // Keep the index live: when the device library changes (a photo taken,
     // deleted, edited while the app is open), re-sync after a short debounce.
@@ -213,7 +213,12 @@ class LibraryNotifier extends Notifier<LibraryState> {
       PhotoManager.stopChangeNotify();
     });
 
+    // Load albums (for the strip) + an immediate first page so the grid is
+    // never blank. If the index is already built, switch the grid to it now;
+    // otherwise the background sync builds it and switches when ready.
     await _loadAlbumsAndAssets();
+    if (_dbMode) await _loadIndexPage(reset: true);
+    unawaited(_ensureSync());
   }
 
   void _onLibraryChanged(MethodCall _) {
@@ -257,28 +262,31 @@ class LibraryNotifier extends Notifier<LibraryState> {
   }
 
   Future<void> loadMore() async {
-    if (state.isLoading || !state.hasMore) return;
-    if (_dbMode) {
-      await _loadIndexPage(reset: false);
-      return;
-    }
-    if (_currentPath == null) return;
-    final start = state.assets.length;
-    final end = min(state.totalCount, start + _pageSize);
-    final more = await _currentPath!.getAssetListRange(start: start, end: end);
-    state = state.copyWith(
-      assets: [...state.assets, ...more],
-      hasMore: end < state.totalCount,
-    );
-    // Under a size-based sort/filter (legacy path), the freshly paged-in assets
-    // sort as 0 until their sizes are known. Warm just the new page, then
-    // re-derive so ordering stays correct as the user scrolls deeper.
-    if (state.sortFilter.needsSizes && more.isNotEmpty) {
-      await AssetSizeCache.warm(more);
+    // Re-entrancy guard: the scroll listener fires loadMore on every frame near
+    // the end. Without this, several overlapping calls read the same offset and
+    // append the SAME page repeatedly — the cause of duplicated tiles + badges.
+    if (_loadingMore || state.isLoading || !state.hasMore) return;
+    _loadingMore = true;
+    try {
+      if (_dbMode) {
+        await _loadIndexPage(reset: false);
+        return;
+      }
+      if (_currentPath == null) return;
+      final start = state.assets.length;
+      final end = min(state.totalCount, start + _pageSize);
+      final more =
+          await _currentPath!.getAssetListRange(start: start, end: end);
+      // Badge sizes come from the index (every asset's size is there by id),
+      // never asset.file. copyWith re-derives displayAssets from the now-seeded
+      // sizes, so a client-side size sort stays correct as we page deeper.
+      await _seedSizesFromIndex([for (final a in more) a.id]);
       state = state.copyWith(
-        displayAssets:
-            LibraryState._computeDisplay(state.assets, state.sortFilter),
+        assets: [...state.assets, ...more],
+        hasMore: end < state.totalCount,
       );
+    } finally {
+      _loadingMore = false;
     }
   }
 
@@ -305,7 +313,21 @@ class LibraryNotifier extends Notifier<LibraryState> {
     );
   }
 
-  void selectAll() {
+  Future<void> selectAll() async {
+    // Select the WHOLE library (or the whole filtered set), pulled from the
+    // index as ids only — no thumbnails load, so 10k+ won't blow up. Falls back
+    // to the loaded set inside an album or before the index is ready.
+    if (_indexReady && state.selectedAlbumId == null) {
+      final q = queryParamsFor(state.filter, state.sortFilter);
+      final ids = await ref.read(mediaIndexDatabaseProvider).matchingIds(
+            typeFilter: q.typeFilter,
+            minSize: q.minSize,
+            maxSize: q.maxSize,
+            formatNeedles: q.formatNeedles,
+          );
+      state = state.copyWith(selectedIds: ids.toSet(), isSelecting: true);
+      return;
+    }
     final ids = state.displayAssets.map((a) => a.id).toSet();
     state = state.copyWith(selectedIds: ids, isSelecting: true);
   }
@@ -326,23 +348,23 @@ class LibraryNotifier extends Notifier<LibraryState> {
 
   // ── Private ────────────────────────────────────────────────────
 
-  /// Routes a fresh load to the index (global sort/filter) or the legacy
-  /// photo_manager path, depending on [_dbMode].
+  /// Routes a fresh load to the index (whole-library, no asset.file) or, inside
+  /// an album / before the index is built, the legacy photo_manager path.
   Future<void> _reload() async {
     if (_dbMode) {
       await _loadIndexPage(reset: true);
-      return;
+    } else {
+      await _loadAlbumsAndAssets();
     }
-    await _loadAlbumsAndAssets();
-    // Legacy path (index not ready yet, or an album is selected): keep the
-    // client-side size sort/filter working over the loaded pages.
-    if (state.sortFilter.needsSizes && state.assets.isNotEmpty) {
-      await AssetSizeCache.warm(state.assets);
-      state = state.copyWith(
-        displayAssets:
-            LibraryState._computeDisplay(state.assets, state.sortFilter),
-      );
-    }
+  }
+
+  /// Pulls resolved sizes for [ids] from the index into the badge cache — never
+  /// asset.file. The index holds every asset's size by id regardless of album,
+  /// so the legacy/album path can show badges without exporting files.
+  Future<void> _seedSizesFromIndex(List<String> ids) async {
+    if (ids.isEmpty) return;
+    final sizes = await ref.read(mediaIndexDatabaseProvider).sizesFor(ids);
+    AssetSizeCache.putAll(sizes);
   }
 
   /// Background: bring the index up to date, then refresh the view if the user
@@ -391,10 +413,18 @@ class LibraryNotifier extends Notifier<LibraryState> {
       limit: _pageSize,
       offset: offset,
     );
+    // Fill this page's badge sizes via the native channel now (never
+    // asset.file), so badges appear immediately instead of waiting for the
+    // full background pass.
+    final missing = [for (final r in rows) if (r.sizeBytes == null) r.id];
+    final fresh = missing.isEmpty
+        ? const <String, int>{}
+        : await ref.read(mediaIndexServiceProvider).resolveSizesFor(missing);
     for (final r in rows) {
       final s = r.sizeBytes;
       if (s != null && s > 0) AssetSizeCache.put(r.id, s);
     }
+    AssetSizeCache.putAll(fresh);
     final entities = await _entitiesForIds([for (final r in rows) r.id]);
     final merged =
         reset ? entities : <AssetEntity>[...state.assets, ...entities];
@@ -453,6 +483,9 @@ class LibraryNotifier extends Notifier<LibraryState> {
       final raw = end > 0
           ? await currentPath.getAssetListRange(start: 0, end: end)
           : <AssetEntity>[];
+      // Seed badge sizes from the index before copyWith re-derives the display
+      // list — so a client-side size sort here is correct, and no asset.file.
+      await _seedSizesFromIndex([for (final a in raw) a.id]);
 
       state = state.copyWith(
         albums: paths,

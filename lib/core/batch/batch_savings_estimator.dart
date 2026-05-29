@@ -56,11 +56,11 @@ abstract final class BatchSavingsEstimator {
     final int totalOriginal;
     final bool isApprox;
     if (assets.length <= exactThreshold) {
-      totalOriginal = await _sumSizes(assets);
+      totalOriginal = _sumSizes(assets);
       isApprox = false;
     } else {
       final sample = _pickSample(assets, sampleSize);
-      final sampleSum = await _sumSizes(sample);
+      final sampleSum = _sumSizes(sample);
       final avg = sampleSum / sample.length;
       totalOriginal = (avg * assets.length).round();
       isApprox = true;
@@ -92,9 +92,14 @@ abstract final class BatchSavingsEstimator {
     ];
   }
 
-  static Future<int> _sumSizes(List<AssetEntity> assets) async {
-    final sizes = await Future.wait(assets.map(AssetSizeCache.load));
-    return sizes.fold<int>(0, (sum, s) => sum + (s ?? 0));
+  // Reads sizes from the index-seeded cache (sync, never asset.file). Assets
+  // not yet in the cache count as 0; the estimate is approximate by design.
+  static int _sumSizes(List<AssetEntity> assets) {
+    var sum = 0;
+    for (final a in assets) {
+      sum += AssetSizeCache.get(a.id) ?? 0;
+    }
+    return sum;
   }
 
   /// Mirrors CompressEstimateCard._ratio so screens stay consistent.

@@ -37,7 +37,6 @@ void main() {
       db: db,
       source: source,
       sizeLookup: (_) async => {},
-      fallbackSize: (_) async => null,
     );
 
     await svc.syncMetadata(batch: 2); // exercises multi-batch paging
@@ -50,7 +49,6 @@ void main() {
       db: db,
       source: source,
       sizeLookup: (_) async => {},
-      fallbackSize: (_) async => null,
     );
     await svc.syncMetadata();
 
@@ -66,7 +64,6 @@ void main() {
       db: db,
       source: source,
       sizeLookup: (_) async => {},
-      fallbackSize: (_) async => null,
     );
     await svc.syncMetadata();
     await db.setSize('a', 4242);
@@ -76,14 +73,13 @@ void main() {
     expect(row.sizeBytes, 4242);
   });
 
-  test('resolveSizes uses native first, then fallback, sentinel for the rest',
+  test('resolveSizes takes native sizes, sentinels the rest (no asset.file)',
       () async {
-    final source = _FakeSource([_a('a'), _a('b'), _a('c'), _a('d')]);
+    final source = _FakeSource([_a('a'), _a('b'), _a('c')]);
     final svc = MediaIndexService(
       db: db,
       source: source,
-      sizeLookup: (ids) async => {'a': 10, 'b': 20}, // native resolves a,b
-      fallbackSize: (id) async => id == 'c' ? 30 : null, // c via file, d fails
+      sizeLookup: (ids) async => {'a': 10, 'b': 20}, // native resolves a,b only
     );
     await svc.syncMetadata();
 
@@ -94,9 +90,22 @@ void main() {
     };
     expect(byId['a'], 10);
     expect(byId['b'], 20);
-    expect(byId['c'], 30);
-    expect(byId['d'], MediaIndexService.unknownSize); // 0 = tried, unknown
-    // And the pass terminated — nothing left marked missing.
+    expect(byId['c'], MediaIndexService.unknownSize); // 0 = tried, unknown
+    // The pass terminated — nothing left marked missing, no file ever opened.
     expect(await db.idsMissingSize(), isEmpty);
+  });
+
+  test('resolveSizesFor fills a specific page and persists', () async {
+    final source = _FakeSource([_a('a'), _a('b')]);
+    final svc = MediaIndexService(
+      db: db,
+      source: source,
+      sizeLookup: (ids) async => {for (final id in ids) id: id.length},
+    );
+    await svc.syncMetadata();
+
+    final fresh = await svc.resolveSizesFor(['a']);
+    expect(fresh, {'a': 1});
+    expect(await db.sizesFor(['a', 'b']), {'a': 1}); // 'b' untouched
   });
 }

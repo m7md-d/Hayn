@@ -3,7 +3,6 @@ import 'dart:math' as math;
 import 'package:drift/drift.dart' show Value;
 import 'package:photo_manager/photo_manager.dart';
 
-import '../../core/async/concurrency_limiter.dart';
 import 'media_index_database.dart';
 import 'media_size_channel.dart';
 
@@ -59,27 +58,24 @@ class PhotoManagerAssetSource implements AssetMetadataSource {
 }
 
 typedef SizeLookup = Future<Map<String, int>> Function(List<String> ids);
-typedef FallbackSize = Future<int?> Function(String id);
 
 class MediaIndexService {
   MediaIndexService({
     required this.db,
     AssetMetadataSource? source,
     SizeLookup? sizeLookup,
-    FallbackSize? fallbackSize,
   })  : source = source ?? PhotoManagerAssetSource(),
-        sizeLookup = sizeLookup ?? MediaSizeChannel.getSizes,
-        fallbackSize = fallbackSize ?? _photoManagerFileSize;
+        sizeLookup = sizeLookup ?? MediaSizeChannel.getSizes;
 
   final MediaIndexDatabase db;
   final AssetMetadataSource source;
   final SizeLookup sizeLookup;
-  final FallbackSize fallbackSize;
 
-  static final ConcurrencyLimiter _fallbackLimiter = ConcurrencyLimiter(3);
-
-  /// Written when a size can't be resolved at all, so the row leaves the
+  /// Written when the platform can't resolve a size, so the row leaves the
   /// "missing size" set and the pass terminates instead of retrying forever.
+  /// We deliberately do NOT fall back to `asset.file` — on iOS that exports a
+  /// full copy of the original just to measure it, which ballooned app storage
+  /// past a gigabyte while scrolling. A missing size simply shows no badge.
   static const int unknownSize = 0;
 
   /// Enumerate the whole library, upsert metadata, prune vanished rows.
@@ -101,33 +97,30 @@ class MediaIndexService {
     if (removed.isNotEmpty) await db.deleteIds(removed);
   }
 
-  /// Fill missing byte sizes. Native first (no file opened), then the bounded
-  /// per-file fallback for whatever the platform couldn't answer.
+  /// Fill missing byte sizes from the platform's cheap native lookup only.
+  /// Anything it can't answer is marked [unknownSize] so the pass terminates;
+  /// no file is ever opened.
   Future<void> resolveSizes({int batch = 200, int maxBatches = 1000}) async {
     for (var i = 0; i < maxBatches; i++) {
       final ids = await db.idsMissingSize(limit: batch);
       if (ids.isEmpty) break;
 
-      final resolved = <String, int>{...await sizeLookup(ids)};
-      for (final id in ids) {
-        if (resolved.containsKey(id)) continue;
-        final size = await _fallbackLimiter.run(() => fallbackSize(id));
-        resolved[id] = size ?? unknownSize;
-      }
+      final native = await sizeLookup(ids);
+      final resolved = <String, int>{
+        for (final id in ids) id: native[id] ?? unknownSize,
+      };
       await db.setSizes(resolved);
     }
   }
 
-  static Future<int?> _photoManagerFileSize(String id) async {
-    final asset = await AssetEntity.fromId(id);
-    if (asset == null) return null;
-    try {
-      final file = await asset.file;
-      if (file == null) return null;
-      return await file.length();
-    } catch (_) {
-      return null;
-    }
+  /// Resolve sizes for a specific set of ids right now (native only), persist
+  /// them, and return them. Called when a grid page loads so its badges appear
+  /// immediately instead of waiting for the full background pass.
+  Future<Map<String, int>> resolveSizesFor(List<String> ids) async {
+    if (ids.isEmpty) return const {};
+    final native = await sizeLookup(ids);
+    if (native.isNotEmpty) await db.setSizes(native);
+    return native;
   }
 
   MediaAssetsCompanion _toRow(AssetEntity a) => MediaAssetsCompanion.insert(

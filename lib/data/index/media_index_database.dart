@@ -118,10 +118,47 @@ class MediaIndexDatabase extends _$MediaIndexDatabase {
     return rows.map((r) => r.read(mediaAssets.id)!).toSet();
   }
 
+  /// All ids matching the filter (no paging). Powers "select all" across the
+  /// whole library — ids only, so no AssetEntity or thumbnail is materialised.
+  Future<List<String>> matchingIds({
+    int? typeFilter,
+    int? minSize,
+    int? maxSize,
+    List<String> formatNeedles = const [],
+  }) async {
+    final q = selectOnly(mediaAssets)..addColumns([mediaAssets.id]);
+    final pred = _predicate(
+      typeFilter: typeFilter,
+      minSize: minSize,
+      maxSize: maxSize,
+      formatNeedles: formatNeedles,
+    );
+    if (pred != null) q.where(pred);
+    final rows = await q.get();
+    return rows.map((r) => r.read(mediaAssets.id)!).toList();
+  }
+
   Future<int> totalCount() async {
     final c = mediaAssets.id.count();
     final q = selectOnly(mediaAssets)..addColumns([c]);
     return (await q.getSingle()).read(c) ?? 0;
+  }
+
+  /// Resolved byte sizes for the given ids (skips unknown/missing). Lets any
+  /// view — including the album path that still enumerates via photo_manager —
+  /// seed its size badges from the index instead of touching files.
+  Future<Map<String, int>> sizesFor(List<String> ids) async {
+    if (ids.isEmpty) return const {};
+    final q = selectOnly(mediaAssets)
+      ..addColumns([mediaAssets.id, mediaAssets.sizeBytes])
+      ..where(mediaAssets.id.isIn(ids) & mediaAssets.sizeBytes.isNotNull());
+    final rows = await q.get();
+    final out = <String, int>{};
+    for (final r in rows) {
+      final s = r.read(mediaAssets.sizeBytes);
+      if (s != null && s > 0) out[r.read(mediaAssets.id)!] = s;
+    }
+    return out;
   }
 
   /// Ids missing a resolved byte size — the size pass works through these.

@@ -56,8 +56,9 @@ class _MediaThumbnailState extends State<MediaThumbnail> {
     } else {
       _loadThumb();
     }
+    // Size comes from the index-seeded cache only (set synchronously before
+    // the page's tiles build). Never resolved here via asset.file.
     _sizeBytes = AssetSizeCache.get(widget.asset.id);
-    if (_sizeBytes == null) _loadSize();
   }
 
   @override
@@ -65,14 +66,12 @@ class _MediaThumbnailState extends State<MediaThumbnail> {
     super.didUpdateWidget(old);
     if (old.asset.id != widget.asset.id) {
       final cached = ThumbnailCache.get(widget.asset.id);
-      final size = AssetSizeCache.get(widget.asset.id);
       setState(() {
         _thumb = cached;
         _loaded = cached != null;
-        _sizeBytes = size;
+        _sizeBytes = AssetSizeCache.get(widget.asset.id);
       });
       if (cached == null) _loadThumb();
-      if (size == null) _loadSize();
     }
   }
 
@@ -90,16 +89,6 @@ class _MediaThumbnailState extends State<MediaThumbnail> {
       _thumb = data;
       _loaded = true;
     });
-  }
-
-  Future<void> _loadSize() async {
-    final asset = widget.asset;
-    final size = await AssetSizeCache.load(
-      asset,
-      cancelled: () => !mounted || widget.asset.id != asset.id,
-    );
-    if (size == null || !mounted || widget.asset.id != asset.id) return;
-    setState(() => _sizeBytes = size);
   }
 
   String _formatBytes(int bytes) {

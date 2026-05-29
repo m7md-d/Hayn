@@ -123,6 +123,19 @@ void main() {
     expect(all.toSet().length, 10); // no dupes, no skips across pages
   });
 
+  test('matchingIds returns the whole filtered set (powers select-all)',
+      () async {
+    await db.upsertAll([
+      _row('img1', type: 1),
+      _row('img2', type: 1),
+      _row('vid1', type: 2),
+    ]);
+
+    expect((await db.matchingIds()).toSet(), {'img1', 'img2', 'vid1'});
+    expect((await db.matchingIds(typeFilter: 1)).toSet(), {'img1', 'img2'});
+    expect(await db.matchingIds(typeFilter: 2), ['vid1']);
+  });
+
   test('size pass helpers: missing ids, setSize, then none missing', () async {
     await db.upsertAll([_row('a'), _row('b', size: 50), _row('c')]);
 
