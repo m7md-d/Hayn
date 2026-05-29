@@ -64,6 +64,9 @@ class ToolsScreen extends ConsumerWidget {
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       body: CustomScrollView(
+        // Not primary: the Library grid owns the single PrimaryScrollController
+        // so iOS status-bar-tap-to-top has one unambiguous target across tabs.
+        primary: false,
         physics: const BouncingScrollPhysics(
           parent: AlwaysScrollableScrollPhysics(),
         ),
