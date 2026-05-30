@@ -25,6 +25,10 @@ import 'aspect_ratio_chips.dart';
 //   • Pan ends → clear active handle, leave rect at rest.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Magnifier loupe geometry (shown while dragging a crop handle).
+const double _kLoupe = 104;
+const double _kLoupeGap = 28;
+
 enum _CropHandle {
   topLeft,
   topRight,
@@ -79,23 +83,10 @@ class _CropCanvasState extends State<CropCanvas> {
   Offset _grabOffset = Offset.zero; // for body drag
   bool _initialised = false;
 
-  // Pinch-zoom of the whole canvas. InteractiveViewer maps pointer events back
-  // into the child's (unzoomed) coordinate space, so all the crop-rect math
-  // below keeps working untouched — zooming just lets the user get close enough
-  // to place a tiny crop precisely. 2 fingers zoom/pan; 1 finger drags handles.
-  late final TransformationController _zoomCtrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _zoomCtrl = TransformationController();
-  }
-
-  @override
-  void dispose() {
-    _zoomCtrl.dispose();
-    super.dispose();
-  }
+  // While a handle is being dragged we float a magnifier loupe over the finger
+  // so the user can place a small/precise crop without the image being zoomed
+  // (zooming the whole canvas fought the handle gestures). Purely visual.
+  Offset? _magnifierAt;
 
   void _recomputeImageRect(Size viewport) {
     final rotated = widget.rotationQuarters.isOdd;
@@ -220,6 +211,7 @@ class _CropCanvasState extends State<CropCanvas> {
     _active = handle;
     _grabOffset = d.localPosition - _cropRect.topLeft;
     HapticFeedback.selectionClick();
+    setState(() => _magnifierAt = d.localPosition);
   }
 
   void _onPanUpdate(DragUpdateDetails d) {
@@ -269,12 +261,16 @@ class _CropCanvasState extends State<CropCanvas> {
     }
     r = _clampToImage(r);
 
-    setState(() => _cropRect = r);
+    setState(() {
+      _cropRect = r;
+      _magnifierAt = p;
+    });
     _notify();
   }
 
   void _onPanEnd(DragEndDetails d) {
     _active = _CropHandle.none;
+    setState(() => _magnifierAt = null);
   }
 
   Rect _snapMinSize(Rect r) {
@@ -384,8 +380,7 @@ class _CropCanvasState extends State<CropCanvas> {
     if (rotationChanged) {
       // After rotation we recompute the image rect and reset the crop to
       // cover it — the previous crop is no longer meaningful in the new
-      // orientation. Also drop any zoom so the fresh crop starts framed.
-      _zoomCtrl.value = Matrix4.identity();
+      // orientation.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         _recomputeImageRect(_lastViewport);
@@ -427,15 +422,7 @@ class _CropCanvasState extends State<CropCanvas> {
       final rotated = widget.rotationQuarters.isOdd;
       final preW = rotated ? _imgRect.height : _imgRect.width;
       final preH = rotated ? _imgRect.width : _imgRect.height;
-      return InteractiveViewer(
-        transformationController: _zoomCtrl,
-        // 1-finger stays with the crop handles below; 2 fingers zoom + pan.
-        panEnabled: false,
-        scaleEnabled: true,
-        minScale: 1,
-        maxScale: 6,
-        clipBehavior: Clip.hardEdge,
-        child: Stack(
+      return Stack(
         children: [
           // ── Image with rotation + flip ───────────────────────────────
           Positioned(
@@ -481,8 +468,30 @@ class _CropCanvasState extends State<CropCanvas> {
               ),
             ),
           ),
+
+          // ── Magnifier loupe — floats above the finger while dragging a
+          // handle so a tiny/precise crop is placeable without zooming. The
+          // lens sits above the touch point; focalPointOffset pulls the
+          // sampled region back down onto the finger.
+          if (_magnifierAt != null)
+            Positioned(
+              left: (_magnifierAt!.dx - _kLoupe / 2)
+                  .clamp(0.0, viewport.width - _kLoupe),
+              top: _magnifierAt!.dy - _kLoupe - _kLoupeGap,
+              child: IgnorePointer(
+                child: RawMagnifier(
+                  size: const Size(_kLoupe, _kLoupe),
+                  magnificationScale: 1.8,
+                  focalPointOffset: const Offset(0, _kLoupe / 2 + _kLoupeGap),
+                  decoration: MagnifierDecoration(
+                    shape: CircleBorder(
+                      side: BorderSide(color: context.hc.accent, width: 2),
+                    ),
+                  ),
+                ),
+              ),
+            ),
         ],
-        ),
       );
     });
   }

@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:isolate';
 import 'dart:typed_data';
 import 'dart:ui' show Rect;
+import 'dart:ui' as ui;
 
-import 'package:flutter_image_compress/flutter_image_compress.dart' as fic;
 import 'package:image/image.dart' as img;
 import 'package:photo_manager/photo_manager.dart';
 
@@ -70,16 +70,21 @@ class ImageCropTask extends MediaTask {
     }
     if (_cancelled) return;
 
-    // package:image decodes JPEG/PNG/GIF/BMP/TIFF/WebP but NOT HEIC/HEIF —
-    // which is exactly what an iPhone camera produces. Transcode those to a
-    // lossless PNG first via the SYSTEM decoder (off the platform thread, with
-    // orientation already baked in), so the pure-Dart transform can decode it.
-    final decodable = await _ensureDecodable(src);
+    // Decode through the PLATFORM ENGINE (ui.instantiateImageCodec), which on
+    // iOS natively decodes HEIC/HEIF (and JPEG/PNG/WebP) — package:image can't.
+    // It also bakes EXIF orientation into the pixels, so the transform below
+    // works in upright coordinates that match the on-screen preview. We get
+    // raw RGBA + dimensions and hand those to the isolate for the pixel work.
+    final decoded = await _decodeRgba(src);
+    if (decoded == null) throw StateError('Crop failed to decode');
     if (_cancelled) return;
 
     // Pixel transform off the main isolate (package:image is pure Dart).
     // Copy fields into locals so the closure captures only sendable values
     // (Uint8List + primitives), never `this`.
+    final rgba = decoded.rgba;
+    final w = decoded.width;
+    final h = decoded.height;
     final rq = rotationQuarters;
     final fh = flipH;
     final fv = flipV;
@@ -88,9 +93,9 @@ class ImageCropTask extends MediaTask {
     final fw = cropFraction.width;
     final fhgt = cropFraction.height;
     final cropped = await Isolate.run(
-      () => _transform(decodable, rq, fh, fv, fl, ft, fw, fhgt),
+      () => transformRgba(rgba, w, h, rq, fh, fv, fl, ft, fw, fhgt),
     );
-    if (cropped == null) throw StateError('Crop failed to decode');
+    if (cropped == null) throw StateError('Crop failed to encode');
     if (_cancelled) return;
     yield const TaskProgress(progress: 0.6, phase: 'encoding');
 
@@ -121,25 +126,24 @@ class ImageCropTask extends MediaTask {
     yield const TaskProgress(progress: 1, phase: '1/1');
   }
 
-  /// Returns bytes package:image can decode. HEIC/HEIF go through the system
-  /// codec (→ lossless PNG); everything else (JPEG/PNG/WebP/…) is already
-  /// decodable and passes through untouched (no needless re-encode).
-  Future<Uint8List> _ensureDecodable(Uint8List src) async {
-    final fmt = ImageProbe.sniff(src);
-    if (fmt != SniffedFormat.heic) return src;
+  /// Decode [src] to raw RGBA + dimensions via the platform engine (handles
+  /// HEIC on iOS, with EXIF orientation already applied). Null on failure.
+  Future<({Uint8List rgba, int width, int height})?> _decodeRgba(
+      Uint8List src) async {
     try {
-      final png = await fic.FlutterImageCompress.compressWithList(
-        src,
-        format: fic.CompressFormat.png,
-        quality: 100,
-        minWidth: 1000000,
-        minHeight: 1000000,
-      );
-      if (png.isNotEmpty) return Uint8List.fromList(png);
+      final codec = await ui.instantiateImageCodec(src);
+      final frame = await codec.getNextFrame();
+      final image = frame.image;
+      final bd = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      final w = image.width;
+      final h = image.height;
+      image.dispose();
+      codec.dispose();
+      if (bd == null) return null;
+      return (rgba: bd.buffer.asUint8List(), width: w, height: h);
     } catch (_) {
-      // Fall through — the transform will surface a decode failure if any.
+      return null;
     }
-    return src;
   }
 
   String _outName(AssetEntity entity, String ext) {
@@ -156,10 +160,14 @@ class ImageCropTask extends MediaTask {
   Future<void> cleanup() async {}
 }
 
-/// Top-level so it can run in `Isolate.run`. Applies orientation → rotate →
+/// Top-level so it can run in `Isolate.run`. Builds an image from raw RGBA
+/// (the engine already applied EXIF orientation — no baking) then rotate →
 /// flips (matching the editor's display order) → crop, returns lossless PNG.
-Uint8List? _transform(
-  Uint8List src,
+/// Exposed (not private) so it's unit-testable with synthetic raw pixels.
+Uint8List? transformRgba(
+  Uint8List rgba,
+  int width,
+  int height,
   int rotationQuarters,
   bool flipH,
   bool flipV,
@@ -168,9 +176,14 @@ Uint8List? _transform(
   double fw,
   double fh,
 ) {
-  var im = img.decodeImage(src);
-  if (im == null) return null;
-  im = img.bakeOrientation(im);
+  if (rgba.length < width * height * 4) return null;
+  var im = img.Image.fromBytes(
+    width: width,
+    height: height,
+    bytes: rgba.buffer,
+    numChannels: 4,
+    order: img.ChannelOrder.rgba,
+  );
   if (rotationQuarters % 4 != 0) {
     im = img.copyRotate(im, angle: 90 * (rotationQuarters % 4));
   }
