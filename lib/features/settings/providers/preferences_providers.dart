@@ -20,7 +20,10 @@ enum DefaultFormat {
   avif,
   heic,
   webp,
-  jpeg;
+  jpeg,
+  // Lossless + alpha. The mandatory alpha-safe fallback in the format tree
+  // (AVIF→HEIC→WebP→PNG) and a user-selectable target in the converter.
+  png;
 
   /// Static name (Apple-flavoured). Use [labelFor] when you have the device
   /// capabilities so the HEIC/HEIF naming follows the platform.
@@ -30,6 +33,7 @@ enum DefaultFormat {
         DefaultFormat.heic => 'HEIC',
         DefaultFormat.webp => 'WebP',
         DefaultFormat.jpeg => 'JPEG',
+        DefaultFormat.png => 'PNG',
       };
 
   /// Display name swapped for platform: HEIC on Apple, HEIF elsewhere.

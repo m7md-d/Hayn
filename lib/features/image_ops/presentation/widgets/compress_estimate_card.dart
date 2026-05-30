@@ -98,6 +98,7 @@ class CompressEstimateCard extends StatelessWidget {
       DefaultFormat.heic => 0.50,
       DefaultFormat.webp => 0.60,
       DefaultFormat.jpeg => 0.90,
+      DefaultFormat.png => 0.95, // lossless — rarely shrinks a photo
       DefaultFormat.auto => 0.40,
     };
     // Quality factor: 30→0.7x, 100→1.4x of the base multiplier

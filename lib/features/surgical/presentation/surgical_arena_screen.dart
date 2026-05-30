@@ -260,6 +260,7 @@ class _SurgicalArenaScreenState extends ConsumerState<SurgicalArenaScreen> {
       DefaultFormat.heic => 0.50,
       DefaultFormat.webp => 0.60,
       DefaultFormat.jpeg => 0.90,
+      DefaultFormat.png => 0.95, // lossless — rarely shrinks a photo
       DefaultFormat.auto => 0.40,
     };
     final effectiveQuality = mode == _ArenaMode.auto ? 80 : quality;

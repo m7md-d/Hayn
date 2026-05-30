@@ -82,6 +82,9 @@ abstract final class BatchSavingsEstimator {
       DefaultFormat.heic => 0.20,
       DefaultFormat.webp => 0.28,
       DefaultFormat.jpeg => 0.42,
+      // PNG is lossless: huge for photos (usually capped at the original →
+      // ~0% saved), only wins on flat/transparent graphics.
+      DefaultFormat.png => 1.20,
       DefaultFormat.auto => 0.16,
     };
     final q = quality.clamp(30, 100);
@@ -96,6 +99,7 @@ abstract final class BatchSavingsEstimator {
       DefaultFormat.heic => 0.50,
       DefaultFormat.webp => 0.60,
       DefaultFormat.jpeg => 0.90,
+      DefaultFormat.png => 0.95, // rarely shrinks a photo
       DefaultFormat.auto => 0.40,
     };
     final qFactor = 0.7 + ((quality - 30) / 70) * 0.7;
