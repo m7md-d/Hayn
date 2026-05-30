@@ -1,5 +1,8 @@
-# Uncomment this line to define a global platform for your project
-# platform :ios, '13.0'
+# Match the Runner's deployment target. Some transitive pods (libwebp, Mantle,
+# SDWebImage*, pulled in by flutter_image_compress's iOS WebP support) declare
+# iOS 9.0 in their podspecs — below the supported minimum. Pinning the platform
+# here + the post_install loop below clears those deployment-target warnings.
+platform :ios, '13.0'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
@@ -39,5 +42,10 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+    target.build_configurations.each do |config|
+      # Force every pod up to the project's minimum so podspecs that declare
+      # iOS 9.0 (libwebp, Mantle, SDWebImage*) stop warning.
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+    end
   end
 end
