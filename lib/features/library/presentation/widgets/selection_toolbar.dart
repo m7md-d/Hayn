@@ -27,9 +27,13 @@ import '../providers/library_provider.dart';
 class SelectionToolbar extends ConsumerWidget {
   const SelectionToolbar({
     required this.hasSelection,
+    required this.isVideo,
     required this.onCompress,
     required this.onStripMetadata,
     required this.onSurgical,
+    required this.onVideoEdit,
+    required this.onTrim,
+    required this.onRemoveAudio,
     required this.onMore,
     super.key,
   });
@@ -38,9 +42,17 @@ class SelectionToolbar extends ConsumerWidget {
   /// needed (estimate, downstream screens), never materialised here — so a
   /// 10k "select all" never builds a 10k AssetEntity list.
   final bool hasSelection;
+
+  /// The selection is videos (single-type lock guarantees it's all-or-nothing).
+  /// Drives which action set shows — image tools would be wrong for a video.
+  final bool isVideo;
+
   final VoidCallback onCompress;
   final VoidCallback onStripMetadata;
   final VoidCallback onSurgical;
+  final VoidCallback onVideoEdit;
+  final VoidCallback onTrim;
+  final VoidCallback onRemoveAudio;
   final VoidCallback onMore;
 
   @override
@@ -60,58 +72,101 @@ class SelectionToolbar extends ConsumerWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // ── Savings chip (only when there's a selection) ─────────────
-            if (hasSelection)
+            // ── Savings chip (image selections only — it's a compression
+            // estimate; videos go through their own pipeline). ────────────
+            if (hasSelection && !isVideo)
               Padding(
                 padding: const EdgeInsets.fromLTRB(
                   AppSpacing.md, AppSpacing.s2, AppSpacing.md, 0,
                 ),
                 child: const _SavingsChip(),
               ),
-            // ── Action row ───────────────────────────────────────────────
+            // ── Action row — image vs video. ─────────────────────────────
             SizedBox(
               height: 64,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: _ToolbarAction(
-                      icon: Icons.compress_rounded,
-                      label: l.selectionCompress,
-                      tone: _ToolbarTone.primary,
-                      enabled: hasSelection,
-                      batchSupported: true,
-                      onTap: onCompress,
+              child: isVideo
+                  ? Row(
+                      children: [
+                        Expanded(
+                          child: _ToolbarAction(
+                            icon: Icons.video_settings_rounded,
+                            label: l.selectionCompress,
+                            tone: _ToolbarTone.primary,
+                            enabled: hasSelection,
+                            batchSupported: false,
+                            onTap: onVideoEdit,
+                          ),
+                        ),
+                        Expanded(
+                          child: _ToolbarAction(
+                            icon: Icons.content_cut_rounded,
+                            label: l.toolTrim,
+                            enabled: hasSelection,
+                            batchSupported: false,
+                            onTap: onTrim,
+                          ),
+                        ),
+                        Expanded(
+                          child: _ToolbarAction(
+                            icon: Icons.music_off_rounded,
+                            label: l.toolRemoveAudio,
+                            enabled: hasSelection,
+                            batchSupported: false,
+                            onTap: onRemoveAudio,
+                          ),
+                        ),
+                        Expanded(
+                          child: _ToolbarAction(
+                            icon: Icons.more_horiz_rounded,
+                            label: l.selectionMore,
+                            enabled: hasSelection,
+                            batchSupported: true,
+                            onTap: onMore,
+                          ),
+                        ),
+                      ],
+                    )
+                  : Row(
+                      children: [
+                        Expanded(
+                          child: _ToolbarAction(
+                            icon: Icons.compress_rounded,
+                            label: l.selectionCompress,
+                            tone: _ToolbarTone.primary,
+                            enabled: hasSelection,
+                            batchSupported: true,
+                            onTap: onCompress,
+                          ),
+                        ),
+                        Expanded(
+                          child: _ToolbarAction(
+                            icon: Icons.auto_fix_high_rounded,
+                            label: l.selectionStripMetadata,
+                            enabled: hasSelection,
+                            batchSupported: true,
+                            onTap: onStripMetadata,
+                          ),
+                        ),
+                        Expanded(
+                          child: _ToolbarAction(
+                            icon: Icons.healing_rounded,
+                            label: l.selectionSurgical,
+                            enabled: hasSelection,
+                            batchSupported: true,
+                            onTap: onSurgical,
+                          ),
+                        ),
+                        Expanded(
+                          child: _ToolbarAction(
+                            icon: Icons.more_horiz_rounded,
+                            label: l.selectionMore,
+                            enabled: hasSelection,
+                            batchSupported: true,
+                            onTap: onMore,
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                  Expanded(
-                    child: _ToolbarAction(
-                      icon: Icons.auto_fix_high_rounded,
-                      label: l.selectionStripMetadata,
-                      enabled: hasSelection,
-                      batchSupported: true,
-                      onTap: onStripMetadata,
-                    ),
-                  ),
-                  Expanded(
-                    child: _ToolbarAction(
-                      icon: Icons.healing_rounded,
-                      label: l.selectionSurgical,
-                      enabled: hasSelection,
-                      batchSupported: true,
-                      onTap: onSurgical,
-                    ),
-                  ),
-                  Expanded(
-                    child: _ToolbarAction(
-                      icon: Icons.more_horiz_rounded,
-                      label: l.selectionMore,
-                      enabled: hasSelection,
-                      batchSupported: true,
-                      onTap: onMore,
-                    ),
-                  ),
-                ],
-              ),
             ),
           ],
         ),

@@ -1487,8 +1487,14 @@ abstract class AppLocalizations {
   /// No description provided for @stripHeicUnsupported.
   ///
   /// In en, this message translates to:
-  /// **'HEIC photos can\'t be cleaned losslessly yet — use Compress (turn off \"Keep photo info\") to strip them without keeping quality artefacts.'**
+  /// **'This format can\'t be cleaned losslessly yet — use Compress (turn off \"Keep photo info\") to strip it without keeping quality artefacts.'**
   String get stripHeicUnsupported;
+
+  /// No description provided for @videoOneAtATime.
+  ///
+  /// In en, this message translates to:
+  /// **'Open one video at a time for this tool'**
+  String get videoOneAtATime;
 
   /// No description provided for @cropApplied.
   ///

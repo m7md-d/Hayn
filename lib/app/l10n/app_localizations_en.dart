@@ -772,7 +772,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get stripHeicUnsupported =>
-      'HEIC photos can\'t be cleaned losslessly yet — use Compress (turn off \"Keep photo info\") to strip them without keeping quality artefacts.';
+      'This format can\'t be cleaned losslessly yet — use Compress (turn off \"Keep photo info\") to strip it without keeping quality artefacts.';
+
+  @override
+  String get videoOneAtATime => 'Open one video at a time for this tool';
 
   @override
   String get cropApplied => 'Crop applied';

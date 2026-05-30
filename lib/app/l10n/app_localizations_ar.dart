@@ -784,7 +784,10 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get stripHeicUnsupported =>
-      'صور HEIC لا يمكن تنظيفها دون إعادة ترميز حتى الآن — استخدم الضغط (مع إطفاء «الاحتفاظ بمعلومات الصورة») لإزالتها دون أثر على الجودة.';
+      'هذه الصيغة لا يمكن تنظيفها دون إعادة ترميز حتى الآن — استخدم الضغط (مع إطفاء «الاحتفاظ بمعلومات الصورة») لإزالتها دون أثر على الجودة.';
+
+  @override
+  String get videoOneAtATime => 'افتح فيديو واحدًا لهذه الأداة حاليًا';
 
   @override
   String get cropApplied => 'تم القص';

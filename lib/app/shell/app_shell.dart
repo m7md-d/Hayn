@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:photo_manager/photo_manager.dart' show AssetType;
 import '../../core/isolates/task_runner.dart';
 import '../../features/image_ops/data/strip_metadata_task.dart';
 import '../l10n/app_localizations.dart';
@@ -58,6 +59,19 @@ class _AppShellState extends ConsumerState<AppShell> {
     // The PageView (SwipeableTabs) animates itself to match.
   }
 
+  // Video tools are per-video for now (no batch video engine yet). Route a
+  // single selected video to its screen; for several, ask to pick one.
+  void _videoRoute(BuildContext context, String base) {
+    HapticFeedback.lightImpact();
+    final ids = ref.read(libraryProvider).selectedIds.toList();
+    if (ids.isEmpty) return;
+    if (ids.length > 1) {
+      HaynSnack.info(context, AppLocalizations.of(context).videoOneAtATime);
+      return;
+    }
+    context.push('$base/${Uri.encodeComponent(ids.first)}');
+  }
+
   @override
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
@@ -83,6 +97,9 @@ class _AppShellState extends ConsumerState<AppShell> {
             ? SelectionToolbar(
                 key: const ValueKey('selection-bar'),
                 hasSelection: libraryState.selectedIds.isNotEmpty,
+                // Single-type lock guarantees the whole selection is one kind,
+                // so the toolbar shows the right tools (image vs video).
+                isVideo: libraryState.selectionType == AssetType.video,
                 onCompress: () {
                   HapticFeedback.lightImpact();
                   context.push(
@@ -90,6 +107,9 @@ class _AppShellState extends ConsumerState<AppShell> {
                     extra: libraryState.selectedIds.toList(),
                   );
                 },
+                onVideoEdit: () => _videoRoute(context, '/video-edit'),
+                onTrim: () => _videoRoute(context, '/trim'),
+                onRemoveAudio: () => _videoRoute(context, '/remove-audio'),
                 onStripMetadata: () async {
                   HapticFeedback.lightImpact();
                   final ok = await showHaynDestructiveConfirm(
