@@ -55,7 +55,7 @@ class _SeparateAudioScreenState extends ConsumerState<SeparateAudioScreen> {
 
   void _start() {
     HapticFeedback.lightImpact();
-    context.replace('/audio-result/${widget.assetId}');
+    context.replace('/audio-result/${Uri.encodeComponent(widget.assetId)}');
   }
 
   @override

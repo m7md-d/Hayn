@@ -99,6 +99,13 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     final theme = Theme.of(context);
     final notifier = ref.read(libraryProvider.notifier);
 
+    // Follow the open detail viewer LIVE: as the user swipes/scrubs to another
+    // photo, scroll the grid (under the transparent overlay) to that cell, so
+    // closing the viewer shrinks the Hero straight into the visible tile.
+    ref.listen<int?>(detailFocusIndexProvider, (_, next) {
+      if (next != null) _followGrid(next);
+    });
+
     final title = state.isSelecting
         ? l.librarySelectedCount(state.selectedIds.length)
         : l.libraryTitle;
@@ -425,25 +432,25 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     // single segment; go_router decodes it back on the other side.
     await context.push('/asset/${Uri.encodeComponent(id)}');
     if (!mounted) return;
-    // Returned from the viewer — scroll the grid to whatever photo it last
-    // showed (relative to where we tapped, so header heights cancel out).
-    _scrollGridToFocus();
+    // The grid already followed the viewer live (see the listener in build),
+    // so the Hero close shrinks straight into the on-screen cell. Just clear
+    // the focus marker.
+    ref.read(detailFocusIndexProvider.notifier).state = null;
   }
 
-  void _scrollGridToFocus() {
-    final focus = ref.read(detailFocusIndexProvider);
-    ref.read(detailFocusIndexProvider.notifier).state = null;
-    if (focus == null || focus == _enterIndex) return;
+  /// Position the grid so the [focus] cell sits where the tapped cell was, via
+  /// a RELATIVE offset (so the app-bar/strip heights cancel out and we don't
+  /// need to measure them). Instant: the detail route is a transparent overlay,
+  /// so moving the grid underneath means the Hero close lands on the right
+  /// on-screen tile instead of flying to a stale (or off-screen) position.
+  void _followGrid(int focus) {
     if (!_primaryController.hasClients) return;
-    final rowDelta = (focus ~/ _crossAxisCount) - (_enterIndex ~/ _crossAxisCount);
-    if (rowDelta == 0) return;
+    final rowDelta =
+        (focus ~/ _crossAxisCount) - (_enterIndex ~/ _crossAxisCount);
     final target = (_enterOffset + rowDelta * _rowStride)
         .clamp(0.0, _primaryController.position.maxScrollExtent);
-    _primaryController.animateTo(
-      target,
-      duration: const Duration(milliseconds: 360),
-      curve: Curves.easeOutCubic,
-    );
+    if ((_primaryController.offset - target).abs() < 0.5) return;
+    _primaryController.jumpTo(target);
   }
 
   void _onLongPress(String id) {

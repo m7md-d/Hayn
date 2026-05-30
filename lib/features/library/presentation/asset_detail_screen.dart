@@ -62,22 +62,19 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
     _preloadNeighbors(_currentIndex);
   }
 
-  /// Kicks off background thumbnail fetches for ±2 neighbors so the user's
-  /// next swipe lands on already-cached bytes. Materialises each neighbour's
-  /// entity lazily (bounded) — never the whole list at once.
+  /// Warms the immediate neighbours' SMALL (360-px) thumbnail through the
+  /// shared bounded cache so the next swipe shows something instantly. The
+  /// crisp 1080-px version is loaded by the page itself only once it's the
+  /// active one (see [_AssetPageState._scheduleHiRes]) — decoding full-res for
+  /// neighbours is what made scrubbing large photos lurch.
   void _preloadNeighbors(int index) {
-    for (final offset in const [-2, -1, 1, 2]) {
+    for (final offset in const [-1, 1]) {
       final i = index + offset;
       if (i < 0 || i >= _entries.length) continue;
       final id = _entries[i].id;
       if (ThumbnailCache.get(id) != null) continue;
       AssetEntityCache.load(id).then((asset) {
-        if (asset == null) return;
-        asset
-            .thumbnailDataWithSize(const ThumbnailSize.square(1080))
-            .then((data) {
-          if (data != null) ThumbnailCache.put(id, data);
-        });
+        if (asset != null) ThumbnailCache.load(asset);
       });
     }
   }
@@ -141,39 +138,46 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
     HaynSnack.info(context, l.assetDetailComingSoon(name));
   }
 
+  // iOS PhotoKit ids contain '/' (e.g. UUID/L0/001); a raw interpolation into
+  // a `/route/:id` path splits into extra segments and the target screen
+  // resolves the wrong (or no) asset. Encode so the id stays one segment;
+  // go_router decodes pathParameters back on the other side.
+  String get _curId => _entries[_currentIndex].id;
+  String get _curIdPath => Uri.encodeComponent(_curId);
+
   void _compress() {
     HapticFeedback.lightImpact();
-    context.push('/compress', extra: [_entries[_currentIndex].id]);
+    context.push('/compress', extra: [_curId]);
   }
 
   void _crop() {
     HapticFeedback.lightImpact();
-    context.push('/crop/${_entries[_currentIndex].id}');
+    context.push('/crop/$_curIdPath');
   }
 
   void _surgical() {
     HapticFeedback.lightImpact();
-    context.push('/surgical/${_entries[_currentIndex].id}');
+    context.push('/surgical/$_curIdPath');
   }
 
   void _videoEdit() {
     HapticFeedback.lightImpact();
-    context.push('/video-edit/${_entries[_currentIndex].id}');
+    context.push('/video-edit/$_curIdPath');
   }
 
   void _trim() {
     HapticFeedback.lightImpact();
-    context.push('/trim/${_entries[_currentIndex].id}');
+    context.push('/trim/$_curIdPath');
   }
 
   void _cropVideo() {
     HapticFeedback.lightImpact();
-    context.push('/crop-video/${_entries[_currentIndex].id}');
+    context.push('/crop-video/$_curIdPath');
   }
 
   void _removeAudio() {
     HapticFeedback.lightImpact();
-    context.push('/remove-audio/${_entries[_currentIndex].id}');
+    context.push('/remove-audio/$_curIdPath');
   }
 
   Future<void> _stripMetadata() async {
@@ -416,7 +420,7 @@ class _AssetPageState extends State<_AssetPage>
       vsync: this,
       duration: AppDuration.normal,
     );
-    _txCtrl.addListener(_maybeUnlockZoom);
+    _txCtrl.addListener(_syncZoomLock);
 
     // Show the cached small thumb instantly (Hero landing), then materialise
     // the entity lazily and swap in the crisp 1080-px version.
@@ -431,9 +435,37 @@ class _AssetPageState extends State<_AssetPage>
     );
     if (entity == null || !mounted) return;
     setState(() => _entity = entity);
-    final data =
-        await entity.thumbnailDataWithSize(const ThumbnailSize.square(1080));
-    if (mounted) setState(() => _hiResBytes = data);
+    _scheduleHiRes();
+  }
+
+  /// Decode the crisp 1080-px image only for the ACTIVE page, and only after a
+  /// short settle — so flinging the filmstrip past dozens of large photos
+  /// doesn't decode full-res for every transient page. The cached low-res
+  /// (360-px) carries the view in the meantime.
+  void _scheduleHiRes() {
+    if (_hiResBytes != null || _entity == null || !widget.isActive) return;
+    final id = widget.entry.id;
+    Future.delayed(const Duration(milliseconds: 130), () async {
+      if (!mounted ||
+          !widget.isActive ||
+          _hiResBytes != null ||
+          _entity == null ||
+          widget.entry.id != id) {
+        return;
+      }
+      final data =
+          await _entity!.thumbnailDataWithSize(const ThumbnailSize.square(1080));
+      if (mounted && widget.entry.id == id) {
+        setState(() => _hiResBytes = data);
+      }
+    });
+  }
+
+  @override
+  void didUpdateWidget(_AssetPage old) {
+    super.didUpdateWidget(old);
+    // Became the active page (e.g. the scrub settled here) → load full-res.
+    if (widget.isActive && !old.isActive) _scheduleHiRes();
   }
 
   @override
@@ -441,7 +473,7 @@ class _AssetPageState extends State<_AssetPage>
     _zoomAnim.dispose();
     _dismissAnim.dispose();
     _infoAnim.dispose();
-    _txCtrl.removeListener(_maybeUnlockZoom);
+    _txCtrl.removeListener(_syncZoomLock);
     _txCtrl.dispose();
     super.dispose();
   }
@@ -530,7 +562,7 @@ class _AssetPageState extends State<_AssetPage>
     if (!mounted) return;
     final wasFirst = e.pointer == _firstPointerId;
     _activePointers.remove(e.pointer);
-    _maybeUnlockZoom();
+    _syncZoomLock();
     if (wasFirst) {
       _resolveDragOnRelease(e);
       _firstPointerId = null;
@@ -540,15 +572,25 @@ class _AssetPageState extends State<_AssetPage>
     }
   }
 
-  void _maybeUnlockZoom() {
-    if (!_zoomLocked) return;
-    if (_activePointers.length > 1) return;
-    final scale = _txCtrl.value.getMaxScaleOnAxis();
-    if (scale > 1.02) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _setZoomLocked(false);
-    });
+  /// Keep the PageView frozen whenever the image is zoomed (by pinch OR
+  /// double-tap) or a pinch is in progress — otherwise a one-finger pan on a
+  /// zoomed image is stolen by the PageView as a swipe to the next photo.
+  /// Unlocks once back to 1× and down to ≤1 finger.
+  void _syncZoomLock() {
+    final shouldLock =
+        _txCtrl.value.getMaxScaleOnAxis() > 1.02 || _activePointers.length >= 2;
+    if (shouldLock == _zoomLocked) return;
+    if (shouldLock) {
+      _setZoomLocked(true);
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (_txCtrl.value.getMaxScaleOnAxis() <= 1.02 &&
+            _activePointers.length < 2) {
+          _setZoomLocked(false);
+        }
+      });
+    }
   }
 
   void _resolveDragOnRelease(PointerEvent e) {
