@@ -1382,6 +1382,18 @@ abstract class AppLocalizations {
   /// **'Open comparison'**
   String get compressOpenComparison;
 
+  /// No description provided for @compressComputing.
+  ///
+  /// In en, this message translates to:
+  /// **'Compressing…'**
+  String get compressComputing;
+
+  /// No description provided for @compressAlphaFlattenWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'JPEG can\'t keep transparency — it will be flattened onto white.'**
+  String get compressAlphaFlattenWarning;
+
   /// No description provided for @cropApplied.
   ///
   /// In en, this message translates to:

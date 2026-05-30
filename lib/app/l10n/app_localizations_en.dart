@@ -702,6 +702,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get compressOpenComparison => 'Open comparison';
 
   @override
+  String get compressComputing => 'Compressing…';
+
+  @override
+  String get compressAlphaFlattenWarning =>
+      'JPEG can\'t keep transparency — it will be flattened onto white.';
+
+  @override
   String get cropApplied => 'Crop applied';
 
   @override

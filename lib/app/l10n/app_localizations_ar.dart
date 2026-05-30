@@ -713,6 +713,13 @@ class AppLocalizationsAr extends AppLocalizations {
   String get compressOpenComparison => 'افتح المقارنة';
 
   @override
+  String get compressComputing => 'جارٍ الضغط…';
+
+  @override
+  String get compressAlphaFlattenWarning =>
+      'JPEG لا يحفظ الشفافية — ستُسطَّح الصورة على خلفية بيضاء.';
+
+  @override
   String get cropApplied => 'تم القص';
 
   @override

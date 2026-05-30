@@ -255,6 +255,8 @@
   "compressOriginalLabel": "Original",
   "compressPreviewLabel": "Preview",
   "compressOpenComparison": "Open comparison",
+  "compressComputing": "Compressing…",
+  "compressAlphaFlattenWarning": "JPEG can't keep transparency — it will be flattened onto white.",
   "cropApplied": "Crop applied",
   "cropRotateCw": "Rotate right",
   "cropRotateCcw": "Rotate left",
