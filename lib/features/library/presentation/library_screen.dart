@@ -7,6 +7,7 @@ import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
 import '../../../app/theme/motion.dart';
 import '../../../shared/widgets/widgets.dart';
+import '../../tasks/presentation/widgets/tasks_app_bar_button.dart';
 import '../domain/entities/media_filter.dart';
 import 'providers/library_provider.dart';
 import 'widgets/album_picker_sheet.dart';
@@ -124,10 +125,13 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
             parent: AlwaysScrollableScrollPhysics(),
           ),
           slivers: [
-          // ── Large-title app bar ─────────────────────────────────────────
-          SliverAppBar.large(
+          // ── Pinned title bar — title + actions stay at the top at all
+          // times (no large collapsing title), per the request to keep the
+          // title up with the buttons.
+          SliverAppBar(
             pinned: true,
-            stretch: true,
+            centerTitle: false,
+            titleSpacing: AppSpacing.md,
             backgroundColor: theme.scaffoldBackgroundColor,
             surfaceTintColor: Colors.transparent,
             shadowColor: hc.border,
@@ -182,6 +186,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
                     }),
                   ]
                 : [
+                    const TasksAppBarButton(),
                     if (state.permissionStatus ==
                         LibraryPermissionStatus.limited)
                       IconButton(
@@ -210,7 +215,6 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
                       onPressed: () => _openSortFilter(context, state, notifier),
                     ),
                   ],
-            expandedHeight: 112,
             systemOverlayStyle: theme.brightness == Brightness.dark
                 ? SystemUiOverlayStyle.light
                 : SystemUiOverlayStyle.dark,

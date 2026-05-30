@@ -8,7 +8,6 @@ import '../theme/design_tokens.dart';
 import '../theme/motion.dart';
 import '../../features/library/presentation/providers/library_provider.dart';
 import '../../features/library/presentation/widgets/selection_toolbar.dart';
-import '../../features/tasks/presentation/widgets/floating_tasks_badge.dart';
 import '../../shared/widgets/widgets.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -62,20 +61,11 @@ class _AppShellState extends ConsumerState<AppShell> {
     final isSelecting =
         libraryState.isSelecting && widget.navigationShell.currentIndex == 0;
 
-    // Floating tasks badge surfaces on Library (0) and Tools (1). It is the
-    // ONLY entry point into the queue now that Tasks is no longer a tab.
-    // Hidden on Settings (2) so a focused screen stays distraction-free.
-    final currentTab = widget.navigationShell.currentIndex;
-    final showBadge = currentTab == 0 || currentTab == 1;
-
+    // Task queue is reached via the fixed TasksAppBarButton in each screen's
+    // app bar now (replaces the old draggable floating bubble).
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      body: Stack(
-        children: [
-          widget.navigationShell,
-          if (showBadge) const Positioned.fill(child: FloatingTasksBadge()),
-        ],
-      ),
+      body: widget.navigationShell,
       bottomNavigationBar: AnimatedSwitcher(
         duration: AppDuration.normal,
         switchInCurve: AppCurves.decelerate,

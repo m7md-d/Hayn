@@ -206,16 +206,19 @@ class _HaynComparisonViewerState extends State<HaynComparisonViewer>
                   ),
                 ),
 
-                // ── Labels in viewport corners (do not move with pan/zoom).
-                PositionedDirectional(
+                // ── Labels pinned to the VISUAL sides (absolute, not
+                // directional): the clipper always shows "before" on the left
+                // and "after" on the right, so the tags must too — otherwise
+                // RTL flips them onto the wrong halves.
+                Positioned(
                   top: AppSpacing.s2,
-                  start: AppSpacing.s2,
+                  left: AppSpacing.s2,
                   child:
                       _Tag(label: widget.beforeLabel, tone: _TagTone.dark),
                 ),
-                PositionedDirectional(
+                Positioned(
                   top: AppSpacing.s2,
-                  end: AppSpacing.s2,
+                  right: AppSpacing.s2,
                   child:
                       _Tag(label: widget.afterLabel, tone: _TagTone.accent),
                 ),
@@ -258,8 +261,17 @@ class _HaynComparisonViewerState extends State<HaynComparisonViewer>
                 Positioned(
                   top: viewportHeight / 2 - 18,
                   left: splitX - 18,
-                  child: IgnorePointer(
-                    ignoring: _zoomLocked,
+                  // Ignore the handle whenever the image is actually zoomed
+                  // (by scale, not the lock flag): the handle sits mid-screen
+                  // exactly where the user starts a horizontal pan, so it must
+                  // yield so panning the zoomed detail works. Reset to 1× to
+                  // drag the split again.
+                  child: AnimatedBuilder(
+                    animation: _ctrl,
+                    builder: (ctx, child) {
+                      final zoomed = _ctrl.value.getMaxScaleOnAxis() > 1.02;
+                      return IgnorePointer(ignoring: zoomed, child: child);
+                    },
                     child: GestureDetector(
                       behavior: HitTestBehavior.opaque,
                       onHorizontalDragStart: (_) =>

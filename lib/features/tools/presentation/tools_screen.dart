@@ -5,6 +5,7 @@ import '../../../app/l10n/app_localizations.dart';
 import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
 import '../../../shared/widgets/widgets.dart';
+import '../../tasks/presentation/widgets/tasks_app_bar_button.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ToolsScreen — clean visual hierarchy: three full-width hero tools (Compress,
@@ -80,6 +81,7 @@ class ToolsScreen extends ConsumerWidget {
             scrolledUnderElevation: 0.5,
             automaticallyImplyLeading: false,
             title: Text(l.toolsTitle),
+            actions: const [TasksAppBarButton()],
             expandedHeight: 112,
             systemOverlayStyle: theme.brightness == Brightness.dark
                 ? SystemUiOverlayStyle.light
