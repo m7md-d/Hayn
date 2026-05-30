@@ -74,4 +74,41 @@ void main() {
       AssetSizeCache.clear();
     });
   });
+
+  group('LibraryState.entries spine', () {
+    test('mirrors displayAssets order and ids (legacy/album path)', () {
+      final base =
+          const LibraryState().copyWith(assets: [_img('a'), _img('b')]);
+      expect(base.entries.map((e) => e.id).toList(), ['a', 'b']);
+    });
+
+    test('selection toggles carry the spine by reference (no rebuild)', () {
+      final base =
+          const LibraryState().copyWith(assets: [_img('a'), _img('b')]);
+      final selected = base.copyWith(selectedIds: {'a'});
+      expect(identical(base.entries, selected.entries), isTrue);
+    });
+
+    test('changing assets rebuilds the spine', () {
+      final base = const LibraryState().copyWith(assets: [_img('a')]);
+      final grown = base.copyWith(assets: [_img('a'), _img('b')]);
+      expect(identical(base.entries, grown.entries), isFalse);
+      expect(grown.entries.length, 2);
+    });
+
+    test('explicit entries (index mode) are used verbatim + carried', () {
+      // The index-backed loader passes the whole spine explicitly; a later
+      // selection toggle must keep it by reference (the 10k grid never
+      // rebuilds its spine on a tap).
+      const spine = [
+        LibraryEntry(id: 'p', type: AssetType.image, sizeBytes: 10),
+        LibraryEntry(id: 'q', type: AssetType.video, durationSeconds: 5),
+      ];
+      final state = const LibraryState().copyWith(entries: spine);
+      expect(state.entries.map((e) => e.id).toList(), ['p', 'q']);
+
+      final selected = state.copyWith(selectedIds: {'p'});
+      expect(identical(state.entries, selected.entries), isTrue);
+    });
+  });
 }

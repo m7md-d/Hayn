@@ -9,7 +9,7 @@ import '../../../app/theme/design_tokens.dart';
 import '../../../app/theme/motion.dart';
 import '../../../core/capabilities/format_capabilities.dart';
 import '../../../shared/widgets/widgets.dart';
-import '../../library/presentation/providers/library_provider.dart';
+import '../../library/presentation/providers/asset_entity_cache.dart';
 import '../../settings/providers/preferences_providers.dart';
 import 'widgets/preserved_metadata_card.dart';
 import 'widgets/surgical_stats_row.dart';
@@ -68,12 +68,19 @@ class _SurgicalArenaScreenState extends ConsumerState<SurgicalArenaScreen> {
   @override
   void initState() {
     super.initState();
-    final all = ref.read(libraryProvider).assets;
-    _asset = all.firstWhere(
-      (a) => a.id == widget.assetId,
-      orElse: () => all.first,
-    );
-    _loadPreview();
+    // Resolve the entity by id (cached from the grid/detail, else fetched) —
+    // never via the library's loaded list, which is empty in index mode.
+    final cached = AssetEntityCache.get(widget.assetId);
+    _asset = cached;
+    if (cached == null) {
+      AssetEntityCache.load(widget.assetId).then((a) {
+        if (!mounted || a == null) return;
+        setState(() => _asset = a);
+        _loadPreview();
+      });
+    } else {
+      _loadPreview();
+    }
   }
 
   Future<void> _loadPreview() async {

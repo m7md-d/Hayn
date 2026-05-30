@@ -6,7 +6,7 @@ import '../../../app/l10n/app_localizations.dart';
 import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
 import '../../../shared/widgets/widgets.dart';
-import '../../library/presentation/providers/library_provider.dart';
+import '../../library/presentation/providers/asset_entity_cache.dart';
 import 'widgets/aspect_ratio_chips.dart';
 import 'widgets/crop_canvas.dart';
 import 'widgets/rotate_flip_bar.dart';
@@ -50,12 +50,17 @@ class _CropScreenState extends ConsumerState<CropScreen> {
   @override
   void initState() {
     super.initState();
-    final all = ref.read(libraryProvider).assets;
-    _asset = all.firstWhere(
-      (a) => a.id == widget.assetId,
-      orElse: () => all.first,
-    );
-    _load();
+    final cached = AssetEntityCache.get(widget.assetId);
+    _asset = cached;
+    if (cached == null) {
+      AssetEntityCache.load(widget.assetId).then((a) {
+        if (!mounted || a == null) return;
+        setState(() => _asset = a);
+        _load();
+      });
+    } else {
+      _load();
+    }
   }
 
   Future<void> _load() async {

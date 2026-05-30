@@ -4,7 +4,6 @@ import 'package:flutter/services.dart' show MethodCall;
 import 'package:flutter/widgets.dart' show ScrollController;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_manager/photo_manager.dart';
-import '../../../../core/async/concurrency_limiter.dart';
 import '../../../../data/index/index_providers.dart';
 import '../../../../data/index/media_index_database.dart';
 import '../../domain/entities/library_sort_filter.dart';
@@ -22,6 +21,45 @@ class _Absent {
 
 const _absent = _Absent();
 
+/// Lightweight row of the library "spine" — everything the grid/detail/strip
+/// need to render a cell BEFORE its heavy [AssetEntity] is materialised. In
+/// index-backed mode the spine spans the WHOLE library (10k+), so the grid's
+/// childCount is the real total and each cell loads its entity lazily on
+/// scroll-in (see [AssetEntityCache]). A few tens of bytes each → trivial even
+/// at 10k. In album/legacy mode it's derived from the loaded entities.
+class LibraryEntry {
+  const LibraryEntry({
+    required this.id,
+    required this.type,
+    this.sizeBytes,
+    this.durationSeconds = 0,
+    this.created,
+  });
+
+  final String id;
+  final AssetType type;
+
+  /// Resolved byte size (for the badge), or null when not yet known.
+  final int? sizeBytes;
+
+  /// Video length in whole seconds; 0 for stills (drives the duration badge).
+  final int durationSeconds;
+
+  /// Capture/creation time, for the detail-view title without the entity.
+  final DateTime? created;
+
+  bool get isVideo => type == AssetType.video;
+
+  /// Build a spine row from an already-materialised entity (legacy/album path).
+  static LibraryEntry fromAsset(AssetEntity a) => LibraryEntry(
+        id: a.id,
+        type: a.type,
+        sizeBytes: AssetSizeCache.get(a.id),
+        durationSeconds: a.videoDuration.inSeconds,
+        created: a.createDateTime,
+      );
+}
+
 class LibraryState {
   const LibraryState({
     this.permissionStatus = LibraryPermissionStatus.unknown,
@@ -32,6 +70,7 @@ class LibraryState {
     this.selectedAlbumId,
     this.assets = const [],
     this.displayAssets = const [],
+    this.entries = const [],
     this.selectedIds = const {},
     this.isSelecting = false,
     this.totalCount = 0,
@@ -52,6 +91,11 @@ class LibraryState {
   /// never re-runs the sort/filter.
   final List<AssetEntity> displayAssets;
 
+  /// The ordered "spine" the grid/detail/filmstrip render from. In index-backed
+  /// mode this is the WHOLE matching library (childCount = its length, cells
+  /// materialise lazily); in album/legacy mode it mirrors [displayAssets].
+  final List<LibraryEntry> entries;
+
   final Set<String> selectedIds;
   final bool isSelecting;
   final int totalCount;
@@ -66,6 +110,7 @@ class LibraryState {
     Object? selectedAlbumId = _absent,
     List<AssetEntity>? assets,
     List<AssetEntity>? displayAssets,
+    List<LibraryEntry>? entries,
     Set<String>? selectedIds,
     bool? isSelecting,
     int? totalCount,
@@ -81,6 +126,13 @@ class LibraryState {
         ((assets != null || sortFilter != null)
             ? _computeDisplay(nextAssets, nextSort)
             : this.displayAssets);
+    // The grid spine: index-backed loads pass `entries` explicitly (the whole
+    // library); otherwise it mirrors displayAssets and is carried by reference
+    // whenever displayAssets is (so selection toggles never rebuild it).
+    final nextEntries = entries ??
+        (identical(nextDisplay, this.displayAssets)
+            ? this.entries
+            : [for (final a in nextDisplay) LibraryEntry.fromAsset(a)]);
     return LibraryState(
       permissionStatus: permissionStatus ?? this.permissionStatus,
       filter: filter ?? this.filter,
@@ -92,6 +144,7 @@ class LibraryState {
           : selectedAlbumId as String?,
       assets: nextAssets,
       displayAssets: nextDisplay,
+      entries: nextEntries,
       selectedIds: selectedIds ?? this.selectedIds,
       isSelecting: isSelecting ?? this.isSelecting,
       totalCount: totalCount ?? this.totalCount,
@@ -145,13 +198,6 @@ class LibraryState {
     return list;
   }
 
-  /// Materialised list of the currently-selected assets, in chronological
-  /// order. Reads from the raw `assets` list so items hidden by an active
-  /// filter still appear in the batch (the selection count in the AppBar
-  /// counts them too).
-  List<AssetEntity> get selectedAssets =>
-      assets.where((a) => selectedIds.contains(a.id)).toList();
-
   static bool _matchesFormat(AssetEntity a, String filter) {
     final mime = (a.mimeType ?? '').toLowerCase();
     if (mime.contains(filter)) return true;
@@ -170,9 +216,6 @@ class LibraryNotifier extends Notifier<LibraryState> {
   bool _syncing = false;
   bool _loadingMore = false;
   Timer? _changeDebounce;
-
-  // Bounds the AssetEntity.fromId fan-out when materialising an index page.
-  static final ConcurrencyLimiter _fromIdLimiter = ConcurrencyLimiter(8);
 
   /// Index-backed mode drives the whole library view (default browse AND
   /// sort/filter) once the index is populated — so byte sizes come from the
@@ -218,7 +261,7 @@ class LibraryNotifier extends Notifier<LibraryState> {
     // never blank. If the index is already built, switch the grid to it now;
     // otherwise the background sync builds it and switches when ready.
     await _loadAlbumsAndAssets();
-    if (_dbMode) await _loadIndexPage(reset: true);
+    if (_dbMode) await _loadIndexSpine();
     unawaited(_ensureSync());
   }
 
@@ -269,10 +312,8 @@ class LibraryNotifier extends Notifier<LibraryState> {
     if (_loadingMore || state.isLoading || !state.hasMore) return;
     _loadingMore = true;
     try {
-      if (_dbMode) {
-        await _loadIndexPage(reset: false);
-        return;
-      }
+      // Index-backed mode loads the whole spine up front (hasMore == false), so
+      // pagination only runs on the album/legacy photo_manager path.
       if (_currentPath == null) return;
       final start = state.assets.length;
       final end = min(state.totalCount, start + _pageSize);
@@ -329,7 +370,7 @@ class LibraryNotifier extends Notifier<LibraryState> {
       state = state.copyWith(selectedIds: ids.toSet(), isSelecting: true);
       return;
     }
-    final ids = state.displayAssets.map((a) => a.id).toSet();
+    final ids = state.entries.map((e) => e.id).toSet();
     state = state.copyWith(selectedIds: ids, isSelecting: true);
   }
 
@@ -353,7 +394,7 @@ class LibraryNotifier extends Notifier<LibraryState> {
   /// an album / before the index is built, the legacy photo_manager path.
   Future<void> _reload() async {
     if (_dbMode) {
-      await _loadIndexPage(reset: true);
+      await _loadIndexSpine();
     } else {
       await _loadAlbumsAndAssets();
     }
@@ -378,11 +419,11 @@ class LibraryNotifier extends Notifier<LibraryState> {
       final db = ref.read(mediaIndexDatabaseProvider);
       await index.syncMetadata();
       _indexReady = (await db.totalCount()) > 0;
-      if (_dbMode) await _loadIndexPage(reset: true);
+      if (_dbMode) await _loadIndexSpine();
       await index.resolveSizes();
-      if (_dbMode && state.sortFilter.needsSizes) {
-        await _loadIndexPage(reset: true);
-      }
+      // Refresh the spine once sizes are in so every badge fills (and a
+      // size-sort re-orders), not just the eagerly-resolved first screens.
+      if (_dbMode) await _loadIndexSpine();
     } catch (_) {
       // Best-effort: the photo_manager path keeps the library usable.
     } finally {
@@ -390,60 +431,74 @@ class LibraryNotifier extends Notifier<LibraryState> {
     }
   }
 
-  /// One page from the index: query ordered/filtered rows, seed the size cache
-  /// from them (instant badges, no per-tile file read), then materialise the
-  /// AssetEntities the grid needs to render.
-  Future<void> _loadIndexPage({required bool reset}) async {
+  /// Load the WHOLE matching library as a lightweight spine (ids + metadata,
+  /// no AssetEntities). The grid renders every row (childCount = total) and
+  /// materialises each cell's entity lazily on scroll-in, so 10k+ never blocks
+  /// or bloats. Eagerly resolves byte sizes for the first few screens so top
+  /// badges appear at once; the background pass fills the rest.
+  Future<void> _loadIndexSpine() async {
     final db = ref.read(mediaIndexDatabaseProvider);
     final q = queryParamsFor(state.filter, state.sortFilter);
-    final offset = reset ? 0 : state.assets.length;
 
-    final total = await db.count(
-      typeFilter: q.typeFilter,
-      minSize: q.minSize,
-      maxSize: q.maxSize,
-      formatNeedles: q.formatNeedles,
-    );
-    final rows = await db.page(
+    final rows = await db.entries(
       typeFilter: q.typeFilter,
       minSize: q.minSize,
       maxSize: q.maxSize,
       formatNeedles: q.formatNeedles,
       sortColumn: q.sortColumn,
       descending: q.descending,
-      limit: _pageSize,
-      offset: offset,
     );
-    // Fill this page's badge sizes via the native channel now (never
-    // asset.file), so badges appear immediately instead of waiting for the
-    // full background pass.
-    final missing = [for (final r in rows) if (r.sizeBytes == null) r.id];
-    final fresh = missing.isEmpty
-        ? const <String, int>{}
-        : await ref.read(mediaIndexServiceProvider).resolveSizesFor(missing);
+
+    // Eagerly resolve sizes for the first screenfuls that lack one, so the
+    // visible badges aren't blank while the background pass works the tail.
+    final firstMissing = <String>[];
     for (final r in rows) {
-      final s = r.sizeBytes;
-      if (s != null && s > 0) AssetSizeCache.put(r.id, s);
+      if (r.sizeBytes == null) {
+        firstMissing.add(r.id);
+        if (firstMissing.length >= _pageSize * 3) break;
+      }
     }
-    AssetSizeCache.putAll(fresh);
-    final entities = await _entitiesForIds([for (final r in rows) r.id]);
-    final merged =
-        reset ? entities : <AssetEntity>[...state.assets, ...entities];
+    final fresh = firstMissing.isEmpty
+        ? const <String, int>{}
+        : await ref
+            .read(mediaIndexServiceProvider)
+            .resolveSizesFor(firstMissing);
+
+    int? sizeOf(MediaAsset r) {
+      final s = r.sizeBytes;
+      if (s != null && s > 0) return s;
+      final f = fresh[r.id];
+      return (f != null && f > 0) ? f : null;
+    }
+
+    final entries = <LibraryEntry>[
+      for (final r in rows)
+        LibraryEntry(
+          id: r.id,
+          type: AssetType.values[r.type],
+          sizeBytes: sizeOf(r),
+          durationSeconds: (r.durationMs / 1000).round(),
+          created: r.createdDate > 0
+              ? DateTime.fromMillisecondsSinceEpoch(r.createdDate * 1000)
+              : null,
+        ),
+    ];
+    // Mirror known sizes into the badge cache (used by the legacy badge path
+    // and any cell that reads it directly).
+    AssetSizeCache.putAll({
+      for (final e in entries)
+        if (e.sizeBytes != null) e.id: e.sizeBytes!,
+    });
+
     state = state.copyWith(
-      assets: merged,
-      // The DB already applied the sort + filter; show the list verbatim.
-      displayAssets: merged,
-      totalCount: total,
-      hasMore: offset + rows.length < total,
+      // The spine is the whole library; raw entities are materialised per-cell.
+      entries: entries,
+      assets: const [],
+      displayAssets: const [],
+      totalCount: entries.length,
+      hasMore: false,
       isLoading: false,
     );
-  }
-
-  Future<List<AssetEntity>> _entitiesForIds(List<String> ids) async {
-    final fetched = await Future.wait(
-      ids.map((id) => _fromIdLimiter.run(() => AssetEntity.fromId(id))),
-    );
-    return [for (final a in fetched) if (a != null) a];
   }
 
   Future<void> _loadAlbumsAndAssets() async {
@@ -596,3 +651,9 @@ final libraryProvider =
 /// template does not deliver to the app (flutter/flutter#182403).
 final libraryScrollControllerProvider =
     StateProvider<ScrollController?>((ref) => null);
+
+/// The spine index the detail viewer is currently showing. The grid seeds it on
+/// open and reads it back when the viewer pops, so exiting returns you to the
+/// photo you navigated TO (after swiping through siblings), not the one you
+/// entered from. Null while no viewer is open.
+final detailFocusIndexProvider = StateProvider<int?>((ref) => null);

@@ -88,7 +88,7 @@ class _AppShellState extends ConsumerState<AppShell> {
         child: isSelecting
             ? SelectionToolbar(
                 key: const ValueKey('selection-bar'),
-                selectedAssets: libraryState.selectedAssets,
+                hasSelection: libraryState.selectedIds.isNotEmpty,
                 onCompress: () {
                   HapticFeedback.lightImpact();
                   context.push(

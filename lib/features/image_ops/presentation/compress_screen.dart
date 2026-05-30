@@ -7,8 +7,10 @@ import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
 import '../../../app/theme/motion.dart';
 import '../../../core/capabilities/format_capabilities.dart';
+import '../../../data/index/index_providers.dart';
 import '../../../shared/widgets/widgets.dart';
-import '../../library/presentation/providers/library_provider.dart';
+import '../../library/presentation/providers/asset_entity_cache.dart';
+import '../../library/presentation/widgets/id_thumbnail.dart';
 import '../../settings/providers/preferences_providers.dart';
 import 'widgets/compress_estimate_card.dart';
 
@@ -44,9 +46,15 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   double _quality = 80;
   bool _keepMetadata = true;
 
-  late final List<AssetEntity> _assets;
+  // Work from ids only — `select all` can hand us thousands. The active
+  // preview + estimate are resolved lazily by id; we never build an
+  // AssetEntity list.
+  List<String> get _ids => widget.assetIds;
   Uint8List? _previewBytes;
   int _activeAssetIndex = 0;
+
+  /// Summed original byte size of the WHOLE selection, from the index.
+  int _originalBytes = 0;
 
   /// Set while the comparison viewer has 2+ fingers or is zoomed in — the
   /// ListView freezes so the pinch isn't stolen as a scroll.
@@ -55,17 +63,23 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   @override
   void initState() {
     super.initState();
-    final all = ref.read(libraryProvider).assets;
-    _assets =
-        all.where((a) => widget.assetIds.contains(a.id)).toList(growable: false);
     _loadPreview();
+    _loadOriginalBytes();
   }
 
   Future<void> _loadPreview() async {
-    if (_assets.isEmpty) return;
-    final data = await _assets[_activeAssetIndex]
-        .thumbnailDataWithSize(const ThumbnailSize.square(1080));
+    if (_ids.isEmpty) return;
+    final entity = await AssetEntityCache.load(_ids[_activeAssetIndex]);
+    final data = await entity
+        ?.thumbnailDataWithSize(const ThumbnailSize.square(1080));
     if (mounted) setState(() => _previewBytes = data);
+  }
+
+  Future<void> _loadOriginalBytes() async {
+    // Real sizes from the index span the whole selection (no asset.file).
+    final facts = await ref.read(mediaIndexDatabaseProvider).factsFor(_ids);
+    final sum = facts.fold<int>(0, (s, f) => s + f.sizeBytes);
+    if (mounted) setState(() => _originalBytes = sum);
   }
 
   void _switchActive(int newIndex) {
@@ -81,7 +95,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   Future<void> _apply() async {
     HapticFeedback.lightImpact();
     final l = AppLocalizations.of(context);
-    HaynSnack.success(context, l.compressQueued(_assets.length));
+    HaynSnack.success(context, l.compressQueued(_ids.length));
     Navigator.of(context).pop();
   }
 
@@ -90,7 +104,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
     final l = AppLocalizations.of(context);
     final hc = context.hc;
     final theme = Theme.of(context);
-    final isBatch = _assets.length > 1;
+    final isBatch = _ids.length > 1;
 
     final caps = ref.watch(formatCapabilitiesProvider);
     final autoFormat = _format == DefaultFormat.auto
@@ -162,10 +176,10 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
               height: 56,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
-                itemCount: _assets.length,
+                itemCount: _ids.length,
                 separatorBuilder: (_, __) => const SizedBox(width: AppSpacing.s2),
                 itemBuilder: (ctx, i) => _AssetSwitcherTile(
-                  asset: _assets[i],
+                  id: _ids[i],
                   selected: i == _activeAssetIndex,
                   onTap: () => _switchActive(i),
                 ),
@@ -219,7 +233,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
 
           // ── Estimate card ──────────────────────────────────────────────
           CompressEstimateCard(
-            originalBytes: _estimateOriginalBytes(),
+            originalBytes: _originalBytes,
             quality: _mode == _Mode.auto ? 80 : _quality.round(),
             format: autoFormat,
           ),
@@ -228,7 +242,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
           // ── Compress button ────────────────────────────────────────────
           HaynPrimaryButton(
             label: isBatch
-                ? '${l.compressTitle} (${_assets.length})'
+                ? '${l.compressTitle} (${_ids.length})'
                 : l.compressTitle,
             icon: Icons.compress_rounded,
             onPressed: _apply,
@@ -254,12 +268,6 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
     );
   }
 
-  int _estimateOriginalBytes() {
-    return _assets.fold<int>(
-      0,
-      (sum, a) => sum + (a.width * a.height * 0.6).round(),
-    );
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -267,41 +275,22 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
 // to a specific asset in a batch.
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _AssetSwitcherTile extends StatefulWidget {
+class _AssetSwitcherTile extends StatelessWidget {
   const _AssetSwitcherTile({
-    required this.asset,
+    required this.id,
     required this.selected,
     required this.onTap,
   });
 
-  final AssetEntity asset;
+  final String id;
   final bool selected;
   final VoidCallback onTap;
-
-  @override
-  State<_AssetSwitcherTile> createState() => _AssetSwitcherTileState();
-}
-
-class _AssetSwitcherTileState extends State<_AssetSwitcherTile> {
-  Uint8List? _thumb;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    final data = await widget.asset
-        .thumbnailDataWithSize(const ThumbnailSize.square(160));
-    if (mounted) setState(() => _thumb = data);
-  }
 
   @override
   Widget build(BuildContext context) {
     final hc = context.hc;
     return GestureDetector(
-      onTap: widget.onTap,
+      onTap: onTap,
       child: AnimatedContainer(
         duration: AppDuration.fast,
         width: 56,
@@ -310,14 +299,12 @@ class _AssetSwitcherTileState extends State<_AssetSwitcherTile> {
           color: hc.surfaceSunken,
           borderRadius: BorderRadius.circular(AppRadius.md),
           border: Border.all(
-            color: widget.selected ? hc.accent : Colors.transparent,
+            color: selected ? hc.accent : Colors.transparent,
             width: 2.5,
           ),
         ),
         clipBehavior: Clip.antiAlias,
-        child: _thumb == null
-            ? Container(color: hc.surfaceSunken)
-            : Image.memory(_thumb!, fit: BoxFit.cover, gaplessPlayback: true),
+        child: IdThumbnail(id: id, placeholderColor: hc.surfaceSunken),
       ),
     );
   }

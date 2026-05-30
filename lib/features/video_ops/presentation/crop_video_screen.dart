@@ -8,7 +8,7 @@ import '../../../app/theme/design_tokens.dart';
 import '../../../shared/widgets/widgets.dart';
 import '../../image_ops/presentation/widgets/aspect_ratio_chips.dart';
 import '../../image_ops/presentation/widgets/crop_canvas.dart';
-import '../../library/presentation/providers/library_provider.dart';
+import '../../library/presentation/providers/asset_entity_cache.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CropVideoScreen — uses the same CropCanvas as the image flow, fed with a
@@ -38,12 +38,17 @@ class _CropVideoScreenState extends ConsumerState<CropVideoScreen> {
   @override
   void initState() {
     super.initState();
-    final all = ref.read(libraryProvider).assets;
-    _asset = all.firstWhere(
-      (a) => a.id == widget.assetId,
-      orElse: () => all.first,
-    );
-    _load();
+    final cached = AssetEntityCache.get(widget.assetId);
+    _asset = cached;
+    if (cached == null) {
+      AssetEntityCache.load(widget.assetId).then((a) {
+        if (!mounted || a == null) return;
+        setState(() => _asset = a);
+        _load();
+      });
+    } else {
+      _load();
+    }
   }
 
   Future<void> _load() async {

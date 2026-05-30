@@ -6,7 +6,7 @@ import '../../../app/l10n/app_localizations.dart';
 import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
 import '../../../shared/widgets/widgets.dart';
-import '../../library/presentation/providers/library_provider.dart';
+import '../../library/presentation/providers/asset_entity_cache.dart';
 import '../../library/presentation/widgets/asset_video_player.dart';
 import 'widgets/video_timeline.dart';
 
@@ -46,12 +46,19 @@ class _TrimVideoScreenState extends ConsumerState<TrimVideoScreen> {
   @override
   void initState() {
     super.initState();
-    final all = ref.read(libraryProvider).assets;
-    _asset = all.firstWhere(
-      (a) => a.id == widget.assetId,
-      orElse: () => all.first,
-    );
-    _end = _asset!.videoDuration.inSeconds.toDouble();
+    final cached = AssetEntityCache.get(widget.assetId);
+    if (cached != null) {
+      _asset = cached;
+      _end = cached.videoDuration.inSeconds.toDouble();
+    } else {
+      AssetEntityCache.load(widget.assetId).then((a) {
+        if (!mounted || a == null) return;
+        setState(() {
+          _asset = a;
+          _end = a.videoDuration.inSeconds.toDouble();
+        });
+      });
+    }
   }
 
   /// Stub heuristic: trim is "lossless" when both edges sit at the existing

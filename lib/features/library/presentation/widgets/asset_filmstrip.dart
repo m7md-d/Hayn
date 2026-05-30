@@ -1,26 +1,31 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:photo_manager/photo_manager.dart';
 import '../../../../app/theme/app_theme_extension.dart';
 import '../../../../app/theme/design_tokens.dart';
-import '../providers/thumbnail_cache.dart';
+import '../providers/library_provider.dart';
+import 'id_thumbnail.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AssetFilmstrip — horizontal strip of tiny thumbnails for adjacent assets.
-// Keeps the active asset centered as the user swipes / taps. Tap on a tile
-// jumps to that index.
+// AssetFilmstrip — horizontal strip of tiny thumbnails for the whole sibling
+// spine. Keeps the active asset centred; the tile under the fixed centre frame
+// is the selection. Driven by the lightweight spine (ids), so tiles paint
+// lazily via IdThumbnail and the strip can span the entire library.
+//
+// Scrubbing: the main image follows LIVE as you drag/fling (throttled), and on
+// release the strip snaps to the centred tile with an instant jump so a fresh
+// fling is never fought by a settle animation.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class AssetFilmstrip extends StatefulWidget {
   const AssetFilmstrip({
-    required this.assets,
+    required this.entries,
     required this.currentIndex,
     required this.onSelect,
     required this.onScrub,
     super.key,
   });
 
-  final List<AssetEntity> assets;
+  final List<LibraryEntry> entries;
   final int currentIndex;
 
   /// Tap on a tile → jump (animated) to it.
@@ -48,6 +53,11 @@ class _AssetFilmstripState extends State<AssetFilmstrip> {
   // so we don't re-centre underneath their finger or echo our own jumps back.
   bool _userDriving = false;
 
+  // Throttle live scrub commits so a fast fling doesn't jump the heavy main
+  // PageView every single frame.
+  int _lastScrubIndex = -1;
+  DateTime _lastScrubAt = DateTime.fromMillisecondsSinceEpoch(0);
+
   @override
   void initState() {
     super.initState();
@@ -67,8 +77,8 @@ class _AssetFilmstripState extends State<AssetFilmstrip> {
 
   void _centerOnCurrent({bool animate = true}) {
     if (!_ctrl.hasClients) return;
-    final target =
-        (widget.currentIndex * _stride).clamp(0.0, _ctrl.position.maxScrollExtent);
+    final target = (widget.currentIndex * _stride)
+        .clamp(0.0, _ctrl.position.maxScrollExtent);
     if (animate) {
       _ctrl.animateTo(target,
           duration: AppDuration.normal, curve: AppCurves.standard);
@@ -78,20 +88,33 @@ class _AssetFilmstripState extends State<AssetFilmstrip> {
   }
 
   int _centeredIndex() =>
-      (_ctrl.offset / _stride).round().clamp(0, widget.assets.length - 1);
+      (_ctrl.offset / _stride).round().clamp(0, widget.entries.length - 1);
 
   bool _onNotification(ScrollNotification n) {
     if (n is ScrollStartNotification) {
       // dragDetails != null ⇒ a real finger drag (not our programmatic centre).
-      _userDriving = n.dragDetails != null;
+      if (n.dragDetails != null) _userDriving = true;
+    } else if (n is ScrollUpdateNotification && _userDriving) {
+      // Live follow, throttled: update the main image as the centre tile
+      // changes, but no more than ~every 60 ms so the PageView keeps up.
+      final c = _centeredIndex();
+      final now = DateTime.now();
+      if (c != _lastScrubIndex &&
+          now.difference(_lastScrubAt).inMilliseconds >= 60) {
+        _lastScrubIndex = c;
+        _lastScrubAt = now;
+        if (c != widget.currentIndex) widget.onScrub(c);
+      }
     } else if (n is ScrollEndNotification && _userDriving) {
       _userDriving = false;
-      // Commit ONCE, on release. Jumping the heavy 1080-px PageView on every
-      // scroll frame is what made scrubbing stutter; the centre frame already
-      // shows the target live, so the main image just snaps when you let go.
       final c = _centeredIndex();
+      _lastScrubIndex = c;
       if (c != widget.currentIndex) widget.onScrub(c);
-      WidgetsBinding.instance.addPostFrameCallback((_) => _centerOnCurrent());
+      // Instant snap to the exact tile centre — no animation to fight a fresh
+      // fling the user may start immediately after.
+      if (_ctrl.hasClients) {
+        _ctrl.jumpTo((c * _stride).clamp(0.0, _ctrl.position.maxScrollExtent));
+      }
     }
     return false;
   }
@@ -121,11 +144,11 @@ class _AssetFilmstripState extends State<AssetFilmstrip> {
                     AssetFilmstrip.tileSize / 2,
                 vertical: 8,
               ),
-              itemCount: widget.assets.length,
+              itemCount: widget.entries.length,
               separatorBuilder: (_, __) =>
                   const SizedBox(width: AssetFilmstrip.tileGap),
               itemBuilder: (ctx, i) => _FilmTile(
-                asset: widget.assets[i],
+                entry: widget.entries[i],
                 onTap: () {
                   HapticFeedback.selectionClick();
                   widget.onSelect(i);
@@ -151,65 +174,33 @@ class _AssetFilmstripState extends State<AssetFilmstrip> {
   }
 }
 
-class _FilmTile extends StatefulWidget {
-  const _FilmTile({
-    required this.asset,
-    required this.onTap,
-  });
-  final AssetEntity asset;
+class _FilmTile extends StatelessWidget {
+  const _FilmTile({required this.entry, required this.onTap});
+  final LibraryEntry entry;
   final VoidCallback onTap;
-
-  @override
-  State<_FilmTile> createState() => _FilmTileState();
-}
-
-class _FilmTileState extends State<_FilmTile> {
-  Uint8List? _thumb;
-
-  @override
-  void initState() {
-    super.initState();
-    final cached = ThumbnailCache.get(widget.asset.id);
-    if (cached != null) {
-      _thumb = cached;
-    } else {
-      _load();
-    }
-  }
-
-  Future<void> _load() async {
-    final data = await widget.asset.thumbnailDataWithSize(
-      const ThumbnailSize.square(120),
-    );
-    if (data != null) ThumbnailCache.put(widget.asset.id, data);
-    if (mounted) setState(() => _thumb = data);
-  }
 
   @override
   Widget build(BuildContext context) {
     // Uniform tiles — the fixed centre frame indicates the selection, so tiles
     // don't need per-item borders/opacity (which also keeps scrubbing cheap).
     return GestureDetector(
-      onTap: widget.onTap,
+      onTap: onTap,
       child: SizedBox(
         width: AssetFilmstrip.tileSize,
         height: AssetFilmstrip.tileSize,
         child: ClipRRect(
           borderRadius: BorderRadius.circular(AppRadius.xs),
-          child: _thumb == null
-              ? Container(color: Colors.white12)
-              : Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    Image.memory(_thumb!,
-                        fit: BoxFit.cover, gaplessPlayback: true),
-                    if (widget.asset.type == AssetType.video)
-                      const Center(
-                        child: Icon(Icons.play_arrow_rounded,
-                            color: Colors.white, size: 16),
-                      ),
-                  ],
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              IdThumbnail(id: entry.id, placeholderColor: Colors.white12),
+              if (entry.isVideo)
+                const Center(
+                  child: Icon(Icons.play_arrow_rounded,
+                      color: Colors.white, size: 16),
                 ),
+            ],
+          ),
         ),
       ),
     );

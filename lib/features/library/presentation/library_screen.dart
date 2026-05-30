@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:photo_manager/photo_manager.dart';
 import '../../../app/l10n/app_localizations.dart';
 import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
@@ -34,16 +33,28 @@ class LibraryScreen extends ConsumerStatefulWidget {
   ConsumerState<LibraryScreen> createState() => _LibraryScreenState();
 }
 
-class _LibraryScreenState extends ConsumerState<LibraryScreen> {
-  // Shared explicitly so BOTH the grid (via primary) and the Scaffold (via
-  // PrimaryScrollController.maybeOf in handleStatusBarTap) reference the SAME
-  // controller — that link is what makes the iOS status-bar tap scroll to top,
-  // and it was missing before (no PrimaryScrollController in scope).
+class _LibraryScreenState extends ConsumerState<LibraryScreen>
+    with WidgetsBindingObserver {
   final ScrollController _primaryController = ScrollController();
+
+  // 3-column square grid geometry, cached per build for the return-to-current
+  // scroll math (see _scrollGridToFocus).
+  static const int _crossAxisCount = 3;
+  double _rowStride = 1;
+
+  // Captured when a tile is tapped, so on return we can place the photo the
+  // user landed on at the same screen position the tapped tile occupied.
+  int _enterIndex = 0;
+  double _enterOffset = 0;
 
   @override
   void initState() {
     super.initState();
+    // Observe status-bar taps ourselves: ScaffoldState gates its own handler
+    // behind a hit-test at the screen origin that the FloatingTasksBadge
+    // overlay + RTL shell defeat (flutter/flutter#182403). A direct observer
+    // bypasses that and reliably scrolls our grid to the top.
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(libraryProvider.notifier).init();
       // Publish the controller so the shell can scroll-to-top on tab re-tap.
@@ -54,8 +65,20 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _primaryController.dispose();
     super.dispose();
+  }
+
+  @override
+  void handleStatusBarTap() {
+    if (!_primaryController.hasClients || _primaryController.offset <= 0) return;
+    HapticFeedback.selectionClick();
+    _primaryController.animateTo(
+      0,
+      duration: const Duration(milliseconds: 500),
+      curve: Curves.easeOutCubic,
+    );
   }
 
   // Pagination is driven by scroll notifications, so the grid keeps a stable
@@ -126,11 +149,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                     // Toggle select-all / deselect-all so the user doesn't
                     // need to tap every tile to act on a full filter.
                     Builder(builder: (ctx) {
-                      final visibleIds = state.displayAssets
-                          .map((a) => a.id)
-                          .toSet();
-                      final allSelected = visibleIds.isNotEmpty &&
-                          visibleIds.every(state.selectedIds.contains);
+                      // "All selected" when the selection covers the whole
+                      // spine — compared by count so it's O(1), not O(10k).
+                      final allSelected = state.entries.isNotEmpty &&
+                          state.selectedIds.length >= state.entries.length;
                       return IconButton(
                         tooltip: allSelected
                             ? l.librarySelectionClearAll
@@ -252,7 +274,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
           ..._buildContentSlivers(state, l, notifier),
 
           // ── Pagination loading footer ─────────────────────────────────
-          if (state.isLoading && state.assets.isNotEmpty)
+          if (state.isLoading && state.entries.isNotEmpty)
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
@@ -283,7 +305,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     LibraryNotifier notifier,
   ) {
     // Loading first page → skeleton grid
-    if (state.isLoading && state.assets.isEmpty) {
+    if (state.isLoading && state.entries.isEmpty) {
       return [
         SliverPadding(
           padding: EdgeInsets.zero,
@@ -326,7 +348,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     }
 
     // Permission granted but no media
-    if (state.assets.isEmpty && !state.isLoading) {
+    if (state.entries.isEmpty && !state.isLoading) {
       return [
         SliverFillRemaining(
           hasScrollBody: false,
@@ -339,8 +361,15 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
       ];
     }
 
-    // Has assets → grid (display list applies sort/size/format filters)
-    final visible = state.displayAssets;
+    // Has assets → virtualized grid over the whole spine. childCount is the
+    // real total (10k+); each cell materialises its entity lazily on
+    // scroll-in, so nothing is loaded until it's about to be seen.
+    final entries = state.entries;
+    // Cache the row stride for the return-to-current scroll math.
+    final width = MediaQuery.sizeOf(context).width;
+    final tileExtent =
+        (width - (_crossAxisCount - 1) * AppSpacing.gridGap) / _crossAxisCount;
+    _rowStride = tileExtent + AppSpacing.gridGap;
     return [
       SliverPadding(
         // Edge-to-edge: thumbnails reach the screen edges (no dark side
@@ -348,49 +377,77 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         padding: EdgeInsets.zero,
         sliver: SliverGrid(
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 3,
+            crossAxisCount: _crossAxisCount,
             crossAxisSpacing: AppSpacing.gridGap,
             mainAxisSpacing: AppSpacing.gridGap,
           ),
           delegate: SliverChildBuilderDelegate(
             (context, index) {
-              final asset = visible[index];
+              final entry = entries[index];
               return HaynStagger(
                 index: index,
                 child: MediaThumbnail(
-                  key: ValueKey(asset.id),
-                  asset: asset,
-                  isSelected: state.selectedIds.contains(asset.id),
+                  key: ValueKey(entry.id),
+                  id: entry.id,
+                  type: entry.type,
+                  sizeBytes: entry.sizeBytes,
+                  durationSeconds: entry.durationSeconds,
+                  isSelected: state.selectedIds.contains(entry.id),
                   isSelecting: state.isSelecting,
                   showSize: !state.isSelecting,
-                  onTap: () => _onTap(asset),
-                  onLongPress: () => _onLongPress(asset),
+                  onTap: () => _onTap(entry.id, index),
+                  onLongPress: () => _onLongPress(entry.id),
                 ),
               );
             },
-            childCount: visible.length,
+            childCount: entries.length,
           ),
         ),
       ),
     ];
   }
 
-  void _onTap(AssetEntity asset) {
-    final state = ref.read(libraryProvider);
-    if (state.isSelecting) {
-      ref.read(libraryProvider.notifier).toggleSelection(asset.id);
+  Future<void> _onTap(String id, int index) async {
+    final notifier = ref.read(libraryProvider.notifier);
+    if (ref.read(libraryProvider).isSelecting) {
+      notifier.toggleSelection(id);
       return;
     }
     HapticFeedback.selectionClick();
+    // Remember where we entered so we can land the photo the user swiped to at
+    // the same spot when the viewer closes.
+    _enterIndex = index;
+    _enterOffset = _primaryController.hasClients ? _primaryController.offset : 0;
+    ref.read(detailFocusIndexProvider.notifier).state = index;
     // iOS PhotoKit ids look like `UUID/L0/001` — the slashes would be read as
     // extra path segments and miss the `/asset/:id` route (Android ids are
     // plain numbers, so this only ever bit iOS). Encode so the id stays a
     // single segment; go_router decodes it back on the other side.
-    context.push('/asset/${Uri.encodeComponent(asset.id)}');
+    await context.push('/asset/${Uri.encodeComponent(id)}');
+    if (!mounted) return;
+    // Returned from the viewer — scroll the grid to whatever photo it last
+    // showed (relative to where we tapped, so header heights cancel out).
+    _scrollGridToFocus();
   }
 
-  void _onLongPress(AssetEntity asset) {
-    ref.read(libraryProvider.notifier).enterSelectionMode(asset.id);
+  void _scrollGridToFocus() {
+    final focus = ref.read(detailFocusIndexProvider);
+    ref.read(detailFocusIndexProvider.notifier).state = null;
+    if (focus == null || focus == _enterIndex) return;
+    if (!_primaryController.hasClients) return;
+    final rowDelta = (focus ~/ _crossAxisCount) - (_enterIndex ~/ _crossAxisCount);
+    if (rowDelta == 0) return;
+    final target = (_enterOffset + rowDelta * _rowStride)
+        .clamp(0.0, _primaryController.position.maxScrollExtent);
+    _primaryController.animateTo(
+      target,
+      duration: const Duration(milliseconds: 360),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  void _onLongPress(String id) {
+    ref.read(libraryProvider.notifier).enterSelectionMode(id);
   }
 
   Future<void> _openAlbumPicker(

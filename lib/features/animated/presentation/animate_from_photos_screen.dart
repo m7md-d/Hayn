@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:photo_manager/photo_manager.dart';
 import '../../../app/l10n/app_localizations.dart';
 import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
 import '../../../shared/widgets/widgets.dart';
-import '../../library/presentation/providers/library_provider.dart';
+import '../../library/presentation/widgets/id_thumbnail.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AnimateFromPhotosScreen — drag-reorderable list of selected frames + per
@@ -26,7 +25,8 @@ class AnimateFromPhotosScreen extends ConsumerStatefulWidget {
 
 class _AnimateFromPhotosScreenState
     extends ConsumerState<AnimateFromPhotosScreen> {
-  late List<AssetEntity> _frames;
+  // Frame order is just a list of ids; thumbnails materialise lazily by id.
+  late List<String> _frames;
   _AnimFormat _format = _AnimFormat.webp;
   double _fps = 6;
   bool _loop = true;
@@ -34,13 +34,7 @@ class _AnimateFromPhotosScreenState
   @override
   void initState() {
     super.initState();
-    final all = ref.read(libraryProvider).assets;
-    _frames = widget.assetIds
-        .map((id) => all.firstWhere(
-              (a) => a.id == id,
-              orElse: () => all.first,
-            ))
-        .toList();
+    _frames = List<String>.of(widget.assetIds);
   }
 
   void _export() {
@@ -92,12 +86,12 @@ class _AnimateFromPhotosScreenState
                 });
               },
               itemBuilder: (ctx, i) {
-                final asset = _frames[i];
+                final id = _frames[i];
                 return Padding(
-                  key: ValueKey(asset.id),
+                  key: ValueKey(id),
                   padding: const EdgeInsetsDirectional.only(end: AppSpacing.s2),
                   child: _FrameTile(
-                    asset: asset,
+                    id: id,
                     index: i,
                     onRemove: () =>
                         setState(() => _frames.removeAt(i)),
@@ -242,35 +236,15 @@ class _MiniChip extends StatelessWidget {
   }
 }
 
-class _FrameTile extends StatefulWidget {
+class _FrameTile extends StatelessWidget {
   const _FrameTile({
-    required this.asset,
+    required this.id,
     required this.index,
     required this.onRemove,
   });
-  final AssetEntity asset;
+  final String id;
   final int index;
   final VoidCallback onRemove;
-
-  @override
-  State<_FrameTile> createState() => _FrameTileState();
-}
-
-class _FrameTileState extends State<_FrameTile> {
-  Uint8List? _thumb;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    final data = await widget.asset.thumbnailDataWithSize(
-      const ThumbnailSize.square(200),
-    );
-    if (mounted) setState(() => _thumb = data);
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -287,17 +261,14 @@ class _FrameTileState extends State<_FrameTile> {
               borderRadius: BorderRadius.circular(AppRadius.md),
             ),
             clipBehavior: Clip.antiAlias,
-            child: _thumb == null
-                ? null
-                : Image.memory(_thumb!,
-                    fit: BoxFit.cover, gaplessPlayback: true),
+            child: IdThumbnail(id: id, placeholderColor: hc.surfaceSunken),
           ),
           PositionedDirectional(
             top: 4, end: 4,
             child: GestureDetector(
               onTap: () {
                 HapticFeedback.lightImpact();
-                widget.onRemove();
+                onRemove();
               },
               child: Container(
                 width: 20, height: 20,
@@ -320,7 +291,7 @@ class _FrameTileState extends State<_FrameTile> {
                 borderRadius: BorderRadius.circular(AppRadius.sm),
               ),
               child: Text(
-                '${widget.index + 1}',
+                '${index + 1}',
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 10,

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:photo_manager/photo_manager.dart';
 import '../../../app/l10n/app_localizations.dart';
 import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
@@ -9,7 +8,7 @@ import '../../../core/batch/batch_savings_estimator.dart';
 import '../../../core/capabilities/format_capabilities.dart';
 import '../../../data/index/index_providers.dart';
 import '../../../shared/widgets/widgets.dart';
-import '../../library/presentation/providers/library_provider.dart';
+import '../../library/presentation/widgets/id_thumbnail.dart';
 import '../../settings/providers/preferences_providers.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -52,18 +51,8 @@ class _SurgicalBatchScreenState
   bool _keepMetadata = true;
   bool _keepTrashBackup = true;
 
-  late final List<AssetEntity> _assets;
   Future<BatchSavingsEstimate>? _future;
   int? _lastKey;
-
-  @override
-  void initState() {
-    super.initState();
-    final all = ref.read(libraryProvider).assets;
-    _assets = all
-        .where((a) => widget.assetIds.contains(a.id))
-        .toList(growable: false);
-  }
 
   void _refreshEstimate(DefaultFormat effective) {
     final key = Object.hash(_mode, _quality.round(), effective);
@@ -165,14 +154,14 @@ class _SurgicalBatchScreenState
 
           // ── Asset thumbnails grid ─────────────────────────────────────
           Text(
-            l.librarySelectedCount(_assets.length),
+            l.librarySelectedCount(widget.assetIds.length),
             style: theme.textTheme.labelMedium?.copyWith(
               color: hc.text2,
               letterSpacing: 0.3,
             ),
           ),
           const SizedBox(height: AppSpacing.s2),
-          _AssetGrid(assets: _assets),
+          _AssetGrid(ids: widget.assetIds),
           const SizedBox(height: AppSpacing.md),
 
           // ── Mode-dependent settings ───────────────────────────────────
@@ -203,7 +192,7 @@ class _SurgicalBatchScreenState
 
           // ── Confirm ───────────────────────────────────────────────────
           HaynDestructiveButton(
-            label: '${l.surgicalConfirm} (${_assets.length})',
+            label: '${l.surgicalConfirm} (${widget.assetIds.length})',
             icon: Icons.healing_rounded,
             onPressed: _confirm,
             size: HaynButtonSize.large,
@@ -329,16 +318,23 @@ class _BatchStatsCard extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// _AssetGrid — compact thumbnails arranged in a 4-column grid. The grid is
-// wrapped in a Container so the user can scroll past it once it gets large.
+// _AssetGrid — compact preview of the selection (4 columns). Capped at a small
+// number of lazy thumbnails (by id) with a "+N" overflow tile, so a 10k
+// "select all" shows a representative preview instead of decoding everything
+// at once. The exact count + savings come from the index, not this grid.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _AssetGrid extends StatelessWidget {
-  const _AssetGrid({required this.assets});
-  final List<AssetEntity> assets;
+  const _AssetGrid({required this.ids});
+  final List<String> ids;
+
+  static const _cap = 24;
 
   @override
   Widget build(BuildContext context) {
+    final shown = ids.length > _cap ? _cap : ids.length;
+    final overflow = ids.length - shown;
+    final tileCount = shown + (overflow > 0 ? 1 : 0);
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -347,34 +343,21 @@ class _AssetGrid extends StatelessWidget {
         crossAxisSpacing: AppSpacing.s2,
         mainAxisSpacing: AppSpacing.s2,
       ),
-      itemCount: assets.length,
-      itemBuilder: (ctx, i) => _AssetTile(asset: assets[i]),
+      itemCount: tileCount,
+      itemBuilder: (ctx, i) {
+        if (i >= shown) return _OverflowTile(count: overflow);
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(AppRadius.sm),
+          child: IdThumbnail(id: ids[i]),
+        );
+      },
     );
   }
 }
 
-class _AssetTile extends StatefulWidget {
-  const _AssetTile({required this.asset});
-  final AssetEntity asset;
-
-  @override
-  State<_AssetTile> createState() => _AssetTileState();
-}
-
-class _AssetTileState extends State<_AssetTile> {
-  Uint8List? _bytes;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    final data = await widget.asset
-        .thumbnailDataWithSize(const ThumbnailSize.square(160));
-    if (mounted) setState(() => _bytes = data);
-  }
+class _OverflowTile extends StatelessWidget {
+  const _OverflowTile({required this.count});
+  final int count;
 
   @override
   Widget build(BuildContext context) {
@@ -383,9 +366,14 @@ class _AssetTileState extends State<_AssetTile> {
       borderRadius: BorderRadius.circular(AppRadius.sm),
       child: Container(
         color: hc.surfaceSunken,
-        child: _bytes == null
-            ? const SizedBox.expand()
-            : Image.memory(_bytes!, fit: BoxFit.cover, gaplessPlayback: true),
+        alignment: Alignment.center,
+        child: Text(
+          '+$count',
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                color: hc.text2,
+                fontWeight: FontWeight.w700,
+              ),
+        ),
       ),
     );
   }

@@ -8,7 +8,7 @@ import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
 import '../../../app/theme/motion.dart';
 import '../../../shared/widgets/widgets.dart';
-import '../../library/presentation/providers/library_provider.dart';
+import '../../library/presentation/providers/asset_entity_cache.dart';
 import 'widgets/video_timeline.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -54,13 +54,21 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen> {
   @override
   void initState() {
     super.initState();
-    final all = ref.read(libraryProvider).assets;
-    _asset = all.firstWhere(
-      (a) => a.id == widget.assetId,
-      orElse: () => all.first,
-    );
-    _end = _asset!.videoDuration.inSeconds.toDouble();
-    _loadThumb();
+    final cached = AssetEntityCache.get(widget.assetId);
+    if (cached != null) {
+      _asset = cached;
+      _end = cached.videoDuration.inSeconds.toDouble();
+      _loadThumb();
+    } else {
+      AssetEntityCache.load(widget.assetId).then((a) {
+        if (!mounted || a == null) return;
+        setState(() {
+          _asset = a;
+          _end = a.videoDuration.inSeconds.toDouble();
+        });
+        _loadThumb();
+      });
+    }
   }
 
   Future<void> _loadThumb() async {

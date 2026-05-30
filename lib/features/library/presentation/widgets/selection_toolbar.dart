@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:photo_manager/photo_manager.dart';
 import '../../../../app/l10n/app_localizations.dart';
 import '../../../../app/theme/app_theme_extension.dart';
 import '../../../../app/theme/design_tokens.dart';
@@ -27,7 +26,7 @@ import '../providers/library_provider.dart';
 
 class SelectionToolbar extends ConsumerWidget {
   const SelectionToolbar({
-    required this.selectedAssets,
+    required this.hasSelection,
     required this.onCompress,
     required this.onStripMetadata,
     required this.onSurgical,
@@ -35,7 +34,10 @@ class SelectionToolbar extends ConsumerWidget {
     super.key,
   });
 
-  final List<AssetEntity> selectedAssets;
+  /// Whether anything is selected. The actual ids/assets are pulled by id where
+  /// needed (estimate, downstream screens), never materialised here — so a
+  /// 10k "select all" never builds a 10k AssetEntity list.
+  final bool hasSelection;
   final VoidCallback onCompress;
   final VoidCallback onStripMetadata;
   final VoidCallback onSurgical;
@@ -45,7 +47,6 @@ class SelectionToolbar extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final hc = context.hc;
     final l = AppLocalizations.of(context);
-    final hasSelection = selectedAssets.isNotEmpty;
 
     return Container(
       decoration: BoxDecoration(

@@ -7,7 +7,7 @@ import '../../../app/l10n/app_localizations.dart';
 import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
 import '../../../shared/widgets/widgets.dart';
-import '../../library/presentation/providers/library_provider.dart';
+import '../../library/presentation/providers/asset_entity_cache.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SeparateAudioScreen — configuration step for the heavy AI separation task.
@@ -35,11 +35,12 @@ class _SeparateAudioScreenState extends ConsumerState<SeparateAudioScreen> {
   @override
   void initState() {
     super.initState();
-    final all = ref.read(libraryProvider).assets;
-    _asset = all.firstWhere(
-      (a) => a.id == widget.assetId,
-      orElse: () => all.first,
-    );
+    _asset = AssetEntityCache.get(widget.assetId);
+    if (_asset == null) {
+      AssetEntityCache.load(widget.assetId).then((a) {
+        if (mounted && a != null) setState(() => _asset = a);
+      });
+    }
   }
 
   String get _etaLabel {

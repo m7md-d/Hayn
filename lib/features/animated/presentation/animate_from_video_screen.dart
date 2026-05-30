@@ -6,7 +6,7 @@ import '../../../app/l10n/app_localizations.dart';
 import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
 import '../../../shared/widgets/widgets.dart';
-import '../../library/presentation/providers/library_provider.dart';
+import '../../library/presentation/providers/asset_entity_cache.dart';
 import '../../video_ops/presentation/widgets/video_timeline.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -43,15 +43,21 @@ class _AnimateFromVideoScreenState
   @override
   void initState() {
     super.initState();
-    final all = ref.read(libraryProvider).assets;
-    _asset = all.firstWhere(
-      (a) => a.id == widget.assetId,
-      orElse: () => all.first,
-    );
-    final maxRange =
-        (_asset!.videoDuration.inSeconds.toDouble()).clamp(0.0, 10.0);
-    _end = maxRange;
-    _loadThumb();
+    final cached = AssetEntityCache.get(widget.assetId);
+    if (cached != null) {
+      _asset = cached;
+      _end = cached.videoDuration.inSeconds.toDouble().clamp(0.0, 10.0);
+      _loadThumb();
+    } else {
+      AssetEntityCache.load(widget.assetId).then((a) {
+        if (!mounted || a == null) return;
+        setState(() {
+          _asset = a;
+          _end = a.videoDuration.inSeconds.toDouble().clamp(0.0, 10.0);
+        });
+        _loadThumb();
+      });
+    }
   }
 
   Future<void> _loadThumb() async {

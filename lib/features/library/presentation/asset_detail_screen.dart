@@ -8,6 +8,7 @@ import '../../../app/l10n/app_localizations.dart';
 import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
 import '../../../shared/widgets/widgets.dart';
+import 'providers/asset_entity_cache.dart';
 import 'providers/library_provider.dart';
 import 'providers/thumbnail_cache.dart';
 import 'widgets/asset_filmstrip.dart';
@@ -34,7 +35,9 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
   PageController? _ctrl;
   int _currentIndex = 0;
   bool _uiVisible = true;
-  List<AssetEntity> _assets = const [];
+  // The spine (ids + light metadata) shared with the grid. Pages materialise
+  // their AssetEntity lazily, so this can span the whole 10k library.
+  List<LibraryEntry> _entries = const [];
 
   /// Fade factor for the bottom action bar — driven by the active page's
   /// inline info sheet (0 = sheet closed, 1 = sheet fully open). The bar
@@ -49,27 +52,32 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
   @override
   void initState() {
     super.initState();
-    final assets = ref.read(libraryProvider).displayAssets;
-    _assets = assets;
-    final initial =
-        _assets.indexWhere((a) => a.id == widget.assetId).clamp(0, assets.length - 1);
-    _currentIndex = initial;
-    _ctrl = PageController(initialPage: initial);
-    _preloadNeighbors(initial);
+    _entries = ref.read(libraryProvider).entries;
+    final found = _entries.indexWhere((e) => e.id == widget.assetId);
+    _currentIndex = found < 0 ? 0 : found;
+    _ctrl = PageController(initialPage: _currentIndex);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(detailFocusIndexProvider.notifier).state = _currentIndex;
+    });
+    _preloadNeighbors(_currentIndex);
   }
 
   /// Kicks off background thumbnail fetches for ±2 neighbors so the user's
-  /// next swipe lands on already-cached bytes.
+  /// next swipe lands on already-cached bytes. Materialises each neighbour's
+  /// entity lazily (bounded) — never the whole list at once.
   void _preloadNeighbors(int index) {
     for (final offset in const [-2, -1, 1, 2]) {
       final i = index + offset;
-      if (i < 0 || i >= _assets.length) continue;
-      final asset = _assets[i];
-      if (ThumbnailCache.get(asset.id) != null) continue;
-      asset
-          .thumbnailDataWithSize(const ThumbnailSize.square(1080))
-          .then((data) {
-        if (data != null) ThumbnailCache.put(asset.id, data);
+      if (i < 0 || i >= _entries.length) continue;
+      final id = _entries[i].id;
+      if (ThumbnailCache.get(id) != null) continue;
+      AssetEntityCache.load(id).then((asset) {
+        if (asset == null) return;
+        asset
+            .thumbnailDataWithSize(const ThumbnailSize.square(1080))
+            .then((data) {
+          if (data != null) ThumbnailCache.put(id, data);
+        });
       });
     }
   }
@@ -86,13 +94,19 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
   }
 
   void _onPageChanged(int i) {
-    HapticFeedback.selectionClick();
     setState(() {
       _currentIndex = i;
       // A fresh asset starts with no info-sheet pull-in.
       _infoProgress = 0;
     });
+    // Report the focused index so closing the viewer returns the grid here.
+    ref.read(detailFocusIndexProvider.notifier).state = i;
     _preloadNeighbors(i);
+    // Album/legacy mode loads in pages — pull more as we approach the end so
+    // swiping never dead-ends. No-op in index-backed mode (whole spine loaded).
+    if (i >= _entries.length - 5) {
+      ref.read(libraryProvider.notifier).loadMore();
+    }
   }
 
   void _jumpToIndex(int i) {
@@ -112,10 +126,12 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
     _ctrl!.jumpToPage(i);
   }
 
-  void _openInfo(BuildContext context) {
+  Future<void> _openInfo(BuildContext context) async {
+    final asset = await AssetEntityCache.load(_entries[_currentIndex].id);
+    if (asset == null || !context.mounted) return;
     showHaynSheet(
       context: context,
-      builder: (_) => AssetMetadataSheet(asset: _assets[_currentIndex]),
+      builder: (_) => AssetMetadataSheet(asset: asset),
     );
   }
 
@@ -127,37 +143,37 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
 
   void _compress() {
     HapticFeedback.lightImpact();
-    context.push('/compress', extra: [_assets[_currentIndex].id]);
+    context.push('/compress', extra: [_entries[_currentIndex].id]);
   }
 
   void _crop() {
     HapticFeedback.lightImpact();
-    context.push('/crop/${_assets[_currentIndex].id}');
+    context.push('/crop/${_entries[_currentIndex].id}');
   }
 
   void _surgical() {
     HapticFeedback.lightImpact();
-    context.push('/surgical/${_assets[_currentIndex].id}');
+    context.push('/surgical/${_entries[_currentIndex].id}');
   }
 
   void _videoEdit() {
     HapticFeedback.lightImpact();
-    context.push('/video-edit/${_assets[_currentIndex].id}');
+    context.push('/video-edit/${_entries[_currentIndex].id}');
   }
 
   void _trim() {
     HapticFeedback.lightImpact();
-    context.push('/trim/${_assets[_currentIndex].id}');
+    context.push('/trim/${_entries[_currentIndex].id}');
   }
 
   void _cropVideo() {
     HapticFeedback.lightImpact();
-    context.push('/crop-video/${_assets[_currentIndex].id}');
+    context.push('/crop-video/${_entries[_currentIndex].id}');
   }
 
   void _removeAudio() {
     HapticFeedback.lightImpact();
-    context.push('/remove-audio/${_assets[_currentIndex].id}');
+    context.push('/remove-audio/${_entries[_currentIndex].id}');
   }
 
   Future<void> _stripMetadata() async {
@@ -176,7 +192,9 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_assets.isEmpty) {
+    // Track spine growth (album/legacy load-more) so swiping never dead-ends.
+    _entries = ref.watch(libraryProvider.select((s) => s.entries));
+    if (_entries.isEmpty) {
       return const Scaffold(
         backgroundColor: Colors.black,
         body: Center(
@@ -184,9 +202,10 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
         ),
       );
     }
+    if (_currentIndex >= _entries.length) _currentIndex = _entries.length - 1;
 
     final l = AppLocalizations.of(context);
-    final isVideo = _assets[_currentIndex].type == AssetType.video;
+    final isVideo = _entries[_currentIndex].isVideo;
 
     // Transparent scaffold so the rubber-band dismiss can fade the bg down to
     // fully transparent (the library tab shows through). A black Container
@@ -206,7 +225,7 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
                 ? (1.0 - _infoProgress * 0.6).clamp(0.0, 1.0)
                 : 0.0,
             child: _DetailAppBar(
-              title: _titleFor(_assets[_currentIndex]),
+              title: _titleFor(_entries[_currentIndex]),
               onInfo: () => _openInfo(context),
               onMore: () => _action(l.selectionMore),
             ),
@@ -232,11 +251,12 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
             physics: _zoomLocked
                 ? const NeverScrollableScrollPhysics()
                 : const BouncingScrollPhysics(),
-            itemCount: _assets.length,
+            itemCount: _entries.length,
             itemBuilder: (ctx, i) {
-              final asset = _assets[i];
+              final entry = _entries[i];
               return _AssetPage(
-                asset: asset,
+                key: ValueKey(entry.id),
+                entry: entry,
                 isActive: i == _currentIndex,
                 onTap: _toggleUi,
                 onInfoProgressChanged: i == _currentIndex
@@ -274,9 +294,9 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        if (_assets.length > 1)
+                        if (_entries.length > 1)
                           AssetFilmstrip(
-                            assets: _assets,
+                            entries: _entries,
                             currentIndex: _currentIndex,
                             onSelect: _jumpToIndex,
                             onScrub: _scrubToIndex,
@@ -309,9 +329,11 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
     );
   }
 
-  String _titleFor(AssetEntity asset) {
+  String _titleFor(LibraryEntry entry) {
+    final created = entry.created;
+    if (created == null) return '';
     final locale = Localizations.localeOf(context).languageCode;
-    return DateFormat.yMMMd(locale).format(asset.createDateTime);
+    return DateFormat.yMMMd(locale).format(created);
   }
 }
 
@@ -323,14 +345,15 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
 
 class _AssetPage extends StatefulWidget {
   const _AssetPage({
-    required this.asset,
+    required this.entry,
     required this.isActive,
     required this.onTap,
     this.onInfoProgressChanged,
     this.onZoomLockedChanged,
+    super.key,
   });
 
-  final AssetEntity asset;
+  final LibraryEntry entry;
   final bool isActive;
   final VoidCallback onTap;
 
@@ -353,6 +376,9 @@ class _AssetPageState extends State<_AssetPage>
     with TickerProviderStateMixin {
   Uint8List? _lowResBytes;
   Uint8List? _hiResBytes;
+  // Materialised lazily from the entry id; needed for the video player and the
+  // inline metadata sheet. Null until it resolves.
+  AssetEntity? _entity;
   final TransformationController _txCtrl = TransformationController();
   late final AnimationController _zoomAnim;
   late final AnimationController _dismissAnim;
@@ -394,14 +420,21 @@ class _AssetPageState extends State<_AssetPage>
     );
     _txCtrl.addListener(_maybeUnlockZoom);
 
-    _lowResBytes = ThumbnailCache.get(widget.asset.id);
+    // Show the cached small thumb instantly (Hero landing), then materialise
+    // the entity lazily and swap in the crisp 1080-px version.
+    _lowResBytes = ThumbnailCache.get(widget.entry.id);
     _load();
   }
 
   Future<void> _load() async {
-    final data = await widget.asset.thumbnailDataWithSize(
-      const ThumbnailSize.square(1080),
+    final entity = await AssetEntityCache.load(
+      widget.entry.id,
+      cancelled: () => !mounted,
     );
+    if (entity == null || !mounted) return;
+    setState(() => _entity = entity);
+    final data =
+        await entity.thumbnailDataWithSize(const ThumbnailSize.square(1080));
     if (mounted) setState(() => _hiResBytes = data);
   }
 
@@ -632,10 +665,12 @@ class _AssetPageState extends State<_AssetPage>
 
   @override
   Widget build(BuildContext context) {
-    final isVideo = widget.asset.type == AssetType.video;
+    final isVideo = widget.entry.isVideo;
     final bytesToShow = _hiResBytes ?? _lowResBytes;
 
-    if (bytesToShow == null) {
+    // Nothing to paint yet (no cached thumb and the entity is still
+    // resolving), or a video whose entity hasn't loaded → show the loader.
+    if (bytesToShow == null || (isVideo && _entity == null)) {
       return GestureDetector(
         onTap: widget.onTap,
         child: const Center(child: _LoadingBlock()),
@@ -659,10 +694,10 @@ class _AssetPageState extends State<_AssetPage>
 
         final imageContent = Center(
           child: Hero(
-            tag: 'asset-${widget.asset.id}',
+            tag: 'asset-${widget.entry.id}',
             createRectTween: (a, b) => MaterialRectArcTween(begin: a, end: b),
             child: isVideo
-                ? AssetVideoPlayer(asset: widget.asset)
+                ? AssetVideoPlayer(asset: _entity!)
                 : Stack(
                     alignment: Alignment.center,
                     children: [
@@ -756,9 +791,10 @@ class _AssetPageState extends State<_AssetPage>
             // Inline info sheet — slides up from the bottom as the user pulls
             // (or animates to full once threshold is crossed). It sits inside
             // the same Stack so the sheet drag stays continuous with the
-            // upward swipe that summoned it.
-            _InlineInfoSheet(
-              asset: widget.asset,
+            // upward swipe that summoned it. Only once the entity is resolved.
+            if (_entity != null)
+              _InlineInfoSheet(
+              asset: _entity!,
               infoY: _infoY,
               maxHeight: _infoMaxHeight,
               infoProgress: infoProgress,
