@@ -25,14 +25,18 @@ class TasksAppBarButton extends ConsumerWidget {
     final hc = context.hc;
     final tasks = ref.watch(taskRunnerProvider);
 
+    final acknowledged = ref.watch(tasksAcknowledgedProvider);
     final running = tasks
         .where((t) =>
             t.status == TaskStatus.running || t.status == TaskStatus.pending)
         .length;
     final failed =
         tasks.where((t) => t.status == TaskStatus.failed).length;
-    final allDone =
-        tasks.isNotEmpty && tasks.every((t) => t.status == TaskStatus.completed);
+    // The green "all done" dot is a NOTIFICATION — once the user has opened the
+    // queue (acknowledged), it clears and the button goes neutral.
+    final allDone = !acknowledged &&
+        tasks.isNotEmpty &&
+        tasks.every((t) => t.status == TaskStatus.completed);
 
     final (Color tint, int count, bool dot) = running > 0
         ? (hc.warningColor, running, false)

@@ -24,11 +24,27 @@ enum _TasksFilter { all, running, done, failed }
 
 final _tasksFilterProvider = StateProvider<_TasksFilter>((ref) => _TasksFilter.all);
 
-class TasksScreen extends ConsumerWidget {
+class TasksScreen extends ConsumerStatefulWidget {
   const TasksScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<TasksScreen> createState() => _TasksScreenState();
+}
+
+class _TasksScreenState extends ConsumerState<TasksScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // Opening the queue dismisses the "all done" badge notification.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        ref.read(tasksAcknowledgedProvider.notifier).state = true;
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
     final hc = context.hc;
     final theme = Theme.of(context);

@@ -39,6 +39,9 @@ class TaskRunner extends Notifier<List<TaskState>> {
   List<TaskState> build() => [];
 
   Future<void> enqueue(MediaTask task) async {
+    // New work to notify about → the "all done" badge dot should light up again
+    // once it finishes, even if a previous batch was already acknowledged.
+    ref.read(tasksAcknowledgedProvider.notifier).state = false;
     state = [
       ...state,
       TaskState(task: task, status: TaskStatus.pending),
@@ -121,3 +124,9 @@ class TaskRunner extends Notifier<List<TaskState>> {
 final taskRunnerProvider = NotifierProvider<TaskRunner, List<TaskState>>(
   TaskRunner.new,
 );
+
+/// Whether the user has SEEN the current "all done" state. The Tasks app-bar
+/// button shows its green completion dot only while this is false; opening the
+/// Tasks screen sets it true (the notification is dismissed), and enqueuing new
+/// work resets it to false. Starts true so a fresh, empty queue shows nothing.
+final tasksAcknowledgedProvider = StateProvider<bool>((ref) => true);

@@ -79,6 +79,24 @@ class _CropCanvasState extends State<CropCanvas> {
   Offset _grabOffset = Offset.zero; // for body drag
   bool _initialised = false;
 
+  // Pinch-zoom of the whole canvas. InteractiveViewer maps pointer events back
+  // into the child's (unzoomed) coordinate space, so all the crop-rect math
+  // below keeps working untouched — zooming just lets the user get close enough
+  // to place a tiny crop precisely. 2 fingers zoom/pan; 1 finger drags handles.
+  late final TransformationController _zoomCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _zoomCtrl = TransformationController();
+  }
+
+  @override
+  void dispose() {
+    _zoomCtrl.dispose();
+    super.dispose();
+  }
+
   void _recomputeImageRect(Size viewport) {
     final rotated = widget.rotationQuarters.isOdd;
     final iw = (rotated ? widget.imageHeight : widget.imageWidth).toDouble();
@@ -366,7 +384,8 @@ class _CropCanvasState extends State<CropCanvas> {
     if (rotationChanged) {
       // After rotation we recompute the image rect and reset the crop to
       // cover it — the previous crop is no longer meaningful in the new
-      // orientation.
+      // orientation. Also drop any zoom so the fresh crop starts framed.
+      _zoomCtrl.value = Matrix4.identity();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         _recomputeImageRect(_lastViewport);
@@ -408,7 +427,15 @@ class _CropCanvasState extends State<CropCanvas> {
       final rotated = widget.rotationQuarters.isOdd;
       final preW = rotated ? _imgRect.height : _imgRect.width;
       final preH = rotated ? _imgRect.width : _imgRect.height;
-      return Stack(
+      return InteractiveViewer(
+        transformationController: _zoomCtrl,
+        // 1-finger stays with the crop handles below; 2 fingers zoom + pan.
+        panEnabled: false,
+        scaleEnabled: true,
+        minScale: 1,
+        maxScale: 6,
+        clipBehavior: Clip.hardEdge,
+        child: Stack(
         children: [
           // ── Image with rotation + flip ───────────────────────────────
           Positioned(
@@ -455,6 +482,7 @@ class _CropCanvasState extends State<CropCanvas> {
             ),
           ),
         ],
+        ),
       );
     });
   }
