@@ -94,8 +94,9 @@ class MediaThumbnail extends StatelessWidget {
           curve: AppCurves.standard,
           child: Hero(
             tag: 'asset-$id',
-            createRectTween: (begin, end) =>
-                MaterialRectArcTween(begin: begin, end: end),
+            // Straight tween (not the Material arc) so the tile scales directly
+            // up into the viewer — matches the detail Hero for a clean flight.
+            createRectTween: (begin, end) => RectTween(begin: begin, end: end),
             child: Stack(
               fit: StackFit.expand,
               children: [

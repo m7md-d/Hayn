@@ -792,7 +792,10 @@ class _AssetPageState extends State<_AssetPage>
         final imageContent = Center(
           child: Hero(
             tag: 'asset-${widget.entry.id}',
-            createRectTween: (a, b) => MaterialRectArcTween(begin: a, end: b),
+            // Straight rect tween → the tapped photo scales directly up to fill
+            // the screen. (The default Material arc made it swoop, which read as
+            // a janky entry.)
+            createRectTween: (a, b) => RectTween(begin: a, end: b),
             child: isVideo
                 ? AssetVideoPlayer(asset: _entity!)
                 : Stack(
@@ -1010,7 +1013,25 @@ class _InlineInfoSheet extends StatelessWidget {
                       ),
                     ),
                     Expanded(
-                      child: AssetMetadataSheet(asset: asset),
+                      // Pulling the content DOWN while it's already at the top
+                      // (overscroll) closes the sheet — so a swipe-down anywhere
+                      // dismisses it, not just a drag on the handle. When there
+                      // IS more content above, the same gesture scrolls first.
+                      child: NotificationListener<ScrollNotification>(
+                        onNotification: (n) {
+                          if (n is OverscrollNotification &&
+                              n.overscroll < 0 &&
+                              n.dragDetails != null) {
+                            onDragUpdate(-n.overscroll);
+                            return true;
+                          }
+                          if (n is ScrollEndNotification) {
+                            onDragEnd(0);
+                          }
+                          return false;
+                        },
+                        child: AssetMetadataSheet(asset: asset),
+                      ),
                     ),
                   ],
                 ),
