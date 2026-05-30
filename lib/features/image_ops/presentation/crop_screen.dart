@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -5,8 +7,10 @@ import 'package:photo_manager/photo_manager.dart';
 import '../../../app/l10n/app_localizations.dart';
 import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
+import '../../../core/isolates/task_runner.dart';
 import '../../../shared/widgets/widgets.dart';
 import '../../library/presentation/providers/asset_entity_cache.dart';
+import '../data/image_crop_task.dart';
 import 'widgets/aspect_ratio_chips.dart';
 import 'widgets/crop_canvas.dart';
 import 'widgets/rotate_flip_bar.dart';
@@ -104,9 +108,21 @@ class _CropScreenState extends ConsumerState<CropScreen> {
     });
   }
 
-  Future<void> _apply() async {
+  void _apply() {
     HapticFeedback.lightImpact();
     final l = AppLocalizations.of(context);
+    final id = _asset?.id ?? widget.assetId;
+    unawaited(
+      ref.read(taskRunnerProvider.notifier).enqueue(
+            ImageCropTask(
+              assetId: id,
+              rotationQuarters: _rotation,
+              flipH: _flipH,
+              flipV: _flipV,
+              cropFraction: _cropFraction,
+            ),
+          ),
+    );
     HaynSnack.success(context, l.cropApplied);
     Navigator.of(context).pop();
   }

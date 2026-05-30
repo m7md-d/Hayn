@@ -179,6 +179,7 @@
   "formatHeicDesc": "نفس الجودة، نصف الحجم",
   "formatWebpDesc": "أصغر من JPEG، مدعوم في كثير من البرامج",
   "formatJpegDesc": "يعمل على كل جهاز",
+  "formatPngDesc": "بلا فقد — يحفظ الشفافية، ملفات أكبر",
 
   "aboutTitle": "عن هين",
   "aboutTagline": "استوديو ميديا يعمل بالكامل على جهازك.",

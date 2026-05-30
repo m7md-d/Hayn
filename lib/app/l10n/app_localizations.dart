@@ -992,6 +992,12 @@ abstract class AppLocalizations {
   /// **'Works on every device'**
   String get formatJpegDesc;
 
+  /// No description provided for @formatPngDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Lossless — keeps transparency, larger files'**
+  String get formatPngDesc;
+
   /// No description provided for @aboutTitle.
   ///
   /// In en, this message translates to:

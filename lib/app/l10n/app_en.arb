@@ -179,6 +179,7 @@
   "formatHeicDesc": "Same quality, half the size",
   "formatWebpDesc": "Smaller than JPEG, broadly supported",
   "formatJpegDesc": "Works on every device",
+  "formatPngDesc": "Lossless — keeps transparency, larger files",
 
   "aboutTitle": "About Hayn",
   "aboutTagline": "A media studio that runs entirely on your device.",

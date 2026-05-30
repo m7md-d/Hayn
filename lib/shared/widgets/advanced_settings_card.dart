@@ -77,6 +77,10 @@ class HaynAdvancedSettingsCard extends ConsumerWidget {
           value: DefaultFormat.jpeg,
           label: 'JPEG',
           description: l.formatJpegDesc),
+      HaynPickerOption(
+          value: DefaultFormat.png,
+          label: 'PNG',
+          description: l.formatPngDesc),
     ];
 
     await showHaynPickerSheet<DefaultFormat>(

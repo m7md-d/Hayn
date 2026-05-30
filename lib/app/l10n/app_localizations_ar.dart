@@ -486,6 +486,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get formatJpegDesc => 'يعمل على كل جهاز';
 
   @override
+  String get formatPngDesc => 'بلا فقد — يحفظ الشفافية، ملفات أكبر';
+
+  @override
   String get aboutTitle => 'عن هين';
 
   @override

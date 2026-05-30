@@ -480,6 +480,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get formatJpegDesc => 'Works on every device';
 
   @override
+  String get formatPngDesc => 'Lossless — keeps transparency, larger files';
+
+  @override
   String get aboutTitle => 'About Hayn';
 
   @override
