@@ -1,11 +1,14 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:photo_manager/photo_manager.dart';
 
 import '../../../core/isolates/media_task.dart';
 import '../../../core/isolates/task_progress.dart';
 import 'gallery_saver.dart';
+import 'image_probe.dart';
 import 'metadata.dart';
+import 'native_image_stripper.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // StripMetadataTask — saves a metadata-free copy of each selected image
@@ -59,20 +62,37 @@ class StripMetadataTask extends MediaTask {
         continue;
       }
 
-      // Lossless ONLY. A null result means "no safe pure-Dart stripper for this
-      // format" (e.g. HEIC) — we skip it rather than re-encode and inflate it.
-      final result = MetadataStripper.strip(src);
-      if (result == null) {
-        unsupported++;
-        done++;
-        yield TaskProgress(progress: done / total, phase: '$done/$total');
-        continue;
+      // Lossless ONLY (never re-encode/inflate). Pure-Dart handles JPEG/PNG/
+      // WebP; a null result is a container we can't edit in Dart (HEIC/AVIF) —
+      // try the NATIVE lossless strip (iOS ImageIO) before giving up.
+      var bytes = <int>[];
+      String ext = 'jpg';
+      final dart = MetadataStripper.strip(src);
+      if (dart != null) {
+        bytes = dart.bytes;
+        ext = dart.ext;
+      } else {
+        final fmt = ImageProbe.sniff(src);
+        if (fmt == SniffedFormat.heic || fmt == SniffedFormat.avif) {
+          final native = await NativeImageStripper.strip(src);
+          if (_cancelled) return;
+          if (native != null) {
+            bytes = native;
+            ext = fmt == SniffedFormat.avif ? 'avif' : 'heic';
+          }
+        }
+        if (bytes.isEmpty) {
+          unsupported++;
+          done++;
+          yield TaskProgress(progress: done / total, phase: '$done/$total');
+          continue;
+        }
       }
 
       try {
         final asset = await GallerySaver.saveImage(
-          result.bytes,
-          filename: _outName(entity, result.ext),
+          Uint8List.fromList(bytes),
+          filename: _outName(entity, ext),
           // No date/GPS — this is the strip tool.
         );
         if (asset != null) {
