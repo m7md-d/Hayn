@@ -712,6 +712,20 @@ class AppLocalizationsEn extends AppLocalizations {
       'JPEG can\'t keep transparency — your image will be saved in a transparency-safe format instead.';
 
   @override
+  String stripMetadataQueued(num count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count metadata removals queued',
+      one: 'Metadata removal queued',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get stripNothingFound => 'No removable metadata in this image';
+
+  @override
   String get cropApplied => 'Crop applied';
 
   @override

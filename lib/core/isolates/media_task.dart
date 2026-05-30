@@ -5,6 +5,7 @@ import 'task_progress.dart';
 enum TaskType {
   compress,
   convert,
+  stripMetadata,
   trim,
   smartCut,
   crop,

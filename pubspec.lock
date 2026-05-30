@@ -210,7 +210,7 @@ packages:
     source: hosted
     version: "2.33.0"
   exif:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: exif
       sha256: a7980fdb3b7ffcd0b035e5b8a5e1eef7cadfe90ea6a4e85ebb62f87b96c7a172

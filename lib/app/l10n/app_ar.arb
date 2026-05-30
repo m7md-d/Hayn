@@ -258,6 +258,8 @@
   "compressOpenComparison": "افتح المقارنة",
   "compressComputing": "جارٍ الضغط…",
   "compressAlphaFlattenWarning": "JPEG لا يحفظ الشفافية — ستُحفظ صورتك بصيغة تحفظ الشفافية بدلًا من ذلك.",
+  "stripMetadataQueued": "{count,plural, =1{أُدرجت إزالة الميتاداتا} other{أُدرجت إزالة الميتاداتا لـ {count} صورة}}",
+  "stripNothingFound": "لا توجد ميتاداتا قابلة للإزالة في هذه الصورة",
   "cropApplied": "تم القص",
   "cropRotateCw": "تدوير يمين",
   "cropRotateCcw": "تدوير يسار",

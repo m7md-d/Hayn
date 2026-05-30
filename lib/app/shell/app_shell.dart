@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../core/isolates/task_runner.dart';
+import '../../features/image_ops/data/strip_metadata_task.dart';
 import '../l10n/app_localizations.dart';
 import '../theme/app_theme_extension.dart';
 import '../theme/design_tokens.dart';
@@ -98,7 +102,14 @@ class _AppShellState extends ConsumerState<AppShell> {
                     reassurance: l.settingsPrivacy,
                   );
                   if (ok && context.mounted) {
-                    HaynSnack.success(context, l.taskStatusCompleted);
+                    final ids = libraryState.selectedIds.toList();
+                    unawaited(
+                      ref.read(taskRunnerProvider.notifier).enqueue(
+                            StripMetadataTask(assetIds: ids),
+                          ),
+                    );
+                    HaynSnack.success(
+                        context, l.stripMetadataQueued(ids.length));
                     ref.read(libraryProvider.notifier).clearSelection();
                   }
                 },

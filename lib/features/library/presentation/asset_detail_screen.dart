@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,7 +9,10 @@ import 'package:photo_manager/photo_manager.dart';
 import '../../../app/l10n/app_localizations.dart';
 import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
+import '../../../core/isolates/task_runner.dart';
 import '../../../shared/widgets/widgets.dart';
+import '../../image_ops/data/metadata.dart';
+import '../../image_ops/data/strip_metadata_task.dart';
 import 'providers/asset_entity_cache.dart';
 import 'providers/library_provider.dart';
 import 'providers/thumbnail_cache.dart';
@@ -182,6 +187,20 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
 
   Future<void> _stripMetadata() async {
     final l = AppLocalizations.of(context);
+    final id = _entries[_currentIndex].id;
+    // Peek at what's actually there — skip the whole flow if there's nothing
+    // to remove (no pointless clean-copy).
+    final entity = await AssetEntityCache.load(id);
+    final bytes = await entity?.originBytes;
+    if (!mounted) return;
+    if (bytes != null) {
+      final summary = await MetadataReader.read(bytes);
+      if (!mounted) return;
+      if (summary.isEmpty) {
+        HaynSnack.info(context, l.stripNothingFound);
+        return;
+      }
+    }
     final ok = await showHaynDestructiveConfirm(
       context: context,
       title: l.toolStripMetadata,
@@ -191,7 +210,13 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
       icon: Icons.auto_fix_high_rounded,
       reassurance: l.settingsPrivacy,
     );
-    if (ok && mounted) HaynSnack.success(context, l.taskStatusCompleted);
+    if (!ok || !mounted) return;
+    unawaited(
+      ref.read(taskRunnerProvider.notifier).enqueue(
+            StripMetadataTask(assetIds: [id]),
+          ),
+    );
+    HaynSnack.success(context, l.stripMetadataQueued(1));
   }
 
   @override

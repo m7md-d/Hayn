@@ -1400,6 +1400,18 @@ abstract class AppLocalizations {
   /// **'JPEG can\'t keep transparency — your image will be saved in a transparency-safe format instead.'**
   String get compressAlphaFlattenWarning;
 
+  /// No description provided for @stripMetadataQueued.
+  ///
+  /// In en, this message translates to:
+  /// **'{count,plural, =1{Metadata removal queued} other{{count} metadata removals queued}}'**
+  String stripMetadataQueued(num count);
+
+  /// No description provided for @stripNothingFound.
+  ///
+  /// In en, this message translates to:
+  /// **'No removable metadata in this image'**
+  String get stripNothingFound;
+
   /// No description provided for @cropApplied.
   ///
   /// In en, this message translates to:

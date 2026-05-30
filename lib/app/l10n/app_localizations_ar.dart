@@ -723,6 +723,21 @@ class AppLocalizationsAr extends AppLocalizations {
       'JPEG لا يحفظ الشفافية — ستُحفظ صورتك بصيغة تحفظ الشفافية بدلًا من ذلك.';
 
   @override
+  String stripMetadataQueued(num count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'أُدرجت إزالة الميتاداتا لـ $count صورة',
+      one: 'أُدرجت إزالة الميتاداتا',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get stripNothingFound =>
+      'لا توجد ميتاداتا قابلة للإزالة في هذه الصورة';
+
+  @override
   String get cropApplied => 'تم القص';
 
   @override
