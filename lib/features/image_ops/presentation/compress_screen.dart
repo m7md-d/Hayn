@@ -185,16 +185,16 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
       if (enc.format == DefaultFormat.avif) {
         return AvifImage.memory(enc.bytes, fit: BoxFit.contain);
       }
+      // Full-resolution decode on purpose: the whole point of the comparison
+      // is to zoom in and inspect REAL compression artefacts. Downscaling the
+      // preview would defeat it. (Memory is handled by not thrashing encodes —
+      // the debounce — and by AVIF no longer being the slow auto default.)
       return Image.memory(
         enc.bytes,
         fit: BoxFit.contain,
         gaplessPlayback: true,
-        // Decode to roughly the preview's pixel size, NOT the photo's full
-        // resolution — a full-res decode of every quality tweak is what made
-        // the app bloat the global image cache after a few compresses.
-        cacheWidth: _previewDecodeWidth,
-        errorBuilder: (_, __, ___) => Image.memory(_previewBytes!,
-            fit: BoxFit.contain, cacheWidth: _previewDecodeWidth),
+        errorBuilder: (_, __, ___) =>
+            Image.memory(_previewBytes!, fit: BoxFit.contain),
       );
     }
     return ColorFiltered(
@@ -204,20 +204,9 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
         0.0, 0.0, 0.95, 0.0, 0, //
         0.0, 0.0, 0.0, 1.0, 0, //
       ]),
-      child: Image.memory(_previewBytes!,
-          fit: BoxFit.contain,
-          gaplessPlayback: true,
-          cacheWidth: _previewDecodeWidth),
+      child: Image.memory(_previewBytes!, fit: BoxFit.contain,
+          gaplessPlayback: true),
     );
-  }
-
-  /// Cap the comparison-preview decode to ~viewport width (device pixels) so a
-  /// big photo never gets decoded at full resolution just to fill a small box.
-  int get _previewDecodeWidth {
-    final mq = MediaQuery.maybeOf(context);
-    final logical = mq?.size.width ?? 1080;
-    final dpr = mq?.devicePixelRatio ?? 2.0;
-    return (logical * dpr).round().clamp(720, 2160);
   }
 
   /// True when the user forced an opaque format (JPEG) on a transparent image —
@@ -311,7 +300,6 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
                       _previewBytes!,
                       fit: BoxFit.contain,
                       gaplessPlayback: true,
-                      cacheWidth: _previewDecodeWidth,
                     ),
                     after: _afterWidget(),
                   ),

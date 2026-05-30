@@ -78,17 +78,17 @@ class ImageCropTask extends MediaTask {
     if (_cancelled) return;
 
     // Pixel transform off the main isolate (package:image is pure Dart).
+    // Copy fields into locals so the closure captures only sendable values
+    // (Uint8List + primitives), never `this`.
+    final rq = rotationQuarters;
+    final fh = flipH;
+    final fv = flipV;
+    final fl = cropFraction.left;
+    final ft = cropFraction.top;
+    final fw = cropFraction.width;
+    final fhgt = cropFraction.height;
     final cropped = await Isolate.run(
-      () => _transform(
-        decodable,
-        rotationQuarters,
-        flipH,
-        flipV,
-        cropFraction.left,
-        cropFraction.top,
-        cropFraction.width,
-        cropFraction.height,
-      ),
+      () => _transform(decodable, rq, fh, fv, fl, ft, fw, fhgt),
     );
     if (cropped == null) throw StateError('Crop failed to decode');
     if (_cancelled) return;

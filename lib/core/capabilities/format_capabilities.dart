@@ -44,22 +44,25 @@ class FormatCapabilities {
       return const FormatCapabilities(
         supportsHeic: true,
         supportsHeif: false,
-        // iPhone 15 Pro / 15 Pro Max (A17 Pro) and every iPhone 16+ ship with
-        // hardware AV1 decode/encode. We default to true and let the real
-        // platform probe (Phase 2+) downgrade older models if needed.
-        supportsAvifHardware: true,
+        // FALSE on purpose ("اكشف لا تفترض"): our AVIF encoder (flutter_avif)
+        // is SOFTWARE libaom — it never touches the device's AV1 hardware even
+        // on A17 Pro/iPhone 16. Claiming hardware made `auto` route every photo
+        // (and every crop) to a slow software AVIF encode. With this false,
+        // auto → HEIC (hardware HEVC, fast, correctly oriented), and AVIF stays
+        // a deliberate, software-warned choice in the picker.
+        supportsAvifHardware: false,
         supportsWebp: true,
       );
     }
     if (Platform.isAndroid) {
-      // Android 9 (API 28)+ writes HEIF via HeifWriter.
-      // Modern Snapdragon/Exynos SoCs (2023+) ship with AVIF hardware
-      // acceleration; we assume it's there unless a real probe says
-      // otherwise. Reasonable default for the post-S22/Pixel-7 generation.
+      // Android 9 (API 28)+ writes HEIF via HeifWriter (hardware HEVC).
+      // AVIF is left FALSE for the same reason as iOS: our encoder is software
+      // libaom, not the SoC's AV1 block, so auto should prefer the fast
+      // hardware HEIF path and treat AVIF as a deliberate, slower choice.
       return const FormatCapabilities(
         supportsHeic: false,
         supportsHeif: true,
-        supportsAvifHardware: true,
+        supportsAvifHardware: false,
         supportsWebp: true,
       );
     }

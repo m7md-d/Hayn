@@ -110,8 +110,18 @@ abstract final class ImageEncoder {
           maxQuantizer: maxQ,
           minQuantizerAlpha: minQ,
           maxQuantizerAlpha: maxQ,
-          speed: 7,
-          keepExif: keepMetadata,
+          // flutter_avif is SOFTWARE libaom (no hardware path), so encoding is
+          // CPU-bound — use more threads + a faster speed to cut the wait.
+          maxThreads: 8,
+          speed: 8,
+          // IMPORTANT: keepExif MUST stay false. The package decodes with
+          // ui.instantiateImageCodec (which already BAKES EXIF orientation into
+          // the pixels) but, when keepExif is true, ALSO copies the original
+          // Orientation tag into the output — so viewers rotate a second time
+          // and the photo comes out sideways. Dropping in-file EXIF here is
+          // consistent with our other formats; capture date + GPS are still
+          // carried at the gallery-asset level by the saver.
+          keepExif: false,
         );
         return out;
       }
@@ -141,7 +151,9 @@ abstract final class ImageEncoder {
     }
   }
 
-  /// flutter_image_compress only carries EXIF through for JPEG. AVIF handles its
-  /// own (encodeAvif.keepExif); HEIC/WebP/PNG need a manual transplant (TODO).
+  /// flutter_image_compress only carries EXIF through for JPEG. AVIF now drops
+  /// in-file EXIF too (keepExif there double-rotates — see the encode path);
+  /// HEIC/WebP/PNG would need a manual transplant. Capture date + GPS are
+  /// preserved at the gallery-asset level by the saver regardless.
   static bool _supportsKeepExif(DefaultFormat f) => f == DefaultFormat.jpeg;
 }
