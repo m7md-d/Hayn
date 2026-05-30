@@ -717,7 +717,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get compressAlphaFlattenWarning =>
-      'JPEG لا يحفظ الشفافية — ستُسطَّح الصورة على خلفية بيضاء.';
+      'JPEG لا يحفظ الشفافية — ستُحفظ صورتك بصيغة تحفظ الشفافية بدلًا من ذلك.';
 
   @override
   String get cropApplied => 'تم القص';

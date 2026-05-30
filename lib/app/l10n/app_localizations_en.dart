@@ -706,7 +706,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get compressAlphaFlattenWarning =>
-      'JPEG can\'t keep transparency — it will be flattened onto white.';
+      'JPEG can\'t keep transparency — your image will be saved in a transparency-safe format instead.';
 
   @override
   String get cropApplied => 'Crop applied';

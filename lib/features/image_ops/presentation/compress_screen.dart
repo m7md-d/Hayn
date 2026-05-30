@@ -10,11 +10,13 @@ import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
 import '../../../app/theme/motion.dart';
 import '../../../core/capabilities/format_capabilities.dart';
+import '../../../core/isolates/task_runner.dart';
 import '../../../data/index/index_providers.dart';
 import '../../../shared/widgets/widgets.dart';
 import '../../library/presentation/providers/asset_entity_cache.dart';
 import '../../library/presentation/widgets/id_thumbnail.dart';
 import '../../settings/providers/preferences_providers.dart';
+import '../data/image_compress_task.dart';
 import '../data/image_encoder.dart';
 import '../data/image_probe.dart';
 import '../domain/image_format_policy.dart';
@@ -221,9 +223,22 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
     _loadPreview();
   }
 
-  Future<void> _apply() async {
+  void _apply() {
     HapticFeedback.lightImpact();
     final l = AppLocalizations.of(context);
+    final q = _mode == _Mode.auto ? 80 : _quality.round();
+    // Enqueue the real engine — it encodes each id + saves a new gallery asset,
+    // surfacing in the floating Tasks badge with progress/cancel.
+    unawaited(
+      ref.read(taskRunnerProvider.notifier).enqueue(
+            ImageCompressTask(
+              assetIds: _ids,
+              format: _format,
+              quality: q,
+              keepMetadata: _keepMetadata,
+            ),
+          ),
+    );
     HaynSnack.success(context, l.compressQueued(_ids.length));
     Navigator.of(context).pop();
   }

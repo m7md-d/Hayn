@@ -256,7 +256,7 @@
   "compressPreviewLabel": "بعد الضغط",
   "compressOpenComparison": "افتح المقارنة",
   "compressComputing": "جارٍ الضغط…",
-  "compressAlphaFlattenWarning": "JPEG لا يحفظ الشفافية — ستُسطَّح الصورة على خلفية بيضاء.",
+  "compressAlphaFlattenWarning": "JPEG لا يحفظ الشفافية — ستُحفظ صورتك بصيغة تحفظ الشفافية بدلًا من ذلك.",
   "cropApplied": "تم القص",
   "cropRotateCw": "تدوير يمين",
   "cropRotateCcw": "تدوير يسار",

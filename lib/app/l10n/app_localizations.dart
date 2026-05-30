@@ -1391,7 +1391,7 @@ abstract class AppLocalizations {
   /// No description provided for @compressAlphaFlattenWarning.
   ///
   /// In en, this message translates to:
-  /// **'JPEG can\'t keep transparency — it will be flattened onto white.'**
+  /// **'JPEG can\'t keep transparency — your image will be saved in a transparency-safe format instead.'**
   String get compressAlphaFlattenWarning;
 
   /// No description provided for @cropApplied.
