@@ -155,7 +155,6 @@ class _HaynComparisonViewerState extends State<HaynComparisonViewer>
     return LayoutBuilder(
       builder: (ctx, c) {
         final viewportWidth = c.maxWidth;
-        final viewportHeight = c.maxHeight;
         final splitX = viewportWidth * _fraction;
 
         return ClipRRect(
@@ -251,38 +250,31 @@ class _HaynComparisonViewerState extends State<HaynComparisonViewer>
                   ),
                 ),
 
-                // ── Drag handle in viewport space. It stays visible even
-                // while zoom-locked — the user wants to be able to slide
-                // the split at any time. When the lock is engaged we wrap
-                // the handle in IgnorePointer so 2-finger pinches that land
-                // on it still travel down to the InteractiveViewer below
-                // instead of being captured by the horizontal-drag
-                // recognizer.
+                // ── Drag strip in viewport space — a full-height, narrow
+                // (44 px) grab zone centred on the split line, ALWAYS active
+                // (even while zoomed). The user explicitly wants to slide the
+                // split at any zoom level to compare the same detail before vs
+                // after. Because the strip is narrow and sits over the
+                // InteractiveViewer (which still receives every touch outside
+                // it), panning the zoomed image works everywhere else; only a
+                // touch that starts on the divider itself moves the split.
                 Positioned(
-                  top: viewportHeight / 2 - 18,
-                  left: splitX - 18,
-                  // Ignore the handle whenever the image is actually zoomed
-                  // (by scale, not the lock flag): the handle sits mid-screen
-                  // exactly where the user starts a horizontal pan, so it must
-                  // yield so panning the zoomed detail works. Reset to 1× to
-                  // drag the split again.
-                  child: AnimatedBuilder(
-                    animation: _ctrl,
-                    builder: (ctx, child) {
-                      final zoomed = _ctrl.value.getMaxScaleOnAxis() > 1.02;
-                      return IgnorePointer(ignoring: zoomed, child: child);
+                  top: 0,
+                  bottom: 0,
+                  left: splitX - 22,
+                  width: 44,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onHorizontalDragStart: (_) =>
+                        HapticFeedback.selectionClick(),
+                    onHorizontalDragUpdate: (details) {
+                      setState(() {
+                        _fraction =
+                            ((splitX + details.delta.dx) / viewportWidth)
+                                .clamp(0.05, 0.95);
+                      });
                     },
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onHorizontalDragStart: (_) =>
-                          HapticFeedback.selectionClick(),
-                      onHorizontalDragUpdate: (details) {
-                        setState(() {
-                          _fraction =
-                              ((splitX + details.delta.dx) / viewportWidth)
-                                  .clamp(0.05, 0.95);
-                        });
-                      },
+                    child: Center(
                       child: Container(
                         width: 36,
                         height: 36,

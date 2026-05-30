@@ -26,6 +26,8 @@ class HaynAdvancedSettingsCard extends ConsumerWidget {
     required this.onFormatChanged,
     required this.onQualityChanged,
     required this.onKeepMetaChanged,
+    this.keepOriginalTime,
+    this.onKeepOriginalTimeChanged,
     this.keepTrashBackup,
     this.onKeepTrashChanged,
     super.key,
@@ -37,6 +39,13 @@ class HaynAdvancedSettingsCard extends ConsumerWidget {
   final ValueChanged<DefaultFormat> onFormatChanged;
   final ValueChanged<double> onQualityChanged;
   final ValueChanged<bool> onKeepMetaChanged;
+
+  /// Keep the ORIGINAL capture time on the new copy. Independent of
+  /// [keepMetadata] (info/location) so the user can keep location yet have the
+  /// copy dated "now". When null the row is hidden (e.g. surgical, which edits
+  /// in place and keeps the time inherently).
+  final bool? keepOriginalTime;
+  final ValueChanged<bool>? onKeepOriginalTimeChanged;
 
   /// Surgical-only: keep the original in trash for the configured retention
   /// period. When null, the row is hidden (compress doesn't need this).
@@ -198,6 +207,35 @@ class HaynAdvancedSettingsCard extends ConsumerWidget {
               ),
             ],
           ),
+
+          // ── (Optional) keep-original-time toggle ────────────────────────
+          if (keepOriginalTime != null && onKeepOriginalTimeChanged != null) ...[
+            const Divider(height: AppSpacing.lg),
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(l.compressKeepTime,
+                          style: theme.textTheme.bodyMedium),
+                      const SizedBox(height: 2),
+                      Text(
+                        l.compressKeepTimeDesc,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: hc.text2,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Switch.adaptive(
+                  value: keepOriginalTime!,
+                  onChanged: onKeepOriginalTimeChanged,
+                ),
+              ],
+            ),
+          ],
 
           // ── (Optional) trash-backup toggle ──────────────────────────────
           if (keepTrashBackup != null && onKeepTrashChanged != null) ...[

@@ -6,6 +6,9 @@ import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
 import '../../../core/isolates/task_runner.dart';
 import '../../../shared/widgets/widgets.dart';
+import '../../image_ops/data/metadata.dart' show StripUnsupportedFormat;
+import '../../library/presentation/widgets/id_thumbnail.dart';
+import 'tasks_screen.dart' show taskTitleFor, taskIconFor, openTaskOutput;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TaskDetailScreen — live progress, phase tail log, and the right action for
@@ -52,8 +55,10 @@ class TaskDetailScreen extends ConsumerWidget {
       TaskStatus.failed => (l.taskStatusFailed, HaynStatusKind.failed),
     };
 
+    final srcId = task.task.sourceAssetId;
+
     return HaynScaffold(
-      appBar: HaynDetailAppBar(title: task.task.id),
+      appBar: HaynDetailAppBar(title: taskTitleFor(task.task.type, l)),
       body: ListView(
         padding: const EdgeInsets.all(AppSpacing.md),
         children: [
@@ -69,24 +74,46 @@ class TaskDetailScreen extends ConsumerWidget {
               children: [
                 Row(
                   children: [
-                    Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        color: hc.accentSoft,
+                    if (srcId != null)
+                      ClipRRect(
                         borderRadius: BorderRadius.circular(AppRadius.sm),
+                        child: SizedBox(
+                          width: 48,
+                          height: 48,
+                          child: IdThumbnail(
+                              id: srcId, placeholderColor: hc.surfaceSunken),
+                        ),
+                      )
+                    else
+                      Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          color: hc.accentSoft,
+                          borderRadius: BorderRadius.circular(AppRadius.sm),
+                        ),
+                        alignment: Alignment.center,
+                        child: Icon(taskIconFor(task.task.type),
+                            color: hc.accent, size: 22),
                       ),
-                      alignment: Alignment.center,
-                      child: Icon(Icons.auto_fix_high_rounded,
-                          color: hc.accent, size: 20),
-                    ),
                     const SizedBox(width: AppSpacing.s3),
                     Expanded(
-                      child: Text(
-                        task.task.id,
-                        style: theme.textTheme.titleLarge,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            taskTitleFor(task.task.type, l),
+                            style: theme.textTheme.titleLarge,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            l.taskItemsCount(task.task.itemCount),
+                            style: theme.textTheme.bodyMedium
+                                ?.copyWith(color: hc.text2),
+                          ),
+                        ],
                       ),
                     ),
                     HaynStatusBadge(kind: statusKind, label: statusLabel),
@@ -155,17 +182,26 @@ class TaskDetailScreen extends ConsumerWidget {
                 ref.read(taskRunnerProvider.notifier).cancel(task.task.id);
               },
             )
-          else if (task.status == TaskStatus.failed)
-            HaynPrimaryButton(
-              label: l.taskRetryButton,
-              icon: Icons.refresh_rounded,
-              onPressed: () {},
-            )
-          else if (task.status == TaskStatus.completed)
+          else if (task.status == TaskStatus.completed &&
+              task.task.outputAssetIds.isNotEmpty)
             HaynPrimaryButton(
               label: l.taskViewOutputButton,
               icon: Icons.open_in_new_rounded,
-              onPressed: () {},
+              onPressed: () {
+                HapticFeedback.lightImpact();
+                if (!openTaskOutput(context, task.task)) {
+                  HaynSnack.info(context, l.taskOpenError);
+                }
+              },
+            )
+          else
+            HaynSecondaryButton(
+              label: l.taskRemove,
+              icon: Icons.delete_outline_rounded,
+              onPressed: () {
+                HapticFeedback.lightImpact();
+                ref.read(taskRunnerProvider.notifier).remove(task.task.id);
+              },
             ),
 
           // ── Error details ─────────────────────────────────────────────
@@ -196,7 +232,9 @@ class TaskDetailScreen extends ConsumerWidget {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          task.error.toString(),
+                          task.error is StripUnsupportedFormat
+                              ? l.stripHeicUnsupported
+                              : task.error.toString(),
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: hc.dangerColor,
                             height: 1.4,

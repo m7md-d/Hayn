@@ -665,7 +665,7 @@ abstract class AppLocalizations {
   /// No description provided for @tasksClearCompleted.
   ///
   /// In en, this message translates to:
-  /// **'Clear completed'**
+  /// **'Clear finished'**
   String get tasksClearCompleted;
 
   /// No description provided for @taskCancelButton.
@@ -685,6 +685,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'View'**
   String get taskViewOutputButton;
+
+  /// No description provided for @taskItemsCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count,plural, =1{1 image} other{{count} images}}'**
+  String taskItemsCount(int count);
+
+  /// No description provided for @taskOpenError.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t open the result'**
+  String get taskOpenError;
+
+  /// No description provided for @taskRemove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove'**
+  String get taskRemove;
 
   /// No description provided for @taskDoneLabel.
   ///
@@ -1205,14 +1223,26 @@ abstract class AppLocalizations {
   /// No description provided for @compressKeepMeta.
   ///
   /// In en, this message translates to:
-  /// **'Keep image data'**
+  /// **'Keep photo info'**
   String get compressKeepMeta;
 
   /// No description provided for @compressKeepMetaDesc.
   ///
   /// In en, this message translates to:
-  /// **'Preserve camera info, date and location'**
+  /// **'Camera details and location (GPS)'**
   String get compressKeepMetaDesc;
+
+  /// No description provided for @compressKeepTime.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep original time'**
+  String get compressKeepTime;
+
+  /// No description provided for @compressKeepTimeDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'Off: the copy is dated now and sorts to the top'**
+  String get compressKeepTimeDesc;
 
   /// No description provided for @compressLowQ.
   ///
@@ -1411,6 +1441,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No removable metadata in this image'**
   String get stripNothingFound;
+
+  /// No description provided for @stripHeicUnsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'HEIC photos can\'t be cleaned losslessly yet — use Compress (turn off \"Keep photo info\") to strip them without keeping quality artefacts.'**
+  String get stripHeicUnsupported;
 
   /// No description provided for @cropApplied.
   ///

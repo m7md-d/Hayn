@@ -6,8 +6,10 @@ import '../../../app/l10n/app_localizations.dart';
 import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
 import '../../../app/theme/motion.dart';
+import '../../../core/isolates/media_task.dart';
 import '../../../core/isolates/task_runner.dart';
 import '../../../shared/widgets/widgets.dart';
+import '../../library/presentation/widgets/id_thumbnail.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TasksScreen — queue view. Filter pill + list of task cards. Each card shows
@@ -34,8 +36,10 @@ class TasksScreen extends ConsumerWidget {
     final filter = ref.watch(_tasksFilterProvider);
 
     final filtered = _applyFilter(tasks, filter);
-    final hasCompleted =
-        tasks.any((t) => t.status == TaskStatus.completed);
+    final hasFinished = tasks.any((t) =>
+        t.status == TaskStatus.completed ||
+        t.status == TaskStatus.failed ||
+        t.status == TaskStatus.cancelled);
 
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
@@ -55,12 +59,12 @@ class TasksScreen extends ConsumerWidget {
             // the system back button.
             automaticallyImplyLeading: true,
             title: Text(l.tasksTitle),
-            actions: hasCompleted
+            actions: hasFinished
                 ? [
                     TextButton(
                       onPressed: () {
-                        // Will hook into TaskRunner.clearCompleted() once added.
-                        HaynSnack.info(context, l.tasksClearCompleted);
+                        HapticFeedback.lightImpact();
+                        ref.read(taskRunnerProvider.notifier).clearFinished();
                       },
                       child: Text(l.tasksClearCompleted),
                     ),
@@ -147,6 +151,32 @@ class TasksScreen extends ConsumerWidget {
       };
 }
 
+// Maps a task type to its localised, human-readable title — so the queue
+// reads "Compress · 3 images", not an opaque "compress-1a2b3c" id.
+String taskTitleFor(TaskType t, AppLocalizations l) => switch (t) {
+      TaskType.compress || TaskType.convert => l.toolCompress,
+      TaskType.crop => l.toolCrop,
+      TaskType.stripMetadata => l.toolStripMetadata,
+      _ => l.tasksTitle,
+    };
+
+IconData taskIconFor(TaskType t) => switch (t) {
+      TaskType.compress || TaskType.convert => Icons.compress_rounded,
+      TaskType.crop => Icons.crop_rounded,
+      TaskType.stripMetadata => Icons.cleaning_services_rounded,
+      _ => Icons.auto_fix_high_rounded,
+    };
+
+/// Opens the first output of a finished task in the in-app viewer. Returns
+/// false (so the caller can surface a message) when there's nothing to show.
+bool openTaskOutput(BuildContext context, MediaTask task) {
+  final out = task.outputAssetIds;
+  if (out.isEmpty) return false;
+  // iOS asset ids contain '/', which would break the path — encode it.
+  context.push('/asset/${Uri.encodeComponent(out.first)}');
+  return true;
+}
+
 class _TaskCard extends StatelessWidget {
   const _TaskCard({required this.taskState, required this.ref});
   final TaskState taskState;
@@ -159,6 +189,7 @@ class _TaskCard extends StatelessWidget {
     final l = AppLocalizations.of(context);
     final progress = taskState.progress;
     final status = taskState.status;
+    final task = taskState.task;
 
     final (statusLabel, statusKind) = switch (status) {
       TaskStatus.pending => (l.taskStatusPending, HaynStatusKind.pending),
@@ -181,113 +212,166 @@ class _TaskCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(AppRadius.lg),
         ),
         child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: hc.accentSoft,
-                  borderRadius: BorderRadius.circular(AppRadius.sm),
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                // Thumbnail of the source photo so the task is recognisable.
+                _TaskThumb(task: task),
+                const SizedBox(width: AppSpacing.s3),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        taskTitleFor(task.type, l),
+                        style: theme.textTheme.bodyLarge
+                            ?.copyWith(fontWeight: FontWeight.w600),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        l.taskItemsCount(task.itemCount),
+                        style: theme.textTheme.bodySmall
+                            ?.copyWith(color: hc.text2),
+                      ),
+                    ],
+                  ),
                 ),
-                alignment: Alignment.center,
-                child: Icon(_iconFor(taskState),
-                    color: hc.accent, size: 18),
-              ),
-              const SizedBox(width: AppSpacing.s3),
-              Expanded(
-                child: Text(
-                  taskState.task.id,
-                  style: theme.textTheme.bodyLarge,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                const SizedBox(width: AppSpacing.s2),
+                HaynStatusBadge(kind: statusKind, label: statusLabel),
+              ],
+            ),
+            if (progress != null && status == TaskStatus.running) ...[
+              const SizedBox(height: AppSpacing.s3),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+                child: LinearProgressIndicator(
+                  value: progress.progress,
+                  minHeight: 4,
+                  backgroundColor: hc.surfaceSunken,
+                  color: hc.accent,
                 ),
               ),
-              const SizedBox(width: AppSpacing.s2),
-              HaynStatusBadge(kind: statusKind, label: statusLabel),
+              const SizedBox(height: AppSpacing.s1),
+              Text(
+                l.taskProgressLabel(progress.phase, progress.percent),
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: hc.text2,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
             ],
-          ),
-          if (progress != null && status == TaskStatus.running) ...[
-            const SizedBox(height: AppSpacing.s3),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(AppRadius.sm),
-              child: LinearProgressIndicator(
-                value: progress.progress,
-                minHeight: 4,
-                backgroundColor: hc.surfaceSunken,
-                color: hc.accent,
+            if (_hasAction(status)) ...[
+              const SizedBox(height: AppSpacing.s2),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: _actionsFor(context, status, l),
               ),
-            ),
-            const SizedBox(height: AppSpacing.s1),
-            Text(
-              l.taskProgressLabel(progress.phase, progress.percent),
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: hc.text2,
-                fontFeatures: const [FontFeature.tabularFigures()],
-              ),
-            ),
+            ],
           ],
-          if (_hasAction(status)) ...[
-            const SizedBox(height: AppSpacing.s3),
-            Align(
-              alignment: AlignmentDirectional.centerEnd,
-              child: _actionFor(context, status, l),
-            ),
-          ],
-        ],
         ),
       ),
     );
   }
 
-  IconData _iconFor(TaskState s) {
-    // Type-specific icons come once real task subclasses appear; placeholder
-    // for now uses a generic spark for media work.
-    return Icons.auto_fix_high_rounded;
-  }
+  bool _hasAction(TaskStatus s) => s != TaskStatus.pending;
 
-  bool _hasAction(TaskStatus s) =>
-      s == TaskStatus.running ||
-      s == TaskStatus.failed ||
-      s == TaskStatus.completed;
-
-  Widget _actionFor(BuildContext context, TaskStatus status, AppLocalizations l) {
+  List<Widget> _actionsFor(
+      BuildContext context, TaskStatus status, AppLocalizations l) {
     final hc = context.hc;
+    final notifier = ref.read(taskRunnerProvider.notifier);
+    final task = taskState.task;
+
     switch (status) {
       case TaskStatus.running:
-        return TextButton.icon(
-          onPressed: () {
-            HapticFeedback.lightImpact();
-            ref.read(taskRunnerProvider.notifier).cancel(taskState.task.id);
-          },
-          icon: Icon(Icons.close_rounded, size: 16, color: hc.dangerColor),
-          label: Text(
-            l.taskCancelButton,
-            style: TextStyle(color: hc.dangerColor),
+        return [
+          TextButton.icon(
+            onPressed: () {
+              HapticFeedback.lightImpact();
+              notifier.cancel(task.id);
+            },
+            icon: Icon(Icons.close_rounded, size: 16, color: hc.dangerColor),
+            label: Text(l.taskCancelButton,
+                style: TextStyle(color: hc.dangerColor)),
           ),
-        );
-      case TaskStatus.failed:
-        return TextButton.icon(
-          onPressed: () {
-            // Will re-enqueue once retry hook is added.
-            HapticFeedback.lightImpact();
-          },
-          icon: const Icon(Icons.refresh_rounded, size: 16),
-          label: Text(l.taskRetryButton),
-        );
+        ];
       case TaskStatus.completed:
-        return TextButton.icon(
-          onPressed: () {
-            // Opens the result preview in D10.
-          },
-          icon: const Icon(Icons.open_in_new_rounded, size: 16),
-          label: Text(l.taskViewOutputButton),
-        );
+        return [
+          TextButton.icon(
+            onPressed: () {
+              HapticFeedback.lightImpact();
+              notifier.remove(task.id);
+            },
+            icon: Icon(Icons.delete_outline_rounded,
+                size: 16, color: hc.text2),
+            label: Text(l.taskRemove, style: TextStyle(color: hc.text2)),
+          ),
+          const SizedBox(width: AppSpacing.s2),
+          if (task.outputAssetIds.isNotEmpty)
+            TextButton.icon(
+              onPressed: () {
+                HapticFeedback.lightImpact();
+                if (!openTaskOutput(context, task)) {
+                  HaynSnack.info(context, l.taskOpenError);
+                }
+              },
+              icon: const Icon(Icons.open_in_new_rounded, size: 16),
+              label: Text(l.taskViewOutputButton),
+            ),
+        ];
+      case TaskStatus.failed:
+      case TaskStatus.cancelled:
+        return [
+          TextButton.icon(
+            onPressed: () {
+              HapticFeedback.lightImpact();
+              notifier.remove(task.id);
+            },
+            icon: Icon(Icons.delete_outline_rounded,
+                size: 16, color: hc.text2),
+            label: Text(l.taskRemove, style: TextStyle(color: hc.text2)),
+          ),
+        ];
       default:
-        return const SizedBox.shrink();
+        return const [SizedBox.shrink()];
     }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _TaskThumb — 44×44 rounded thumbnail of the task's source photo, falling back
+// to a type icon when the task has no representative asset.
+// ─────────────────────────────────────────────────────────────────────────────
+class _TaskThumb extends StatelessWidget {
+  const _TaskThumb({required this.task});
+  final MediaTask task;
+
+  @override
+  Widget build(BuildContext context) {
+    final hc = context.hc;
+    final id = task.sourceAssetId;
+    if (id == null) {
+      return Container(
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(
+          color: hc.accentSoft,
+          borderRadius: BorderRadius.circular(AppRadius.sm),
+        ),
+        alignment: Alignment.center,
+        child: Icon(taskIconFor(task.type), color: hc.accent, size: 20),
+      );
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(AppRadius.sm),
+      child: SizedBox(
+        width: 44,
+        height: 44,
+        child: IdThumbnail(id: id, placeholderColor: hc.surfaceSunken),
+      ),
+    );
   }
 }

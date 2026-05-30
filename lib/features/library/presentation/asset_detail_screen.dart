@@ -44,6 +44,11 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
   // their AssetEntity lazily, so this can span the whole 10k library.
   List<LibraryEntry> _entries = const [];
 
+  /// True when opened on an asset that isn't in the library spine (e.g. a
+  /// task's freshly-saved output). We then keep a one-item spine and don't
+  /// adopt the live library entries in build.
+  bool _standalone = false;
+
   /// Fade factor for the bottom action bar — driven by the active page's
   /// inline info sheet (0 = sheet closed, 1 = sheet fully open). The bar
   /// fades out while the sheet rises so they never visually overlap.
@@ -59,7 +64,19 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
     super.initState();
     _entries = ref.read(libraryProvider).entries;
     final found = _entries.indexWhere((e) => e.id == widget.assetId);
-    _currentIndex = found < 0 ? 0 : found;
+    if (found < 0) {
+      // The id isn't in the current spine — e.g. opened straight from a task's
+      // "View" before the index has synced the freshly-saved asset. Stand up a
+      // one-item spine for exactly this asset so the viewer shows the right
+      // photo instead of silently landing on library item #0. The page
+      // materialises the real AssetEntity by id, so the type here is just a
+      // placeholder.
+      _entries = [LibraryEntry(id: widget.assetId, type: AssetType.image)];
+      _currentIndex = 0;
+      _standalone = true;
+    } else {
+      _currentIndex = found;
+    }
     _ctrl = PageController(initialPage: _currentIndex);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(detailFocusIndexProvider.notifier).state = _currentIndex;
@@ -194,6 +211,12 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
     final bytes = await entity?.originBytes;
     if (!mounted) return;
     if (bytes != null) {
+      // HEIC & co. have no lossless pure-Dart stripper — tell the user up front
+      // (and point them at Compress) instead of queuing a task that just skips.
+      if (!MetadataStripper.canStrip(bytes)) {
+        HaynSnack.info(context, l.stripHeicUnsupported);
+        return;
+      }
       final summary = await MetadataReader.read(bytes);
       if (!mounted) return;
       if (summary.isEmpty) {
@@ -221,8 +244,12 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Track spine growth (album/legacy load-more) so swiping never dead-ends.
-    _entries = ref.watch(libraryProvider.select((s) => s.entries));
+    // Track spine growth (album/legacy load-more) so swiping never dead-ends —
+    // but only in the normal in-library case. A standalone viewer (task output
+    // not yet in the spine) keeps its one-item spine.
+    if (!_standalone) {
+      _entries = ref.watch(libraryProvider.select((s) => s.entries));
+    }
     if (_entries.isEmpty) {
       return const Scaffold(
         backgroundColor: Colors.black,

@@ -3,6 +3,7 @@ import 'dart:isolate';
 import 'dart:typed_data';
 import 'dart:ui' show Rect;
 
+import 'package:flutter_image_compress/flutter_image_compress.dart' as fic;
 import 'package:image/image.dart' as img;
 import 'package:photo_manager/photo_manager.dart';
 
@@ -53,6 +54,9 @@ class ImageCropTask extends MediaTask {
   @override
   TaskType get type => TaskType.crop;
 
+  @override
+  String? get sourceAssetId => assetId;
+
   bool _cancelled = false;
 
   @override
@@ -66,10 +70,17 @@ class ImageCropTask extends MediaTask {
     }
     if (_cancelled) return;
 
+    // package:image decodes JPEG/PNG/GIF/BMP/TIFF/WebP but NOT HEIC/HEIF —
+    // which is exactly what an iPhone camera produces. Transcode those to a
+    // lossless PNG first via the SYSTEM decoder (off the platform thread, with
+    // orientation already baked in), so the pure-Dart transform can decode it.
+    final decodable = await _ensureDecodable(src);
+    if (_cancelled) return;
+
     // Pixel transform off the main isolate (package:image is pure Dart).
     final cropped = await Isolate.run(
       () => _transform(
-        src,
+        decodable,
         rotationQuarters,
         flipH,
         flipV,
@@ -106,7 +117,29 @@ class ImageCropTask extends MediaTask {
       longitude: entity.longitude,
     );
     if (saved == null) throw StateError('Crop save failed');
+    outputAssetIds.add(saved.id);
     yield const TaskProgress(progress: 1, phase: '1/1');
+  }
+
+  /// Returns bytes package:image can decode. HEIC/HEIF go through the system
+  /// codec (→ lossless PNG); everything else (JPEG/PNG/WebP/…) is already
+  /// decodable and passes through untouched (no needless re-encode).
+  Future<Uint8List> _ensureDecodable(Uint8List src) async {
+    final fmt = ImageProbe.sniff(src);
+    if (fmt != SniffedFormat.heic) return src;
+    try {
+      final png = await fic.FlutterImageCompress.compressWithList(
+        src,
+        format: fic.CompressFormat.png,
+        quality: 100,
+        minWidth: 1000000,
+        minHeight: 1000000,
+      );
+      if (png.isNotEmpty) return Uint8List.fromList(png);
+    } catch (_) {
+      // Fall through — the transform will surface a decode failure if any.
+    }
+    return src;
   }
 
   String _outName(AssetEntity entity, String ext) {

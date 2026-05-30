@@ -57,12 +57,23 @@ class TaskRunner extends Notifier<List<TaskState>> {
         );
       },
       onError: (Object err) {
-        _updateTask(task.id, (s) => s.copyWith(status: TaskStatus.failed, error: err));
+        _updateTask(task.id,
+            (s) => s.copyWith(status: TaskStatus.failed, error: err));
         _subscriptions.remove(task.id);
         task.cleanup();
       },
+      // A throwing async* generator emits the error event AND THEN a done
+      // event — so without this guard `onDone` would overwrite the just-set
+      // `failed` (or `cancelled`) status with `completed`, which is exactly
+      // why crashed tasks were showing up green. Only promote to completed if
+      // the task is still running when the stream closes normally.
       onDone: () {
-        _updateTask(task.id, (s) => s.copyWith(status: TaskStatus.completed));
+        _updateTask(
+          task.id,
+          (s) => s.status == TaskStatus.running
+              ? s.copyWith(status: TaskStatus.completed)
+              : s,
+        );
         _subscriptions.remove(task.id);
       },
     );
@@ -78,6 +89,25 @@ class TaskRunner extends Notifier<List<TaskState>> {
     _subscriptions.remove(taskId);
     await taskState.task.cancel();
     _updateTask(taskId, (s) => s.copyWith(status: TaskStatus.cancelled));
+  }
+
+  /// Remove one finished task from the queue. No-op while it's still running.
+  void remove(String taskId) {
+    final s = state.where((t) => t.task.id == taskId).firstOrNull;
+    if (s == null || s.status == TaskStatus.running) return;
+    state = [
+      for (final t in state)
+        if (t.task.id != taskId) t,
+    ];
+  }
+
+  /// Clear every finished task (completed / failed / cancelled), leaving only
+  /// the ones still running or pending. Backs the "Clear finished" action.
+  void clearFinished() {
+    state = [
+      for (final t in state)
+        if (t.status == TaskStatus.running || t.status == TaskStatus.pending) t,
+    ];
   }
 
   void _updateTask(String id, TaskState Function(TaskState) update) {

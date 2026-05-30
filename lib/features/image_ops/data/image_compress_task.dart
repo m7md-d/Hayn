@@ -29,6 +29,7 @@ class ImageCompressTask extends MediaTask {
     required this.format,
     required this.quality,
     required this.keepMetadata,
+    this.keepOriginalTime = false,
     FormatCapabilities? caps,
   })  : id = 'compress-${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}',
         _caps = caps ?? FormatCapabilities.detect();
@@ -36,7 +37,14 @@ class ImageCompressTask extends MediaTask {
   final List<String> assetIds;
   final DefaultFormat format;
   final int quality;
+
+  /// Keep the photo's info — camera, EXIF and GPS location — on the new copy.
   final bool keepMetadata;
+
+  /// Keep the ORIGINAL capture time on the copy. When false (default) the copy
+  /// gets the current moment, so it lands at the top of the gallery timeline.
+  /// Independent of [keepMetadata] so the user can keep location yet re-date.
+  final bool keepOriginalTime;
   final FormatCapabilities _caps;
 
   @override
@@ -44,6 +52,12 @@ class ImageCompressTask extends MediaTask {
 
   @override
   TaskType get type => TaskType.compress;
+
+  @override
+  String? get sourceAssetId => assetIds.isNotEmpty ? assetIds.first : null;
+
+  @override
+  int get itemCount => assetIds.length;
 
   bool _cancelled = false;
 
@@ -90,11 +104,15 @@ class ImageCompressTask extends MediaTask {
         final asset = await GallerySaver.saveImage(
           encoded.bytes,
           filename: _outName(entity, encoded.extension),
-          creationDate: keepMetadata ? entity.createDateTime : null,
+          // Time and location are independent choices now.
+          creationDate: keepOriginalTime ? entity.createDateTime : null,
           latitude: keepMetadata ? entity.latitude : null,
           longitude: keepMetadata ? entity.longitude : null,
         );
-        if (asset != null) saved++;
+        if (asset != null) {
+          saved++;
+          outputAssetIds.add(asset.id);
+        }
       } catch (_) {
         // Skip this asset; the rest of the batch continues.
       }

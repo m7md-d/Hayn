@@ -2,8 +2,6 @@ import 'dart:typed_data';
 
 import 'package:exif/exif.dart';
 
-import '../../settings/providers/preferences_providers.dart';
-import 'image_encoder.dart';
 import 'image_probe.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -12,14 +10,24 @@ import 'image_probe.dart';
 // Reading (for "here's what will be removed"): a header parse via package:exif,
 // so it works even for HEIC (where a full pixel decode isn't available).
 //
-// Stripping honours the golden rule (no needless re-encode):
-//   • JPEG / PNG → LOSSLESS segment/chunk surgery: drop the metadata
-//     blocks (EXIF/XMP/IPTC/comments, PNG text/eXIf) and keep the pixel data
-//     and colour profile byte-for-byte.
-//   • HEIC / WebP / AVIF → re-encode once at high quality with metadata off
-//     (no lossless container editor available without native code).
-//   • anything else → returned untouched.
+// Stripping is LOSSLESS-ONLY — it NEVER re-encodes (that would change quality
+// and, for already-efficient formats like HEIC, INFLATE the file). It edits the
+// container in place:
+//   • JPEG → drop APP1/APP13/APP14/COM segments, keep JFIF/ICC + scan verbatim.
+//   • PNG  → drop text/eXIf/tIME ancillary chunks, keep IHDR/IDAT/IEND + colour.
+//   • WebP → drop the EXIF/"XMP " RIFF chunks + clear their VP8X flag bits.
+// Formats with no safe pure-Dart container editor (HEIC/HEIF, AVIF, and the
+// rest) are reported as UNSUPPORTED via a null result — the caller skips them
+// rather than degrading the image. (Lossless HEIC stripping needs the native
+// metadata writer that the Surgical phase will bring.)
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Thrown by [StripMetadataTask] when nothing could be stripped because every
+/// input was in a format we can't strip losslessly yet (e.g. iPhone HEIC). The
+/// UI maps this to a helpful, localised hint instead of a raw error string.
+class StripUnsupportedFormat implements Exception {
+  const StripUnsupportedFormat();
+}
 
 class MetadataSummary {
   const MetadataSummary({
@@ -64,38 +72,37 @@ abstract final class MetadataReader {
 }
 
 abstract final class MetadataStripper {
-  /// Returns metadata-free bytes (+ the file extension to save under, since the
-  /// format is preserved).
-  static Future<({Uint8List bytes, String ext})> strip(Uint8List bytes) async {
+  /// Returns metadata-free bytes (+ the extension to save under, since the
+  /// format is preserved byte-compatibly), or NULL when the format has no
+  /// lossless pure-Dart stripper (HEIC/AVIF/etc) — the caller must skip it,
+  /// never re-encode. Pure + synchronous (all work is byte surgery).
+  /// Whether [bytes] is a format we can strip LOSSLESSLY (JPEG/PNG/WebP).
+  /// Cheap (magic-byte sniff only) — lets callers warn up front before
+  /// enqueuing a task that would otherwise skip the file.
+  static bool canStrip(Uint8List bytes) => switch (ImageProbe.sniff(bytes)) {
+        SniffedFormat.jpeg ||
+        SniffedFormat.png ||
+        SniffedFormat.webp =>
+          true,
+        _ => false,
+      };
+
+  static ({Uint8List bytes, String ext})? strip(Uint8List bytes) {
     switch (ImageProbe.sniff(bytes)) {
       case SniffedFormat.jpeg:
         return (bytes: stripJpeg(bytes), ext: 'jpg');
       case SniffedFormat.png:
         return (bytes: stripPng(bytes), ext: 'png');
-      case SniffedFormat.heic:
-        return (bytes: await _reencode(bytes, DefaultFormat.heic), ext: 'heic');
       case SniffedFormat.webp:
-        return (bytes: await _reencode(bytes, DefaultFormat.webp), ext: 'webp');
+        return (bytes: stripWebp(bytes), ext: 'webp');
+      case SniffedFormat.heic:
       case SniffedFormat.avif:
-        return (bytes: await _reencode(bytes, DefaultFormat.avif), ext: 'avif');
       case SniffedFormat.gif:
       case SniffedFormat.bmp:
       case SniffedFormat.tiff:
       case SniffedFormat.unknown:
-        return (bytes: bytes, ext: 'jpg');
+        return null; // No lossless editor — skip, don't degrade.
     }
-  }
-
-  static Future<Uint8List> _reencode(Uint8List bytes, DefaultFormat fmt) async {
-    final hasAlpha = await ImageProbe.hasAlpha(bytes);
-    final out = await ImageEncoder.encode(
-      source: bytes,
-      target: fmt,
-      quality: 95,
-      hasAlpha: hasAlpha,
-      keepMetadata: false,
-    );
-    return out.bytes;
   }
 
   // ── Lossless JPEG strip ────────────────────────────────────────────────
@@ -156,6 +163,69 @@ abstract final class MetadataStripper {
       if (type == 'IEND') break;
       i = chunkEnd;
     }
+    return out.toBytes();
+  }
+
+  // ── Lossless WebP strip ────────────────────────────────────────────────
+  // RIFF container: 'RIFF' <u32 size> 'WEBP' then FourCC-tagged chunks (each
+  // u32 little-endian size, payload padded to even length). Metadata lives in
+  // the 'EXIF' and 'XMP ' chunks — drop them, and clear the matching flag bits
+  // in the VP8X extended header (EXIF=0x08, XMP=0x04) so the file stays valid.
+  // The coded image chunks (VP8/VP8L/ALPH/ANMF…) are copied byte-for-byte. On
+  // any malformation we return the input untouched.
+  static Uint8List stripWebp(Uint8List b) {
+    if (b.length < 16) return b;
+    bool tag(int o, String s) {
+      for (var k = 0; k < 4; k++) {
+        if (b[o + k] != s.codeUnitAt(k)) return false;
+      }
+      return true;
+    }
+
+    if (!tag(0, 'RIFF') || !tag(8, 'WEBP')) return b;
+
+    final body = BytesBuilder();
+    var i = 12;
+    var changed = false;
+    while (i + 8 <= b.length) {
+      final fourcc = String.fromCharCodes(b.sublist(i, i + 4));
+      final size = b[i + 4] | (b[i + 5] << 8) | (b[i + 6] << 16) | (b[i + 7] << 24);
+      if (size < 0) return b;
+      final padded = size + (size.isOdd ? 1 : 0);
+      final chunkEnd = i + 8 + padded;
+      if (chunkEnd > b.length) return b;
+
+      if (fourcc == 'EXIF' || fourcc == 'XMP ') {
+        changed = true; // drop the whole chunk (header + payload + pad)
+      } else if (fourcc == 'VP8X' && size >= 1) {
+        // Clear EXIF (0x08) and XMP (0x04) flag bits in the first payload byte.
+        final chunk = Uint8List.fromList(b.sublist(i, chunkEnd));
+        final cleared = chunk[8] & ~0x0C;
+        if (cleared != chunk[8]) {
+          chunk[8] = cleared;
+          changed = true;
+        }
+        body.add(chunk);
+      } else {
+        body.add(b.sublist(i, chunkEnd));
+      }
+      i = chunkEnd;
+    }
+    if (!changed) return b;
+
+    final bodyBytes = body.toBytes();
+    final out = BytesBuilder()
+      ..add('RIFF'.codeUnits);
+    final riffSize = 4 + bodyBytes.length; // 'WEBP' + chunks
+    out.add([
+      riffSize & 0xFF,
+      (riffSize >> 8) & 0xFF,
+      (riffSize >> 16) & 0xFF,
+      (riffSize >> 24) & 0xFF,
+    ]);
+    out
+      ..add('WEBP'.codeUnits)
+      ..add(bodyBytes);
     return out.toBytes();
   }
 }

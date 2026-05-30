@@ -28,6 +28,12 @@ class StripMetadataTask extends MediaTask {
   @override
   TaskType get type => TaskType.stripMetadata;
 
+  @override
+  String? get sourceAssetId => assetIds.isNotEmpty ? assetIds.first : null;
+
+  @override
+  int get itemCount => assetIds.length;
+
   bool _cancelled = false;
 
   @override
@@ -40,6 +46,7 @@ class StripMetadataTask extends MediaTask {
 
     var done = 0;
     var saved = 0;
+    var unsupported = 0; // formats with no lossless stripper (HEIC/AVIF/…)
     for (final assetId in assetIds) {
       if (_cancelled) return;
       yield TaskProgress(progress: done / total, phase: '$done/$total');
@@ -52,14 +59,26 @@ class StripMetadataTask extends MediaTask {
         continue;
       }
 
+      // Lossless ONLY. A null result means "no safe pure-Dart stripper for this
+      // format" (e.g. HEIC) — we skip it rather than re-encode and inflate it.
+      final result = MetadataStripper.strip(src);
+      if (result == null) {
+        unsupported++;
+        done++;
+        yield TaskProgress(progress: done / total, phase: '$done/$total');
+        continue;
+      }
+
       try {
-        final result = await MetadataStripper.strip(src);
         final asset = await GallerySaver.saveImage(
           result.bytes,
           filename: _outName(entity, result.ext),
           // No date/GPS — this is the strip tool.
         );
-        if (asset != null) saved++;
+        if (asset != null) {
+          saved++;
+          outputAssetIds.add(asset.id);
+        }
       } catch (_) {
         // Skip; continue the batch.
       }
@@ -69,7 +88,12 @@ class StripMetadataTask extends MediaTask {
     }
 
     if (_cancelled) return;
-    if (saved == 0) throw StateError('Nothing was stripped');
+    if (saved == 0) {
+      // Nothing saved: if it was purely unsupported formats, surface a helpful
+      // hint (use Compress for HEIC) rather than a generic failure.
+      if (unsupported > 0) throw const StripUnsupportedFormat();
+      throw StateError('Nothing was stripped');
+    }
     yield TaskProgress(progress: 1, phase: '$saved/$total');
   }
 

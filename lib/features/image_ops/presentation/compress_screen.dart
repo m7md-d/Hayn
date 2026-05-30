@@ -53,6 +53,9 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   DefaultFormat _format = DefaultFormat.auto;
   double _quality = 80;
   bool _keepMetadata = true;
+  // Off by default: the copy gets the current time so it lands at the top of
+  // the timeline. The user opts in to keep the original capture date.
+  bool _keepOriginalTime = false;
 
   // Work from ids only — `select all` can hand us thousands. The active
   // preview + estimate are resolved lazily by id; we never build an
@@ -186,8 +189,12 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
         enc.bytes,
         fit: BoxFit.contain,
         gaplessPlayback: true,
-        errorBuilder: (_, __, ___) =>
-            Image.memory(_previewBytes!, fit: BoxFit.contain),
+        // Decode to roughly the preview's pixel size, NOT the photo's full
+        // resolution — a full-res decode of every quality tweak is what made
+        // the app bloat the global image cache after a few compresses.
+        cacheWidth: _previewDecodeWidth,
+        errorBuilder: (_, __, ___) => Image.memory(_previewBytes!,
+            fit: BoxFit.contain, cacheWidth: _previewDecodeWidth),
       );
     }
     return ColorFiltered(
@@ -197,9 +204,20 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
         0.0, 0.0, 0.95, 0.0, 0, //
         0.0, 0.0, 0.0, 1.0, 0, //
       ]),
-      child: Image.memory(_previewBytes!, fit: BoxFit.contain,
-          gaplessPlayback: true),
+      child: Image.memory(_previewBytes!,
+          fit: BoxFit.contain,
+          gaplessPlayback: true,
+          cacheWidth: _previewDecodeWidth),
     );
+  }
+
+  /// Cap the comparison-preview decode to ~viewport width (device pixels) so a
+  /// big photo never gets decoded at full resolution just to fill a small box.
+  int get _previewDecodeWidth {
+    final mq = MediaQuery.maybeOf(context);
+    final logical = mq?.size.width ?? 1080;
+    final dpr = mq?.devicePixelRatio ?? 2.0;
+    return (logical * dpr).round().clamp(720, 2160);
   }
 
   /// True when the user forced an opaque format (JPEG) on a transparent image —
@@ -236,6 +254,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
               format: _format,
               quality: q,
               keepMetadata: _keepMetadata,
+              keepOriginalTime: _keepOriginalTime,
             ),
           ),
     );
@@ -292,6 +311,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
                       _previewBytes!,
                       fit: BoxFit.contain,
                       gaplessPlayback: true,
+                      cacheWidth: _previewDecodeWidth,
                     ),
                     after: _afterWidget(),
                   ),
@@ -366,6 +386,9 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
                       setState(() => _keepMetadata = v);
                       _scheduleEncode();
                     },
+                    keepOriginalTime: _keepOriginalTime,
+                    onKeepOriginalTimeChanged: (v) =>
+                        setState(() => _keepOriginalTime = v),
                   ),
           ),
           const SizedBox(height: AppSpacing.md),

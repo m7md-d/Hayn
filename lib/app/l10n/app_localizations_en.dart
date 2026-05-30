@@ -300,7 +300,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get tasksFilterFailed => 'Failed';
 
   @override
-  String get tasksClearCompleted => 'Clear completed';
+  String get tasksClearCompleted => 'Clear finished';
 
   @override
   String get taskCancelButton => 'Cancel';
@@ -310,6 +310,23 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get taskViewOutputButton => 'View';
+
+  @override
+  String taskItemsCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count images',
+      one: '1 image',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get taskOpenError => 'Couldn\'t open the result';
+
+  @override
+  String get taskRemove => 'Remove';
 
   @override
   String get taskDoneLabel => 'Done';
@@ -592,10 +609,17 @@ class AppLocalizationsEn extends AppLocalizations {
   String get compressEstimatedSize => 'Estimated size';
 
   @override
-  String get compressKeepMeta => 'Keep image data';
+  String get compressKeepMeta => 'Keep photo info';
 
   @override
-  String get compressKeepMetaDesc => 'Preserve camera info, date and location';
+  String get compressKeepMetaDesc => 'Camera details and location (GPS)';
+
+  @override
+  String get compressKeepTime => 'Keep original time';
+
+  @override
+  String get compressKeepTimeDesc =>
+      'Off: the copy is dated now and sorts to the top';
 
   @override
   String get compressLowQ => 'Lower quality — smaller file';
@@ -724,6 +748,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get stripNothingFound => 'No removable metadata in this image';
+
+  @override
+  String get stripHeicUnsupported =>
+      'HEIC photos can\'t be cleaned losslessly yet — use Compress (turn off \"Keep photo info\") to strip them without keeping quality artefacts.';
 
   @override
   String get cropApplied => 'Crop applied';

@@ -303,7 +303,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get tasksFilterFailed => 'فاشلة';
 
   @override
-  String get tasksClearCompleted => 'مسح المكتملة';
+  String get tasksClearCompleted => 'مسح المنجزة';
 
   @override
   String get taskCancelButton => 'إلغاء';
@@ -313,6 +313,23 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get taskViewOutputButton => 'عرض';
+
+  @override
+  String taskItemsCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count صور',
+      one: 'صورة واحدة',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get taskOpenError => 'تعذّر فتح الناتج';
+
+  @override
+  String get taskRemove => 'إزالة';
 
   @override
   String get taskDoneLabel => 'اكتمل';
@@ -597,10 +614,17 @@ class AppLocalizationsAr extends AppLocalizations {
   String get compressEstimatedSize => 'الحجم المتوقّع';
 
   @override
-  String get compressKeepMeta => 'احفظ بيانات الصورة';
+  String get compressKeepMeta => 'الاحتفاظ بمعلومات الصورة';
 
   @override
-  String get compressKeepMetaDesc => 'ابقِ معلومات الكاميرا والتاريخ والموقع';
+  String get compressKeepMetaDesc => 'بيانات الكاميرا والموقع (GPS)';
+
+  @override
+  String get compressKeepTime => 'الاحتفاظ بالوقت الأصلي';
+
+  @override
+  String get compressKeepTimeDesc =>
+      'عند الإطفاء تُؤرَّخ النسخة بالوقت الحالي فتظهر بالأعلى';
 
   @override
   String get compressLowQ => 'جودة أقل — حجم أصغر';
@@ -727,15 +751,19 @@ class AppLocalizationsAr extends AppLocalizations {
     String _temp0 = intl.Intl.pluralLogic(
       count,
       locale: localeName,
-      other: 'أُدرجت إزالة الميتاداتا لـ $count صورة',
-      one: 'أُدرجت إزالة الميتاداتا',
+      other: 'أُدرجت إزالة البيانات الوصفية لـ $count صورة',
+      one: 'أُدرجت إزالة البيانات الوصفية',
     );
     return '$_temp0';
   }
 
   @override
   String get stripNothingFound =>
-      'لا توجد ميتاداتا قابلة للإزالة في هذه الصورة';
+      'لا توجد بيانات وصفية قابلة للإزالة في هذه الصورة';
+
+  @override
+  String get stripHeicUnsupported =>
+      'صور HEIC لا يمكن تنظيفها دون إعادة ترميز حتى الآن — استخدم الضغط (مع إطفاء «الاحتفاظ بمعلومات الصورة») لإزالتها دون أثر على الجودة.';
 
   @override
   String get cropApplied => 'تم القص';

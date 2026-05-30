@@ -104,4 +104,79 @@ void main() {
       expect(out.sublist(0, 8), [137, 80, 78, 71, 13, 10, 26, 10]);
     });
   });
+
+  group('MetadataStripper.stripWebp (lossless)', () {
+    List<int> u32le(int v) =>
+        [v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF, (v >> 24) & 0xFF];
+    List<int> chunk(String cc, List<int> data) {
+      final out = [...cc.codeUnits, ...u32le(data.length), ...data];
+      if (data.length.isOdd) out.add(0); // RIFF pads odd-length payloads
+      return out;
+    }
+
+    test('drops EXIF + XMP chunks, clears VP8X flag bits, keeps VP8 + shrinks',
+        () {
+      final body = [
+        // VP8X with EXIF(0x08)+XMP(0x04) flag bits set.
+        ...chunk('VP8X', [0x0C, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+        ...chunk('VP8 ', [1, 2, 3, 4]), // coded image — must survive
+        ...chunk('EXIF', [0x45, 0x78, 0x66]),
+        ...chunk('XMP ', [9, 9]),
+      ];
+      final webp = Uint8List.fromList([
+        ...'RIFF'.codeUnits,
+        ...u32le(4 + body.length),
+        ...'WEBP'.codeUnits,
+        ...body,
+      ]);
+
+      final out = MetadataStripper.stripWebp(webp);
+
+      expect(_contains(out, 'EXIF'.codeUnits), isFalse, reason: 'EXIF dropped');
+      expect(_contains(out, 'XMP '.codeUnits), isFalse, reason: 'XMP dropped');
+      expect(_contains(out, 'VP8X'.codeUnits), isTrue, reason: 'header kept');
+      expect(_contains(out, 'VP8 '.codeUnits), isTrue, reason: 'pixels kept');
+      // VP8X flags byte sits right after the 12-byte RIFF/WEBP header + the
+      // 8-byte chunk header → index 20. Both metadata bits cleared.
+      expect(out[20] & 0x0C, 0, reason: 'EXIF/XMP flag bits cleared');
+      // RIFF size field == bytes after the first 8.
+      final declared =
+          out[4] | (out[5] << 8) | (out[6] << 16) | (out[7] << 24);
+      expect(declared, out.length - 8);
+      expect(out.length, lessThan(webp.length));
+      expect(out.sublist(0, 4), 'RIFF'.codeUnits);
+      expect(out.sublist(8, 12), 'WEBP'.codeUnits);
+    });
+
+    test('returns input untouched when not a WebP', () {
+      final notWebp = Uint8List.fromList([1, 2, 3, 4, 5, 6, 7, 8]);
+      expect(MetadataStripper.stripWebp(notWebp), notWebp);
+    });
+  });
+
+  group('MetadataStripper.strip routing (lossless-only, never re-encode)', () {
+    Uint8List pad(List<int> head) =>
+        Uint8List.fromList([...head, ...List.filled(16, 0)]);
+
+    test('JPEG/PNG/WebP are strippable; HEIC/unknown are skipped (null)', () {
+      final jpeg = pad([0xFF, 0xD8, 0xFF]);
+      final png = pad([0x89, 0x50, 0x4E, 0x47, 13, 10, 26, 10]);
+      final webp = Uint8List.fromList(
+          [0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]);
+      final heic = Uint8List.fromList([
+        0, 0, 0, 0, //
+        0x66, 0x74, 0x79, 0x70, // 'ftyp'
+        0x68, 0x65, 0x69, 0x63, // 'heic'
+      ]);
+
+      expect(MetadataStripper.canStrip(jpeg), isTrue);
+      expect(MetadataStripper.canStrip(png), isTrue);
+      expect(MetadataStripper.canStrip(webp), isTrue);
+      expect(MetadataStripper.canStrip(heic), isFalse);
+
+      // HEIC must NOT re-encode — it returns null so the caller skips it.
+      expect(MetadataStripper.strip(heic), isNull);
+      expect(MetadataStripper.strip(pad([0x7A, 0x7A, 0x7A])), isNull);
+    });
+  });
 }
