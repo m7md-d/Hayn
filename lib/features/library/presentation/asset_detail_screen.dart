@@ -255,7 +255,6 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
             itemBuilder: (ctx, i) {
               final entry = _entries[i];
               return _AssetPage(
-                key: ValueKey(entry.id),
                 entry: entry,
                 isActive: i == _currentIndex,
                 onTap: _toggleUi,
@@ -350,7 +349,6 @@ class _AssetPage extends StatefulWidget {
     required this.onTap,
     this.onInfoProgressChanged,
     this.onZoomLockedChanged,
-    super.key,
   });
 
   final LibraryEntry entry;
@@ -474,6 +472,7 @@ class _AssetPageState extends State<_AssetPage>
   }
 
   void _onPointerDown(PointerDownEvent e) {
+    if (!mounted) return;
     _activePointers.add(e.pointer);
     if (_activePointers.length == 1) {
       _firstPointerId = e.pointer;
@@ -497,12 +496,15 @@ class _AssetPageState extends State<_AssetPage>
   }
 
   void _onPointerMove(PointerMoveEvent e) {
+    if (!mounted) return;
     if (_activePointers.length != 1) return;
     if (e.pointer != _firstPointerId) return;
     if (_zoomLocked || _isZoomed) return;
 
+    final start = _firstPointerStart;
+    if (start == null) return;
     _firstPointerLast = e.position;
-    final delta = e.position - _firstPointerStart!;
+    final delta = e.position - start;
 
     if (_dragMode == _DragMode.idle) {
       if (delta.dy.abs() < _dirLockSlop) return;
@@ -525,6 +527,7 @@ class _AssetPageState extends State<_AssetPage>
   }
 
   void _onPointerUp(PointerEvent e) {
+    if (!mounted) return;
     final wasFirst = e.pointer == _firstPointerId;
     _activePointers.remove(e.pointer);
     _maybeUnlockZoom();
