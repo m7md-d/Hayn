@@ -1166,6 +1166,48 @@ abstract class AppLocalizations {
   /// **'Location'**
   String get metaLocation;
 
+  /// No description provided for @metaFormat.
+  ///
+  /// In en, this message translates to:
+  /// **'Format'**
+  String get metaFormat;
+
+  /// No description provided for @metaMegapixels.
+  ///
+  /// In en, this message translates to:
+  /// **'Resolution'**
+  String get metaMegapixels;
+
+  /// No description provided for @metaTechnical.
+  ///
+  /// In en, this message translates to:
+  /// **'Technical details'**
+  String get metaTechnical;
+
+  /// No description provided for @metaCamera.
+  ///
+  /// In en, this message translates to:
+  /// **'Camera'**
+  String get metaCamera;
+
+  /// No description provided for @metaLens.
+  ///
+  /// In en, this message translates to:
+  /// **'Lens'**
+  String get metaLens;
+
+  /// No description provided for @metaExposure.
+  ///
+  /// In en, this message translates to:
+  /// **'Exposure'**
+  String get metaExposure;
+
+  /// No description provided for @metaIso.
+  ///
+  /// In en, this message translates to:
+  /// **'ISO'**
+  String get metaIso;
+
   /// No description provided for @assetDetailDone.
   ///
   /// In en, this message translates to:

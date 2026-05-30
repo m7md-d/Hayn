@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:exif/exif.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:photo_manager/photo_manager.dart';
@@ -8,9 +9,14 @@ import '../../../../app/theme/design_tokens.dart';
 import '../../../../shared/widgets/widgets.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AssetMetadataSheet — read-only details panel shown from the (i) action in
-// the Asset Detail app bar. Reads sync properties from AssetEntity and async
-// file size from the underlying file.
+// AssetMetadataSheet — read-only details shown from the (i) action in the Asset
+// Detail app bar.
+//
+// Two tiers, basics first then "the nerdy bits" further down (the user scrolls
+// to them): a clean header section everyone cares about (format, dimensions,
+// size, duration, location) and a Technical section for stills (resolution in
+// MP + the camera/lens/exposure pulled from EXIF). The media KIND (photo/video)
+// is intentionally NOT a row — the header icon already says it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class AssetMetadataSheet extends StatefulWidget {
@@ -31,13 +37,68 @@ class _AssetMetadataSheetState extends State<AssetMetadataSheet> {
   }
 
   Future<_FileFacts> _loadFacts() async {
-    final file = await widget.asset.file;
-    final title = await widget.asset.titleAsync;
+    final asset = widget.asset;
+    final file = await asset.file;
+    final title = await asset.titleAsync;
     int? size;
     if (file != null && await file.exists()) {
       size = await file.length();
     }
-    return _FileFacts(filename: title, sizeBytes: size, file: file);
+
+    // EXIF (stills only) — camera, lens, exposure. Defensive: any failure just
+    // means the Technical section stays minimal.
+    _Exif? exifFacts;
+    if (asset.type == AssetType.image && file != null) {
+      exifFacts = await _readExif(file);
+    }
+
+    return _FileFacts(
+      filename: title,
+      sizeBytes: size,
+      format: _formatLabel(title, asset.title),
+      exif: exifFacts,
+    );
+  }
+
+  Future<_Exif?> _readExif(File file) async {
+    try {
+      final bytes = await file.readAsBytes();
+      final tags = await readExifFromBytes(bytes);
+      if (tags.isEmpty) return null;
+
+      Ratio? ratio(String key) {
+        final v = tags[key]?.values.toList();
+        if (v != null && v.isNotEmpty && v.first is Ratio) {
+          return v.first as Ratio;
+        }
+        return null;
+      }
+
+      final make = tags['Image Make']?.printable.trim();
+      final model = tags['Image Model']?.printable.trim();
+      final camera = [make, model]
+          .where((s) => s != null && s.isNotEmpty)
+          .join(' ')
+          .trim();
+
+      // Exposure line: ƒ2.8 · 1/120s · 26mm — only the parts that exist.
+      final parts = <String>[];
+      final fnum = ratio('EXIF FNumber')?.toDouble();
+      if (fnum != null && fnum > 0) parts.add('ƒ${_trim(fnum)}');
+      final shutter = tags['EXIF ExposureTime']?.printable.trim();
+      if (shutter != null && shutter.isNotEmpty) parts.add('${shutter}s');
+      final focal = ratio('EXIF FocalLength')?.toDouble();
+      if (focal != null && focal > 0) parts.add('${focal.round()}mm');
+
+      return _Exif(
+        camera: camera.isEmpty ? null : camera,
+        lens: tags['EXIF LensModel']?.printable.trim(),
+        exposure: parts.isEmpty ? null : parts.join(' · '),
+        iso: tags['EXIF ISOSpeedRatings']?.printable.trim(),
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   @override
@@ -45,85 +106,143 @@ class _AssetMetadataSheetState extends State<AssetMetadataSheet> {
     final hc = context.hc;
     final l = AppLocalizations.of(context);
     final asset = widget.asset;
+    final isVideo = asset.type == AssetType.video;
+    final mp = (asset.width * asset.height) / 1e6;
 
     return SafeArea(
       child: FutureBuilder<_FileFacts>(
         future: _facts,
         builder: (ctx, snap) {
           final facts = snap.data;
-          // Scrollable so the content can't overflow when the sheet is shown at
-          // a constrained height (e.g. the swipe-up reveal's fixed panel).
+          final exif = facts?.exif;
+          final hasLocation = asset.latitude != null &&
+              asset.longitude != null &&
+              asset.latitude != 0 &&
+              asset.longitude != 0;
+
+          // Technical section: resolution (stills) + any EXIF camera facts.
+          final technical = <Widget>[
+            if (!isVideo && mp >= 0.1)
+              _MetaRow(
+                icon: Icons.high_quality_outlined,
+                label: l.metaMegapixels,
+                value: '${_trim(mp)} MP',
+              ),
+            if (exif?.camera != null)
+              _MetaRow(
+                icon: Icons.photo_camera_outlined,
+                label: l.metaCamera,
+                value: exif!.camera!,
+              ),
+            if (exif?.lens != null && exif!.lens!.isNotEmpty)
+              _MetaRow(
+                icon: Icons.center_focus_weak_outlined,
+                label: l.metaLens,
+                value: exif.lens!,
+              ),
+            if (exif?.exposure != null)
+              _MetaRow(
+                icon: Icons.shutter_speed_outlined,
+                label: l.metaExposure,
+                value: exif!.exposure!,
+              ),
+            if (exif?.iso != null && exif!.iso!.isNotEmpty)
+              _MetaRow(
+                icon: Icons.iso_outlined,
+                label: l.metaIso,
+                value: exif.iso!,
+              ),
+          ];
+
           return SingleChildScrollView(
             child: Padding(
-            padding: const EdgeInsets.only(bottom: AppSpacing.md),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                HaynSheetHeader(
-                  title: facts?.filename ?? asset.id,
-                  subtitle: _formatDate(asset.createDateTime,
-                      Localizations.localeOf(context).languageCode),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.md),
-                  child: HaynListSection(
-                    children: [
-                      _MetaRow(
-                        icon: asset.type == AssetType.video
-                            ? Icons.movie_outlined
-                            : Icons.photo_outlined,
-                        label: l.selectionInfo,
-                        value: asset.type == AssetType.video
-                            ? l.filterVideos
-                            : l.filterPhotos,
-                      ),
-                      _MetaRow(
-                        icon: Icons.aspect_ratio_rounded,
-                        label: l.metaDimensions,
-                        value: '${asset.width} × ${asset.height}',
-                      ),
-                      if (facts?.sizeBytes != null)
-                        _MetaRow(
-                          icon: Icons.sd_storage_outlined,
-                          label: l.metaSize,
-                          value: _formatBytes(facts!.sizeBytes!),
-                        ),
-                      if (asset.type == AssetType.video)
-                        _MetaRow(
-                          icon: Icons.schedule_rounded,
-                          label: l.metaDuration,
-                          value: _formatDuration(asset.videoDuration),
-                        ),
-                      if (asset.latitude != null &&
-                          asset.longitude != null &&
-                          asset.latitude != 0 &&
-                          asset.longitude != 0)
-                        _MetaRow(
-                          icon: Icons.location_on_outlined,
-                          label: l.metaLocation,
-                          value:
-                              '${asset.latitude!.toStringAsFixed(4)}, ${asset.longitude!.toStringAsFixed(4)}',
-                        ),
-                    ],
+              padding: const EdgeInsets.only(bottom: AppSpacing.md),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  HaynSheetHeader(
+                    title: facts?.filename ?? asset.id,
+                    subtitle: _formatDate(asset.createDateTime,
+                        Localizations.localeOf(context).languageCode),
                   ),
-                ),
-                if (snap.connectionState == ConnectionState.waiting)
+
+                  // ── Basics ───────────────────────────────────────────────
                   Padding(
-                    padding: const EdgeInsets.all(AppSpacing.md),
-                    child: Center(
-                      child: SizedBox(
-                        width: 18, height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: hc.accent,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+                    child: HaynListSection(
+                      children: [
+                        if (facts?.format != null)
+                          _MetaRow(
+                            icon: Icons.image_outlined,
+                            label: l.metaFormat,
+                            value: facts!.format!,
+                          ),
+                        _MetaRow(
+                          icon: Icons.aspect_ratio_rounded,
+                          label: l.metaDimensions,
+                          value: '${asset.width} × ${asset.height}',
+                        ),
+                        if (facts?.sizeBytes != null)
+                          _MetaRow(
+                            icon: Icons.sd_storage_outlined,
+                            label: l.metaSize,
+                            value: _formatBytes(facts!.sizeBytes!),
+                          ),
+                        if (isVideo)
+                          _MetaRow(
+                            icon: Icons.schedule_rounded,
+                            label: l.metaDuration,
+                            value: _formatDuration(asset.videoDuration),
+                          ),
+                        if (hasLocation)
+                          _MetaRow(
+                            icon: Icons.location_on_outlined,
+                            label: l.metaLocation,
+                            value:
+                                '${asset.latitude!.toStringAsFixed(4)}, ${asset.longitude!.toStringAsFixed(4)}',
+                          ),
+                      ],
+                    ),
+                  ),
+
+                  // ── Technical (nerdy bits, scrolled to) ──────────────────
+                  if (technical.isNotEmpty) ...[
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(AppSpacing.md,
+                          AppSpacing.md, AppSpacing.md, AppSpacing.s2),
+                      child: Text(
+                        l.metaTechnical,
+                        style: Theme.of(context)
+                            .textTheme
+                            .labelMedium
+                            ?.copyWith(color: hc.text3),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: AppSpacing.md),
+                      child: HaynListSection(children: technical),
+                    ),
+                  ],
+
+                  if (snap.connectionState == ConnectionState.waiting)
+                    Padding(
+                      padding: const EdgeInsets.all(AppSpacing.md),
+                      child: Center(
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: hc.accent,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-              ],
-            ),
+                ],
+              ),
             ),
           );
         },
@@ -132,6 +251,22 @@ class _AssetMetadataSheetState extends State<AssetMetadataSheet> {
   }
 
   // ── Formatters ──────────────────────────────────────────────────────────
+
+  /// Uppercased file extension (HEIC, JPG, MOV…), falling back to nothing.
+  static String? _formatLabel(String? titleAsync, String? title) {
+    final name = (titleAsync?.isNotEmpty ?? false) ? titleAsync! : (title ?? '');
+    final dot = name.lastIndexOf('.');
+    if (dot >= 0 && dot < name.length - 1) {
+      return name.substring(dot + 1).toUpperCase();
+    }
+    return null;
+  }
+
+  /// Trim a double to at most one decimal, dropping a trailing ".0".
+  static String _trim(double v) {
+    final s = v.toStringAsFixed(1);
+    return s.endsWith('.0') ? s.substring(0, s.length - 2) : s;
+  }
 
   static String _formatDate(DateTime d, String locale) {
     return DateFormat.yMMMd(locale).add_Hm().format(d);
@@ -156,10 +291,19 @@ class _AssetMetadataSheetState extends State<AssetMetadataSheet> {
 }
 
 class _FileFacts {
-  const _FileFacts({this.filename, this.sizeBytes, this.file});
+  const _FileFacts({this.filename, this.sizeBytes, this.format, this.exif});
   final String? filename;
   final int? sizeBytes;
-  final File? file;
+  final String? format;
+  final _Exif? exif;
+}
+
+class _Exif {
+  const _Exif({this.camera, this.lens, this.exposure, this.iso});
+  final String? camera;
+  final String? lens;
+  final String? exposure;
+  final String? iso;
 }
 
 class _MetaRow extends StatelessWidget {
@@ -179,19 +323,25 @@ class _MetaRow extends StatelessWidget {
     final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.md, vertical: AppSpacing.s3,
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.s3,
       ),
       child: Row(
         children: [
           Icon(icon, size: 18, color: hc.text2),
           const SizedBox(width: AppSpacing.s3),
           Text(label, style: theme.textTheme.bodyMedium),
-          const Spacer(),
-          Text(
-            value,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: hc.text2,
-              fontFeatures: const [FontFeature.tabularFigures()],
+          const SizedBox(width: AppSpacing.md),
+          Expanded(
+            child: Text(
+              value,
+              textAlign: TextAlign.end,
+              overflow: TextOverflow.ellipsis,
+              maxLines: 2,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: hc.text2,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
             ),
           ),
         ],

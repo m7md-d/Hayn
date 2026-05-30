@@ -585,6 +585,27 @@ class AppLocalizationsAr extends AppLocalizations {
   String get metaLocation => 'الموقع';
 
   @override
+  String get metaFormat => 'الصيغة';
+
+  @override
+  String get metaMegapixels => 'الدقة';
+
+  @override
+  String get metaTechnical => 'تفاصيل تقنية';
+
+  @override
+  String get metaCamera => 'الكاميرا';
+
+  @override
+  String get metaLens => 'العدسة';
+
+  @override
+  String get metaExposure => 'التعريض';
+
+  @override
+  String get metaIso => 'ISO';
+
+  @override
   String get assetDetailDone => 'تم';
 
   @override

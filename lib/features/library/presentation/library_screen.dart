@@ -1,7 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderMetaData, BoxHitTestResult;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:photo_manager/photo_manager.dart' show AssetType;
 import '../../../app/l10n/app_localizations.dart';
 import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
@@ -48,6 +51,21 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
   int _enterIndex = 0;
   double _enterOffset = 0;
 
+  // ── Drag-to-select (long-press a tile, then drag across the grid) ────────
+  // A Listener over the grid observes the raw pointer (it never enters the
+  // gesture arena, so the tile's long-press + our drag coexist). The tile under
+  // the finger is found by hit-testing for its MetaData(index) — no fragile
+  // sliver geometry. Auto-scrolls when the finger nears the top/bottom edge.
+  final GlobalKey _gridListenerKey = GlobalKey();
+  bool _dragSelecting = false;
+  int _dragAnchorIndex = 0;
+  AssetType? _dragType;
+  Set<String> _dragBase = const {};
+  int? _dragLastIndex;
+  Offset? _lastDragLocalPos;
+  Timer? _autoScrollTimer;
+  double _autoScrollDir = 0;
+
   @override
   void initState() {
     super.initState();
@@ -66,6 +84,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
 
   @override
   void dispose() {
+    _autoScrollTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _primaryController.dispose();
     super.dispose();
@@ -117,13 +136,22 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
       controller: _primaryController,
       child: Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
-      body: NotificationListener<ScrollNotification>(
+      body: Listener(
+        key: _gridListenerKey,
+        onPointerMove: _onDragPointerMove,
+        onPointerUp: _onDragPointerEnd,
+        onPointerCancel: _onDragPointerEnd,
+        child: NotificationListener<ScrollNotification>(
         onNotification: _onScrollNotification,
         child: CustomScrollView(
           controller: _primaryController,
-          physics: const BouncingScrollPhysics(
-            parent: AlwaysScrollableScrollPhysics(),
-          ),
+          // Freeze the list while drag-selecting so a vertical drag selects
+          // tiles instead of scrolling; our own edge auto-scroll handles paging.
+          physics: _dragSelecting
+              ? const NeverScrollableScrollPhysics()
+              : const BouncingScrollPhysics(
+                  parent: AlwaysScrollableScrollPhysics(),
+                ),
           slivers: [
           // ── Pinned title bar — title + actions stay at the top at all
           // times (no large collapsing title), per the request to keep the
@@ -305,6 +333,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
           const SliverPadding(padding: EdgeInsets.only(bottom: 96)),
         ],
         ),
+        ),
       ),
       ),
     );
@@ -376,6 +405,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     // real total (10k+); each cell materialises its entity lazily on
     // scroll-in, so nothing is loaded until it's about to be seen.
     final entries = state.entries;
+    // The type the selection is locked to (null = nothing selected). Other-type
+    // tiles render disabled so photos and videos can't be mixed in one batch.
+    final lockType = state.selectionType;
     // Cache the row stride for the return-to-current scroll math.
     final width = MediaQuery.sizeOf(context).width;
     final tileExtent =
@@ -397,17 +429,25 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
               final entry = entries[index];
               return HaynStagger(
                 index: index,
-                child: MediaThumbnail(
-                  key: ValueKey(entry.id),
-                  id: entry.id,
-                  type: entry.type,
-                  sizeBytes: entry.sizeBytes,
-                  durationSeconds: entry.durationSeconds,
-                  isSelected: state.selectedIds.contains(entry.id),
-                  isSelecting: state.isSelecting,
-                  showSize: !state.isSelecting,
-                  onTap: () => _onTap(entry.id, index),
-                  onLongPress: () => _onLongPress(entry.id),
+                // MetaData carries the grid index so drag-select can find the
+                // tile under the finger by hit-testing (no sliver geometry).
+                child: MetaData(
+                  metaData: index,
+                  child: MediaThumbnail(
+                    key: ValueKey(entry.id),
+                    id: entry.id,
+                    type: entry.type,
+                    sizeBytes: entry.sizeBytes,
+                    durationSeconds: entry.durationSeconds,
+                    isSelected: state.selectedIds.contains(entry.id),
+                    isSelecting: state.isSelecting,
+                    // Size badge stays visible during selection now.
+                    showSize: true,
+                    disabled: lockType != null && entry.type != lockType,
+                    onTap: () => _onTap(entry.id, index, entry.type),
+                    onLongPress: () =>
+                        _onLongPress(entry.id, index, entry.type),
+                  ),
                 ),
               );
             },
@@ -418,10 +458,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     ];
   }
 
-  Future<void> _onTap(String id, int index) async {
+  Future<void> _onTap(String id, int index, AssetType type) async {
     final notifier = ref.read(libraryProvider.notifier);
     if (ref.read(libraryProvider).isSelecting) {
-      notifier.toggleSelection(id);
+      notifier.toggleSelection(id, type);
       return;
     }
     HapticFeedback.selectionClick();
@@ -457,8 +497,126 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen>
     _primaryController.jumpTo(target);
   }
 
-  void _onLongPress(String id) {
-    ref.read(libraryProvider.notifier).enterSelectionMode(id);
+  // ── Drag-to-select ───────────────────────────────────────────────────────
+
+  void _onLongPress(String id, int index, AssetType type) {
+    final st = ref.read(libraryProvider);
+    final lock = st.selectionType;
+    // Anchoring on a different type than the current lock isn't allowed.
+    if (st.isSelecting && lock != null && lock != type) return;
+
+    final base = st.isSelecting ? Set<String>.from(st.selectedIds) : <String>{};
+    base.add(id);
+    ref.read(libraryProvider.notifier).setSelection(base);
+
+    setState(() {
+      _dragSelecting = true;
+      _dragAnchorIndex = index;
+      _dragType = type;
+      _dragBase = base;
+      _dragLastIndex = index;
+    });
+  }
+
+  void _onDragPointerMove(PointerMoveEvent e) {
+    if (!_dragSelecting) return;
+    _lastDragLocalPos = e.localPosition;
+    _maybeAutoScroll(e.localPosition);
+    final idx = _indexUnderPointer(e.localPosition);
+    if (idx == null || idx == _dragLastIndex) return;
+    _dragLastIndex = idx;
+    _applyDragRange(idx);
+  }
+
+  void _onDragPointerEnd(PointerEvent e) {
+    if (!_dragSelecting) return;
+    _stopAutoScroll();
+    setState(() {
+      _dragSelecting = false;
+      _dragType = null;
+      _dragLastIndex = null;
+      _lastDragLocalPos = null;
+    });
+  }
+
+  /// Hit-test the tile under [localPos] (relative to the grid Listener) and read
+  /// its MetaData index — no sliver geometry, robust to the pinned header.
+  int? _indexUnderPointer(Offset localPos) {
+    final box = _gridListenerKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return null;
+    final result = BoxHitTestResult();
+    box.hitTest(result, position: localPos);
+    for (final entry in result.path) {
+      final target = entry.target;
+      if (target is RenderMetaData && target.metaData is int) {
+        return target.metaData as int;
+      }
+    }
+    return null;
+  }
+
+  /// Select the run [anchor..current] (single-type) on top of the pre-drag
+  /// base, so dragging forward extends and dragging back releases the overshoot.
+  void _applyDragRange(int current) {
+    final entries = ref.read(libraryProvider).entries;
+    if (entries.isEmpty) return;
+    final lo = _dragAnchorIndex < current ? _dragAnchorIndex : current;
+    final hi = _dragAnchorIndex < current ? current : _dragAnchorIndex;
+    final sel = Set<String>.from(_dragBase);
+    for (var i = lo; i <= hi && i < entries.length; i++) {
+      final entry = entries[i];
+      if (entry.type == _dragType) sel.add(entry.id);
+    }
+    ref.read(libraryProvider.notifier).setSelection(sel);
+  }
+
+  // Auto-scroll while the finger sits near the top/bottom edge during a drag.
+  void _maybeAutoScroll(Offset localPos) {
+    final box = _gridListenerKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    const edge = 96.0;
+    final h = box.size.height;
+    double dir = 0;
+    if (localPos.dy < edge) {
+      dir = -1;
+    } else if (localPos.dy > h - edge) {
+      dir = 1;
+    }
+    if (dir == 0) {
+      _stopAutoScroll();
+      return;
+    }
+    _autoScrollDir = dir;
+    if (_autoScrollTimer != null) return;
+    _autoScrollTimer =
+        Timer.periodic(const Duration(milliseconds: 16), (_) => _autoScrollTick());
+  }
+
+  void _autoScrollTick() {
+    if (!_dragSelecting || !_primaryController.hasClients) {
+      _stopAutoScroll();
+      return;
+    }
+    final pos = _primaryController.position;
+    final next = (_primaryController.offset + _autoScrollDir * 14)
+        .clamp(0.0, pos.maxScrollExtent);
+    if (next == _primaryController.offset) return; // hit an end
+    _primaryController.jumpTo(next);
+    // Tiles moved under the stationary finger → re-evaluate the run.
+    final lp = _lastDragLocalPos;
+    if (lp != null) {
+      final idx = _indexUnderPointer(lp);
+      if (idx != null && idx != _dragLastIndex) {
+        _dragLastIndex = idx;
+        _applyDragRange(idx);
+      }
+    }
+  }
+
+  void _stopAutoScroll() {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
+    _autoScrollDir = 0;
   }
 
   Future<void> _openAlbumPicker(

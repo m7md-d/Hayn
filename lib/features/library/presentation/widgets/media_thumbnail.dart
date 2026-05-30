@@ -36,6 +36,7 @@ class MediaThumbnail extends StatelessWidget {
     this.sizeBytes,
     this.durationSeconds = 0,
     this.showSize = true,
+    this.disabled = false,
     super.key,
   });
 
@@ -48,6 +49,10 @@ class MediaThumbnail extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback onLongPress;
   final bool showSize;
+
+  /// Locked out during selection because a different type is already selected
+  /// (selections are single-type). Dimmed + non-interactive.
+  final bool disabled;
 
   String _formatBytes(int bytes) {
     if (bytes < 1024) return '${bytes}B';
@@ -68,15 +73,21 @@ class MediaThumbnail extends StatelessWidget {
     // RepaintBoundary isolates each tile's repaint: when one thumbnail's
     // fade-in animation runs, neighbouring tiles in the grid don't repaint.
     return RepaintBoundary(
-      child: GestureDetector(
-        onTap: () {
-          HapticFeedback.selectionClick();
-          onTap();
-        },
-        onLongPress: () {
-          HapticFeedback.mediumImpact();
-          onLongPress();
-        },
+      child: Opacity(
+        opacity: disabled ? 0.35 : 1.0,
+        child: GestureDetector(
+        onTap: disabled
+            ? null
+            : () {
+                HapticFeedback.selectionClick();
+                onTap();
+              },
+        onLongPress: disabled
+            ? null
+            : () {
+                HapticFeedback.mediumImpact();
+                onLongPress();
+              },
         child: AnimatedScale(
           scale: selected ? 0.94 : 1.0,
           duration: AppDuration.fast,
@@ -151,8 +162,10 @@ class MediaThumbnail extends StatelessWidget {
                   ),
                 ),
 
-                // 6) File size badge (bottom-start)
-                if (showSize && sizeBytes != null && !selecting)
+                // 6) File size badge (bottom-start) — stays visible during
+                // selection too (the checkmark sits top-start, so no clash);
+                // users want to see sizes while picking what to process.
+                if (showSize && sizeBytes != null)
                   PositionedDirectional(
                     bottom: 5,
                     start: 5,
@@ -186,6 +199,7 @@ class MediaThumbnail extends StatelessWidget {
             ),
           ),
         ),
+      ),
       ),
     );
   }

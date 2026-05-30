@@ -101,6 +101,18 @@ class LibraryState {
   final int totalCount;
   final bool hasMore;
 
+  /// The type the current selection is "locked" to — the type of the first
+  /// selected item, or null when nothing is selected. Selections are
+  /// single-type (you can't batch photos and videos together), so tiles of the
+  /// other type are disabled while this is set.
+  AssetType? get selectionType {
+    if (selectedIds.isEmpty) return null;
+    for (final e in entries) {
+      if (selectedIds.contains(e.id)) return e.type;
+    }
+    return null;
+  }
+
   LibraryState copyWith({
     LibraryPermissionStatus? permissionStatus,
     MediaFilter? filter,
@@ -339,11 +351,16 @@ class LibraryNotifier extends Notifier<LibraryState> {
     );
   }
 
-  void toggleSelection(String id) {
+  void toggleSelection(String id, AssetType type) {
     final updated = Set<String>.from(state.selectedIds);
     if (updated.contains(id)) {
       updated.remove(id);
     } else {
+      // Single-type lock: a selection can hold photos OR videos, not both.
+      // Tapping a different type while one is locked is a no-op (the tile is
+      // also shown disabled, so this is just defence-in-depth).
+      final lock = state.selectionType;
+      if (lock != null && lock != type) return;
       updated.add(id);
     }
     state = state.copyWith(
@@ -355,14 +372,27 @@ class LibraryNotifier extends Notifier<LibraryState> {
     );
   }
 
+  /// Replace the whole selection set (used by drag-select, which computes the
+  /// dragged-over run in the screen). Always keeps selection mode on.
+  void setSelection(Set<String> ids) {
+    state = state.copyWith(selectedIds: ids, isSelecting: true);
+  }
+
   Future<void> selectAll() async {
-    // Select the WHOLE library (or the whole filtered set), pulled from the
-    // index as ids only — no thumbnails load, so 10k+ won't blow up. Falls back
-    // to the loaded set inside an album or before the index is ready.
+    // Selections are single-type, so select-all picks ONE type: an existing
+    // lock if there is one, else the filter's type (defaulting to photos under
+    // "All"). Pulled from the index as ids only — no thumbnails load, so 10k+
+    // won't blow up. Falls back to the loaded set inside an album / pre-index.
+    final lock = state.selectionType;
+    final typeIdx = lock != null
+        ? lock.index
+        : (state.filter == MediaFilter.videos
+            ? AssetType.video.index
+            : AssetType.image.index);
     if (_indexReady && state.selectedAlbumId == null) {
       final q = queryParamsFor(state.filter, state.sortFilter);
       final ids = await ref.read(mediaIndexDatabaseProvider).matchingIds(
-            typeFilter: q.typeFilter,
+            typeFilter: typeIdx,
             minSize: q.minSize,
             maxSize: q.maxSize,
             formatNeedles: q.formatNeedles,
@@ -370,7 +400,11 @@ class LibraryNotifier extends Notifier<LibraryState> {
       state = state.copyWith(selectedIds: ids.toSet(), isSelecting: true);
       return;
     }
-    final ids = state.entries.map((e) => e.id).toSet();
+    final wantType = AssetType.values[typeIdx];
+    final ids = state.entries
+        .where((e) => e.type == wantType)
+        .map((e) => e.id)
+        .toSet();
     state = state.copyWith(selectedIds: ids, isSelecting: true);
   }
 

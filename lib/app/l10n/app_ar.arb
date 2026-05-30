@@ -213,6 +213,13 @@
   "metaSize": "الحجم",
   "metaDuration": "المدة",
   "metaLocation": "الموقع",
+  "metaFormat": "الصيغة",
+  "metaMegapixels": "الدقة",
+  "metaTechnical": "تفاصيل تقنية",
+  "metaCamera": "الكاميرا",
+  "metaLens": "العدسة",
+  "metaExposure": "التعريض",
+  "metaIso": "ISO",
 
   "assetDetailDone": "تم",
   "assetDetailComingSoon": "{name} — قريبًا في المرحلة التالية",

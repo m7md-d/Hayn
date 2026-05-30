@@ -580,6 +580,27 @@ class AppLocalizationsEn extends AppLocalizations {
   String get metaLocation => 'Location';
 
   @override
+  String get metaFormat => 'Format';
+
+  @override
+  String get metaMegapixels => 'Resolution';
+
+  @override
+  String get metaTechnical => 'Technical details';
+
+  @override
+  String get metaCamera => 'Camera';
+
+  @override
+  String get metaLens => 'Lens';
+
+  @override
+  String get metaExposure => 'Exposure';
+
+  @override
+  String get metaIso => 'ISO';
+
+  @override
   String get assetDetailDone => 'Done';
 
   @override

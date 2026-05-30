@@ -213,6 +213,13 @@
   "metaSize": "Size",
   "metaDuration": "Duration",
   "metaLocation": "Location",
+  "metaFormat": "Format",
+  "metaMegapixels": "Resolution",
+  "metaTechnical": "Technical details",
+  "metaCamera": "Camera",
+  "metaLens": "Lens",
+  "metaExposure": "Exposure",
+  "metaIso": "ISO",
 
   "assetDetailDone": "Done",
   "assetDetailComingSoon": "{name} — coming in next phase",
