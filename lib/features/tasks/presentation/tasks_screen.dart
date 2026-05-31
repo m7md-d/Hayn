@@ -1,7 +1,11 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:photo_manager/photo_manager.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../app/l10n/app_localizations.dart';
 import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
@@ -183,14 +187,54 @@ IconData taskIconFor(TaskType t) => switch (t) {
       _ => Icons.auto_fix_high_rounded,
     };
 
-/// Opens the first output of a finished task in the in-app viewer. Returns
-/// false (so the caller can surface a message) when there's nothing to show.
-bool openTaskOutput(BuildContext context, MediaTask task) {
+enum TaskOpenResult { opened, deleted, none }
+
+/// Opens the task's first output in the DEVICE gallery (not the app). On
+/// Android we hand the asset's content URI to the system viewer; on iOS we open
+/// the Photos app (it can't deep-link a single asset, but the result is dated
+/// "now" so it sits at the top of Recents). Reports `deleted` if the output is
+/// no longer on the device, so the caller can say so.
+Future<TaskOpenResult> openTaskOutput(MediaTask task) async {
   final out = task.outputAssetIds;
-  if (out.isEmpty) return false;
-  // iOS asset ids contain '/', which would break the path — encode it.
-  context.push('/asset/${Uri.encodeComponent(out.first)}');
-  return true;
+  if (out.isEmpty) return TaskOpenResult.none;
+  final asset = await AssetEntity.fromId(out.first);
+  if (asset == null) return TaskOpenResult.deleted;
+  try {
+    if (Platform.isAndroid) {
+      final url = await asset.getMediaUrl();
+      if (url != null) {
+        await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+        return TaskOpenResult.opened;
+      }
+    }
+    // iOS (and the Android fallback): open the system Photos app.
+    final ok = await launchUrl(
+      Uri.parse('photos-redirect://'),
+      mode: LaunchMode.externalApplication,
+    );
+    return ok ? TaskOpenResult.opened : TaskOpenResult.none;
+  } catch (_) {
+    return TaskOpenResult.none;
+  }
+}
+
+/// A compact relative time ("just now", "5 min ago", "2 hr ago", "3 days ago").
+String taskRelativeTime(DateTime when, AppLocalizations l) {
+  final d = DateTime.now().difference(when);
+  if (d.inMinutes < 1) return l.timeJustNow;
+  if (d.inMinutes < 60) return l.timeMinutesAgo(d.inMinutes);
+  if (d.inHours < 24) return l.timeHoursAgo(d.inHours);
+  return l.timeDaysAgo(d.inDays);
+}
+
+/// "2.4s" / "1m 04s" — wall-clock run time.
+String taskElapsedLabel(Duration d) {
+  if (d.inSeconds < 60) {
+    return '${(d.inMilliseconds / 1000).toStringAsFixed(1)}s';
+  }
+  final m = d.inMinutes;
+  final s = (d.inSeconds % 60).toString().padLeft(2, '0');
+  return '${m}m ${s}s';
 }
 
 class _TaskCard extends StatelessWidget {
@@ -249,7 +293,8 @@ class _TaskCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        l.taskItemsCount(task.itemCount),
+                        '${l.taskItemsCount(task.itemCount)} · '
+                        '${taskRelativeTime(taskState.enqueuedAt, l)}',
                         style: theme.textTheme.bodySmall
                             ?.copyWith(color: hc.text2),
                       ),
@@ -328,9 +373,13 @@ class _TaskCard extends StatelessWidget {
           const SizedBox(width: AppSpacing.s2),
           if (task.outputAssetIds.isNotEmpty)
             TextButton.icon(
-              onPressed: () {
+              onPressed: () async {
                 HapticFeedback.lightImpact();
-                if (!openTaskOutput(context, task)) {
+                final r = await openTaskOutput(task);
+                if (!context.mounted) return;
+                if (r == TaskOpenResult.deleted) {
+                  HaynSnack.info(context, l.taskOutputDeleted);
+                } else if (r == TaskOpenResult.none) {
                   HaynSnack.info(context, l.taskOpenError);
                 }
               },

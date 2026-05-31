@@ -6,9 +6,17 @@ import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
 import '../../../core/isolates/task_runner.dart';
 import '../../../shared/widgets/widgets.dart';
+import '../../image_ops/data/image_compress_task.dart';
 import '../../image_ops/data/metadata.dart' show StripUnsupportedFormat;
 import '../../library/presentation/widgets/id_thumbnail.dart';
-import 'tasks_screen.dart' show taskTitleFor, taskIconFor, openTaskOutput;
+import 'tasks_screen.dart'
+    show
+        taskTitleFor,
+        taskIconFor,
+        openTaskOutput,
+        taskRelativeTime,
+        taskElapsedLabel,
+        TaskOpenResult;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TaskDetailScreen — live progress, phase tail log, and the right action for
@@ -172,6 +180,11 @@ class TaskDetailScreen extends ConsumerWidget {
 
           const SizedBox(height: AppSpacing.md),
 
+          // ── Details ────────────────────────────────────────────────────
+          _DetailsCard(rows: _detailRows(task, l)),
+
+          const SizedBox(height: AppSpacing.md),
+
           // ── Action ─────────────────────────────────────────────────────
           if (task.status == TaskStatus.running)
             HaynDestructiveButton(
@@ -187,9 +200,13 @@ class TaskDetailScreen extends ConsumerWidget {
             HaynPrimaryButton(
               label: l.taskViewOutputButton,
               icon: Icons.open_in_new_rounded,
-              onPressed: () {
+              onPressed: () async {
                 HapticFeedback.lightImpact();
-                if (!openTaskOutput(context, task.task)) {
+                final r = await openTaskOutput(task.task);
+                if (!context.mounted) return;
+                if (r == TaskOpenResult.deleted) {
+                  HaynSnack.info(context, l.taskOutputDeleted);
+                } else if (r == TaskOpenResult.none) {
                   HaynSnack.info(context, l.taskOpenError);
                 }
               },
@@ -256,5 +273,67 @@ class TaskDetailScreen extends ConsumerWidget {
     final m = d.inMinutes;
     final s = (d.inSeconds % 60).toString().padLeft(2, '0');
     return '$m:$s';
+  }
+
+  /// Label/value rows for the details card: when it ran, how long it took, and
+  /// task-specific parameters (compression format/quality).
+  List<({String label, String value})> _detailRows(
+      TaskState task, AppLocalizations l) {
+    final rows = <({String label, String value})>[
+      (label: l.taskQueuedLabel, value: taskRelativeTime(task.enqueuedAt, l)),
+    ];
+    final elapsed = task.elapsed;
+    if (elapsed != null) {
+      rows.add((label: l.taskTimeTaken, value: taskElapsedLabel(elapsed)));
+    }
+    final t = task.task;
+    if (t is ImageCompressTask) {
+      rows.add((label: l.compressFormat, value: t.format.techName));
+      rows.add((label: l.compressQuality, value: '${t.quality}'));
+    }
+    return rows;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _DetailsCard — a compact label/value list (queued time, elapsed, params).
+// ─────────────────────────────────────────────────────────────────────────────
+class _DetailsCard extends StatelessWidget {
+  const _DetailsCard({required this.rows});
+  final List<({String label, String value})> rows;
+
+  @override
+  Widget build(BuildContext context) {
+    final hc = context.hc;
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md, vertical: AppSpacing.s2),
+      decoration: BoxDecoration(
+        color: hc.surface,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+      ),
+      child: Column(
+        children: [
+          for (final r in rows)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.s2),
+              child: Row(
+                children: [
+                  Text(r.label, style: theme.textTheme.bodyMedium),
+                  const Spacer(),
+                  Text(
+                    r.value,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: hc.text2,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
   }
 }

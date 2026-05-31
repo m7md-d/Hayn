@@ -9,8 +9,11 @@ class TaskState {
   const TaskState({
     required this.task,
     required this.status,
+    required this.enqueuedAt,
     this.progress,
     this.error,
+    this.startedAt,
+    this.endedAt,
   });
 
   final MediaTask task;
@@ -18,16 +21,32 @@ class TaskState {
   final TaskProgress? progress;
   final Object? error;
 
+  /// When the task entered the queue — drives the relative-time label.
+  final DateTime enqueuedAt;
+
+  /// When it started running / finished — their delta is the elapsed time.
+  final DateTime? startedAt;
+  final DateTime? endedAt;
+
+  /// Wall-clock duration of the run, once it has both endpoints.
+  Duration? get elapsed =>
+      (startedAt != null && endedAt != null) ? endedAt!.difference(startedAt!) : null;
+
   TaskState copyWith({
     TaskStatus? status,
     TaskProgress? progress,
     Object? error,
+    DateTime? startedAt,
+    DateTime? endedAt,
   }) {
     return TaskState(
       task: task,
       status: status ?? this.status,
       progress: progress ?? this.progress,
       error: error ?? this.error,
+      enqueuedAt: enqueuedAt,
+      startedAt: startedAt ?? this.startedAt,
+      endedAt: endedAt ?? this.endedAt,
     );
   }
 }
@@ -44,13 +63,17 @@ class TaskRunner extends Notifier<List<TaskState>> {
     ref.read(tasksAcknowledgedProvider.notifier).state = false;
     state = [
       ...state,
-      TaskState(task: task, status: TaskStatus.pending),
+      TaskState(
+          task: task,
+          status: TaskStatus.pending,
+          enqueuedAt: DateTime.now()),
     ];
     await _start(task);
   }
 
   Future<void> _start(MediaTask task) async {
-    _updateTask(task.id, (s) => s.copyWith(status: TaskStatus.running));
+    _updateTask(task.id,
+        (s) => s.copyWith(status: TaskStatus.running, startedAt: DateTime.now()));
 
     final sub = task.run().listen(
       (progress) {
@@ -60,8 +83,12 @@ class TaskRunner extends Notifier<List<TaskState>> {
         );
       },
       onError: (Object err) {
-        _updateTask(task.id,
-            (s) => s.copyWith(status: TaskStatus.failed, error: err));
+        _updateTask(
+            task.id,
+            (s) => s.copyWith(
+                status: TaskStatus.failed,
+                error: err,
+                endedAt: DateTime.now()));
         _subscriptions.remove(task.id);
         task.cleanup();
       },
@@ -74,7 +101,8 @@ class TaskRunner extends Notifier<List<TaskState>> {
         _updateTask(
           task.id,
           (s) => s.status == TaskStatus.running
-              ? s.copyWith(status: TaskStatus.completed)
+              ? s.copyWith(
+                  status: TaskStatus.completed, endedAt: DateTime.now())
               : s,
         );
         _subscriptions.remove(task.id);
@@ -91,7 +119,8 @@ class TaskRunner extends Notifier<List<TaskState>> {
     await _subscriptions[taskId]?.cancel();
     _subscriptions.remove(taskId);
     await taskState.task.cancel();
-    _updateTask(taskId, (s) => s.copyWith(status: TaskStatus.cancelled));
+    _updateTask(taskId,
+        (s) => s.copyWith(status: TaskStatus.cancelled, endedAt: DateTime.now()));
   }
 
   /// Remove one finished task from the queue. No-op while it's still running.

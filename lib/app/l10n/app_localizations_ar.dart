@@ -332,6 +332,51 @@ class AppLocalizationsAr extends AppLocalizations {
   String get taskRemove => 'إزالة';
 
   @override
+  String get taskTimeTaken => 'المدة المستغرقة';
+
+  @override
+  String get taskQueuedLabel => 'أُضيفت';
+
+  @override
+  String get taskOutputDeleted => 'الناتج لم يعد موجودًا على الجهاز';
+
+  @override
+  String get timeJustNow => 'الآن';
+
+  @override
+  String timeMinutesAgo(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'قبل $count دقيقة',
+      one: 'قبل دقيقة',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String timeHoursAgo(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'قبل $count ساعة',
+      one: 'قبل ساعة',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String timeDaysAgo(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'قبل $count يوم',
+      one: 'قبل يوم',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get taskDoneLabel => 'اكتمل';
 
   @override

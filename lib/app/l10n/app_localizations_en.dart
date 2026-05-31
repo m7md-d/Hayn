@@ -329,6 +329,51 @@ class AppLocalizationsEn extends AppLocalizations {
   String get taskRemove => 'Remove';
 
   @override
+  String get taskTimeTaken => 'Time taken';
+
+  @override
+  String get taskQueuedLabel => 'Queued';
+
+  @override
+  String get taskOutputDeleted => 'The result is no longer on the device';
+
+  @override
+  String get timeJustNow => 'just now';
+
+  @override
+  String timeMinutesAgo(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count min ago',
+      one: '1 min ago',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String timeHoursAgo(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count hr ago',
+      one: '1 hr ago',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String timeDaysAgo(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count days ago',
+      one: '1 day ago',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get taskDoneLabel => 'Done';
 
   @override

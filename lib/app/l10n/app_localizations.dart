@@ -704,6 +704,48 @@ abstract class AppLocalizations {
   /// **'Remove'**
   String get taskRemove;
 
+  /// No description provided for @taskTimeTaken.
+  ///
+  /// In en, this message translates to:
+  /// **'Time taken'**
+  String get taskTimeTaken;
+
+  /// No description provided for @taskQueuedLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Queued'**
+  String get taskQueuedLabel;
+
+  /// No description provided for @taskOutputDeleted.
+  ///
+  /// In en, this message translates to:
+  /// **'The result is no longer on the device'**
+  String get taskOutputDeleted;
+
+  /// No description provided for @timeJustNow.
+  ///
+  /// In en, this message translates to:
+  /// **'just now'**
+  String get timeJustNow;
+
+  /// No description provided for @timeMinutesAgo.
+  ///
+  /// In en, this message translates to:
+  /// **'{count,plural, =1{1 min ago} other{{count} min ago}}'**
+  String timeMinutesAgo(int count);
+
+  /// No description provided for @timeHoursAgo.
+  ///
+  /// In en, this message translates to:
+  /// **'{count,plural, =1{1 hr ago} other{{count} hr ago}}'**
+  String timeHoursAgo(int count);
+
+  /// No description provided for @timeDaysAgo.
+  ///
+  /// In en, this message translates to:
+  /// **'{count,plural, =1{1 day ago} other{{count} days ago}}'**
+  String timeDaysAgo(int count);
+
   /// No description provided for @taskDoneLabel.
   ///
   /// In en, this message translates to:
