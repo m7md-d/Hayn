@@ -39,36 +39,50 @@ import UIKit
       }
     }
 
-    // Lossless metadata strip for HEIC/AVIF (which pure-Dart can't edit).
-    // CGImageDestinationAddImageFromSource copies the coded image WITHOUT
-    // re-encoding when the source and destination types match, so the pixels
-    // are untouched; we only drop the metadata dictionaries. Returns nil on any
-    // failure → the Dart side then skips the file (never degrades it).
+    // ImageIO image channel:
+    //   • stripLossless: drop EXIF/GPS from HEIC/AVIF WITHOUT re-encoding
+    //     (CGImageDestinationAddImageFromSource copies the coded image as-is).
+    //   • encodeImage:   compress to HEIC/JPEG via ImageIO — no spurious alpha
+    //     channel (so no "AlphaLast" warning) and carries the source's camera
+    //     metadata when asked. Both return nil on any failure → Dart falls back.
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "HaynMetadata") {
       let channel = FlutterMethodChannel(
         name: "hayn/metadata",
         binaryMessenger: registrar.messenger()
       )
       channel.setMethodCallHandler { call, result in
-        guard call.method == "stripLossless" else {
-          result(FlutterMethodNotImplemented)
-          return
-        }
-        guard let args = call.arguments as? [String: Any],
-              let typed = args["bytes"] as? FlutterStandardTypedData else {
-          result(nil)
-          return
-        }
-        let data = typed.data
-        DispatchQueue.global(qos: .userInitiated).async {
-          let stripped = MetadataStripper.strip(data)
-          DispatchQueue.main.async {
-            if let stripped = stripped {
-              result(FlutterStandardTypedData(bytes: stripped))
-            } else {
-              result(nil)
+        let args = call.arguments as? [String: Any]
+        switch call.method {
+        case "stripLossless":
+          guard let typed = args?["bytes"] as? FlutterStandardTypedData else {
+            result(nil)
+            return
+          }
+          let data = typed.data
+          DispatchQueue.global(qos: .userInitiated).async {
+            let stripped = MetadataStripper.strip(data)
+            DispatchQueue.main.async {
+              result(stripped.map { FlutterStandardTypedData(bytes: $0) })
             }
           }
+        case "encodeImage":
+          guard let typed = args?["bytes"] as? FlutterStandardTypedData,
+                let format = args?["format"] as? String else {
+            result(nil)
+            return
+          }
+          let quality = (args?["quality"] as? NSNumber)?.intValue ?? 80
+          let keepMetadata = (args?["keepMetadata"] as? Bool) ?? true
+          let data = typed.data
+          DispatchQueue.global(qos: .userInitiated).async {
+            let out = ImageEncoderNative.encode(
+              data, format: format, quality: quality, keepMetadata: keepMetadata)
+            DispatchQueue.main.async {
+              result(out.map { FlutterStandardTypedData(bytes: $0) })
+            }
+          }
+        default:
+          result(FlutterMethodNotImplemented)
         }
       }
     }
@@ -204,6 +218,71 @@ private enum MetadataStripper {
       return nil
     }
     NSLog("hayn/metadata: stripped \(data.count) → \(result.count) (\(uti))")
+    return result
+  }
+}
+
+/// Compresses image data to HEIC or JPEG using ImageIO directly. Decoding
+/// straight to the source's CGImage means an opaque photo stays opaque (no
+/// spurious alpha → no "AlphaLast" warning, no size bloat). The source's colour
+/// profile rides along inside the CGImage; display orientation is always kept,
+/// and the full camera metadata (Exif/TIFF/GPS) is copied only when requested.
+/// Returns nil if the source can't be decoded or the format isn't writable on
+/// this OS (e.g. a device with no HEVC encoder) — the Dart side then falls back.
+private enum ImageEncoderNative {
+  static func encode(
+    _ data: Data, format: String, quality: Int, keepMetadata: Bool
+  ) -> Data? {
+    guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+      NSLog("hayn/encode: source create failed")
+      return nil
+    }
+    guard CGImageSourceGetCount(source) > 0,
+          let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+      NSLog("hayn/encode: decode failed")
+      return nil
+    }
+
+    let uti: CFString
+    switch format.lowercased() {
+    case "heic": uti = "public.heic" as CFString
+    case "jpeg", "jpg": uti = "public.jpeg" as CFString
+    default:
+      NSLog("hayn/encode: unsupported format \(format)")
+      return nil
+    }
+
+    let out = NSMutableData()
+    guard let dest = CGImageDestinationCreateWithData(
+      out as CFMutableData, uti, 1, nil
+    ) else {
+      // Format not writable here (old device w/o HEVC) → caller falls back.
+      NSLog("hayn/encode: destination create failed for \(uti)")
+      return nil
+    }
+
+    let q = max(0.0, min(1.0, Double(quality) / 100.0))
+    var props: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: q]
+    let srcProps = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
+      as? [CFString: Any]
+    if keepMetadata, let srcProps = srcProps {
+      // Carry everything: camera Exif/TIFF, GPS, orientation, colour profile…
+      for (k, v) in srcProps { props[k] = v }
+    } else if let orientation = srcProps?[kCGImagePropertyOrientation] {
+      // Privacy: drop Exif/GPS but keep display orientation so the photo isn't
+      // rotated by losing its tag.
+      props[kCGImagePropertyOrientation] = orientation
+    }
+
+    CGImageDestinationAddImage(dest, image, props as CFDictionary)
+    guard CGImageDestinationFinalize(dest) else {
+      NSLog("hayn/encode: finalize failed for \(uti)")
+      return nil
+    }
+    let result = out as Data
+    if result.isEmpty { return nil }
+    NSLog("hayn/encode: \(format) q\(quality) keepMeta:\(keepMetadata) "
+      + "\(data.count) → \(result.count)")
     return result
   }
 }

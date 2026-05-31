@@ -4,6 +4,7 @@ import 'package:flutter_avif/flutter_avif.dart' as avif;
 import 'package:flutter_image_compress/flutter_image_compress.dart' as fic;
 
 import '../../settings/providers/preferences_providers.dart';
+import 'native_image_encoder.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ImageEncoder — turns source image bytes into a target format, honouring the
@@ -13,14 +14,18 @@ import '../../settings/providers/preferences_providers.dart';
 // in flutter_image_compress), walks an ordered fallback that NEVER drops alpha.
 //
 // Engines:
-//   • AVIF  → flutter_avif.encodeAvif (libaom, royalty-free; multithreaded).
-//   • HEIC/WebP/JPEG/PNG → flutter_image_compress (system codecs / libwebp).
+//   • AVIF       → flutter_avif.encodeAvif (libaom, royalty-free; multithread).
+//   • HEIC/JPEG  → NativeImageEncoder (iOS ImageIO) first, flutter_image_compress
+//                  as the fallback. The native path avoids the "AlphaLast"
+//                  warning and carries real camera EXIF into HEIC.
+//   • WebP/PNG   → flutter_image_compress (libwebp / system).
 // Both run their heavy work off the Dart main isolate (FFI thread / platform
 // thread), so callers don't need to spawn an isolate just for the encode.
 //
-// Metadata: flutter_image_compress's keepExif is JPEG-only (and AVIF keeps it
-// via encodeAvif.keepExif). EXIF transplant for HEIC/WebP/PNG is a follow-up
-// (tracked in the image-front plan) — see [_supportsKeepExif].
+// Metadata: the native HEIC/JPEG path copies the source's full property set when
+// keepMetadata is set. On the plugin fallback, keepExif is JPEG-only (and AVIF
+// keeps date+GPS at the gallery-asset level, not in-file) — see
+// [_supportsKeepExif].
 // ─────────────────────────────────────────────────────────────────────────────
 
 class EncodedImage {
@@ -134,6 +139,23 @@ abstract final class ImageEncoder {
         DefaultFormat.avif || DefaultFormat.auto => null,
       };
       if (cf == null) return null;
+
+      // Prefer our own ImageIO encoder for HEIC/JPEG: it avoids the plugin's
+      // "opaque image with AlphaLast" warning and carries real camera EXIF into
+      // HEIC. Only when there's no downscale cap (a cap falls through to the
+      // plugin, which scales). Native returns null off-iOS / on any failure, so
+      // the plugin below stays the safety net.
+      final noCap = maxWidth == null && maxHeight == null;
+      if (noCap &&
+          (format == DefaultFormat.heic || format == DefaultFormat.jpeg)) {
+        final native = await NativeImageEncoder.encode(
+          source: source,
+          format: format == DefaultFormat.heic ? 'heic' : 'jpeg',
+          quality: quality.clamp(1, 100),
+          keepMetadata: keepMetadata,
+        );
+        if (native != null && native.isNotEmpty) return native;
+      }
 
       // Huge default bounds = "keep original dimensions"; a real cap only when
       // the caller asks for one. flutter_image_compress scales DOWN to fit.
