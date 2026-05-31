@@ -19,7 +19,8 @@ import 'aspect_ratio_chips.dart';
 //
 // Gesture model (a single onScale recognizer, so there's no recognizer fight):
 //   • 1 finger on a resize handle → reshape the frame.
-//   • 1 finger elsewhere          → pan the image beneath the frame.
+//   • 1 finger inside the frame   → move the frame as a whole.
+//   • 1 finger outside the frame  → pan the image beneath it.
 //   • 2 fingers                   → zoom + pan the image (focal pinned).
 // On every change the screen-space frame is un-projected through the image
 // transform into a normalised image-space rect (fractions 0..1) and pushed to
@@ -78,6 +79,7 @@ class _CropCanvasState extends State<CropCanvas> {
   Rect _cropRect = Rect.zero; // crop FRAME in screen coords (never scaled)
   Size _lastViewport = Size.zero;
   _CropHandle _active = _CropHandle.none;
+  Offset _grabOffset = Offset.zero; // finger → frame.topLeft, for body drags
   bool _initialised = false;
 
   // Zoom/pan of the IMAGE only. The image is shown through a translate∘scale
@@ -268,14 +270,14 @@ class _CropCanvasState extends State<CropCanvas> {
     _gestureBaseFocal = _toBase(d.localFocalPoint);
     if (d.pointerCount == 1) {
       final handle = _hitTest(d.localFocalPoint);
-      // Only the resize handles grab the frame; touching the body (or empty
-      // space) pans the image instead of moving the frame.
-      if (handle != _CropHandle.none && handle != _CropHandle.body) {
-        _active = handle;
+      _active = handle;
+      if (handle == _CropHandle.body) {
+        // Grab the frame so a drag moves it as a whole (keeping its size).
+        _grabOffset = d.localFocalPoint - _cropRect.topLeft;
+      } else if (handle != _CropHandle.none) {
         HapticFeedback.selectionClick();
-      } else {
-        _active = _CropHandle.none;
       }
+      // handle == none → a drag outside the frame pans the image.
     } else {
       _active = _CropHandle.none;
     }
@@ -294,13 +296,14 @@ class _CropCanvasState extends State<CropCanvas> {
       _notify();
       return;
     }
-    // One finger with no handle grabbed → pan the image under the frame.
+    // One finger outside the frame → pan the image under it.
     if (_active == _CropHandle.none) {
       setState(() => _pan = _clampPan(_pan + d.focalPointDelta, _zoom));
       _notify();
       return;
     }
-    // One finger on a handle → reshape the frame (plain screen coordinates).
+    // One finger on a handle → reshape the frame; inside it → move the frame.
+    // All in plain screen coordinates (the frame never scales).
     final p = d.localFocalPoint;
     var r = _cropRect;
     switch (_active) {
@@ -329,16 +332,22 @@ class _CropCanvasState extends State<CropCanvas> {
         r = Rect.fromLTRB(r.left, r.top, p.dx, r.bottom);
         break;
       case _CropHandle.body:
+        final tl = p - _grabOffset;
+        r = Rect.fromLTWH(tl.dx, tl.dy, r.width, r.height);
+        break;
       case _CropHandle.none:
         return;
     }
 
-    // Snap to min size, then to aspect ratio (locked corner edges scale
-    // along the diagonal so the user "feels" the constraint immediately).
-    r = _snapMinSize(r);
-    final ratio = widget.aspectRatio;
-    if (ratio != null) {
-      r = _snapToRatio(r, ratio, _active);
+    // Resize handles snap to min size + aspect ratio (locked corner edges scale
+    // along the diagonal so the user "feels" the constraint immediately); a
+    // body move just slides the frame, keeping its size.
+    if (_active != _CropHandle.body) {
+      r = _snapMinSize(r);
+      final ratio = widget.aspectRatio;
+      if (ratio != null) {
+        r = _snapToRatio(r, ratio, _active);
+      }
     }
     r = _clampFrame(r);
 
