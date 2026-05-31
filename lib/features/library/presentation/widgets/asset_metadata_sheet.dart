@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:exif/exif.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
@@ -8,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../../app/l10n/app_localizations.dart';
 import '../../../../app/theme/app_theme_extension.dart';
 import '../../../../app/theme/design_tokens.dart';
+import '../../../../features/image_ops/data/native_image_info.dart';
 import '../../../../shared/widgets/widgets.dart';
 import '../../data/native_video_probe.dart';
 
@@ -48,12 +50,20 @@ class _AssetMetadataSheetState extends State<AssetMetadataSheet> {
       size = await file.length();
     }
 
-    // EXIF (stills only) — camera, lens, exposure. Defensive: any failure just
-    // means the Technical section stays minimal.
+    // EXIF + the native bit-depth/alpha/HDR probe (stills only). We read the
+    // bytes ONCE and feed both. Defensive: any failure just keeps the
+    // Technical section minimal.
     _Exif? exifFacts;
+    NativeImageInfo? imageInfo;
     VideoProbeInfo? video;
     if (asset.type == AssetType.image && file != null) {
-      exifFacts = await _readExif(file);
+      try {
+        final bytes = await file.readAsBytes();
+        exifFacts = await _readExifBytes(bytes);
+        imageInfo = await NativeImageProbe.probe(bytes);
+      } catch (_) {
+        // leave both null
+      }
     } else if (asset.type == AssetType.video) {
       video = await NativeVideoProbe.probe(asset.id);
     }
@@ -63,13 +73,13 @@ class _AssetMetadataSheetState extends State<AssetMetadataSheet> {
       sizeBytes: size,
       format: _formatLabel(title, asset.title),
       exif: exifFacts,
+      imageInfo: imageInfo,
       video: video,
     );
   }
 
-  Future<_Exif?> _readExif(File file) async {
+  Future<_Exif?> _readExifBytes(Uint8List bytes) async {
     try {
-      final bytes = await file.readAsBytes();
       final tags = await readExifFromBytes(bytes);
       if (tags.isEmpty) return null;
 
@@ -151,6 +161,7 @@ class _AssetMetadataSheetState extends State<AssetMetadataSheet> {
           }
 
           final video = facts?.video;
+          final imageInfo = facts?.imageInfo;
 
           // Technical section: resolution + EXIF (stills) or codec/fps/bitrate
           // (video).
@@ -160,6 +171,24 @@ class _AssetMetadataSheetState extends State<AssetMetadataSheet> {
                 icon: Icons.high_quality_outlined,
                 label: l.metaMegapixels,
                 value: '${_trim(mp)} MP',
+              ),
+            if (imageInfo != null && imageInfo.bitDepth > 0)
+              _MetaRow(
+                icon: Icons.tonality_rounded,
+                label: l.metaBitDepth,
+                value: l.bitDepthBits(imageInfo.bitDepth),
+              ),
+            if (imageInfo != null)
+              _MetaRow(
+                icon: Icons.hdr_on_rounded,
+                label: l.metaDynamicRange,
+                value: imageInfo.isHdr ? 'HDR' : 'SDR',
+              ),
+            if (imageInfo != null)
+              _MetaRow(
+                icon: Icons.texture_rounded,
+                label: l.metaTransparency,
+                value: imageInfo.hasAlpha ? l.commonYes : l.commonNo,
               ),
             if (video != null && video.codec.isNotEmpty)
               _MetaRow(
@@ -350,12 +379,19 @@ class _AssetMetadataSheetState extends State<AssetMetadataSheet> {
 }
 
 class _FileFacts {
-  const _FileFacts(
-      {this.filename, this.sizeBytes, this.format, this.exif, this.video});
+  const _FileFacts({
+    this.filename,
+    this.sizeBytes,
+    this.format,
+    this.exif,
+    this.imageInfo,
+    this.video,
+  });
   final String? filename;
   final int? sizeBytes;
   final String? format;
   final _Exif? exif;
+  final NativeImageInfo? imageInfo;
   final VideoProbeInfo? video;
 }
 

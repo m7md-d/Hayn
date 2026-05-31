@@ -19,6 +19,7 @@ import '../../settings/providers/preferences_providers.dart';
 import '../data/image_compress_task.dart';
 import '../data/image_encoder.dart';
 import '../data/image_probe.dart';
+import '../data/native_image_info.dart';
 import '../domain/image_format_policy.dart';
 import 'widgets/compress_estimate_card.dart';
 
@@ -77,6 +78,8 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   Uint8List? _originBytes;
   int _beforeSize = 0;
   bool _hasAlpha = false;
+  NativeImageInfo? _info; // real bit depth / alpha / HDR of the source
+  int _bitDepth = 0; // target: 0 = match source (preserves HDR), 8 = SDR
   EncodedImage? _encoded;
   bool _encoding = false;
   int _encodeSeq = 0;
@@ -122,12 +125,14 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
     final origin = await entity.originBytes;
     if (!mounted) return;
     final alpha = origin == null ? false : await ImageProbe.hasAlpha(origin);
+    final info = origin == null ? null : await NativeImageProbe.probe(origin);
     if (!mounted) return;
     setState(() {
       _previewBytes = thumb;
       _originBytes = origin;
       _beforeSize = origin?.length ?? 0;
       _hasAlpha = alpha;
+      _info = info;
     });
     _scheduleEncode();
   }
@@ -159,6 +164,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
         quality: q,
         hasAlpha: _hasAlpha,
         keepMetadata: _keepMetadata,
+        bitDepth: _bitDepth,
       );
       if (!mounted || seq != _encodeSeq) return;
       setState(() {
@@ -240,6 +246,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
               quality: q,
               keepMetadata: _keepMetadata,
               keepOriginalTime: _keepOriginalTime,
+              bitDepth: _isSingle ? _bitDepth : 0,
             ),
           ),
     );
@@ -367,6 +374,12 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
                     format: _format,
                     quality: _quality,
                     keepMetadata: _keepMetadata,
+                    bitDepth: _isSingle ? _bitDepth : null,
+                    sourceBitDepth: _info?.bitDepth,
+                    onBitDepthChanged: (v) {
+                      setState(() => _bitDepth = v);
+                      _scheduleEncode();
+                    },
                     onFormatChanged: (v) {
                       setState(() => _format = v);
                       _scheduleEncode();

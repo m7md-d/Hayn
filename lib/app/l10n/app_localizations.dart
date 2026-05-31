@@ -1280,6 +1280,42 @@ abstract class AppLocalizations {
   /// **'Open in Maps'**
   String get metaOpenInMaps;
 
+  /// No description provided for @metaBitDepth.
+  ///
+  /// In en, this message translates to:
+  /// **'Bit depth'**
+  String get metaBitDepth;
+
+  /// No description provided for @metaTransparency.
+  ///
+  /// In en, this message translates to:
+  /// **'Transparency'**
+  String get metaTransparency;
+
+  /// No description provided for @metaDynamicRange.
+  ///
+  /// In en, this message translates to:
+  /// **'Dynamic range'**
+  String get metaDynamicRange;
+
+  /// No description provided for @bitDepthBits.
+  ///
+  /// In en, this message translates to:
+  /// **'{n}-bit'**
+  String bitDepthBits(int n);
+
+  /// No description provided for @commonYes.
+  ///
+  /// In en, this message translates to:
+  /// **'Yes'**
+  String get commonYes;
+
+  /// No description provided for @commonNo.
+  ///
+  /// In en, this message translates to:
+  /// **'No'**
+  String get commonNo;
+
   /// No description provided for @assetDetailDone.
   ///
   /// In en, this message translates to:
@@ -1357,6 +1393,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Off: the copy is dated now and sorts to the top'**
   String get compressKeepTimeDesc;
+
+  /// No description provided for @compressBitDepth.
+  ///
+  /// In en, this message translates to:
+  /// **'Bit depth'**
+  String get compressBitDepth;
+
+  /// No description provided for @compressBitDepthDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'10-bit keeps HDR; 8-bit forces SDR'**
+  String get compressBitDepthDesc;
+
+  /// No description provided for @compressBitDepthMatch.
+  ///
+  /// In en, this message translates to:
+  /// **'Match'**
+  String get compressBitDepthMatch;
+
+  /// No description provided for @compressBitDepthHigher.
+  ///
+  /// In en, this message translates to:
+  /// **'Higher than the original ({n}-bit) — no quality gain'**
+  String compressBitDepthHigher(int n);
 
   /// No description provided for @compressLowQ.
   ///

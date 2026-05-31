@@ -31,6 +31,7 @@ class ImageCompressTask extends MediaTask {
     required this.quality,
     required this.keepMetadata,
     this.keepOriginalTime = false,
+    this.bitDepth = 0,
     FormatCapabilities? caps,
   })  : id = 'compress-${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}',
         _caps = caps ?? FormatCapabilities.detect();
@@ -41,6 +42,9 @@ class ImageCompressTask extends MediaTask {
 
   /// Keep the photo's info — camera, EXIF and GPS location — on the new copy.
   final bool keepMetadata;
+
+  /// Target output bit depth: 0 = match source (preserves HDR), 8 = force SDR.
+  final int bitDepth;
 
   /// Keep the ORIGINAL capture time on the copy. When false (default) the copy
   /// gets the current moment, so it lands at the top of the gallery timeline.
@@ -99,6 +103,7 @@ class ImageCompressTask extends MediaTask {
           quality: quality,
           hasAlpha: hasAlpha,
           keepMetadata: keepMetadata,
+          bitDepth: bitDepth,
         );
         if (_cancelled) return;
 

@@ -73,13 +73,26 @@ import UIKit
           }
           let quality = (args?["quality"] as? NSNumber)?.intValue ?? 80
           let keepMetadata = (args?["keepMetadata"] as? Bool) ?? true
+          // 0 = match the source's depth (keeps HDR); 8 = force SDR.
+          let bitDepth = (args?["bitDepth"] as? NSNumber)?.intValue ?? 0
           let data = typed.data
           DispatchQueue.global(qos: .userInitiated).async {
             let out = ImageEncoderNative.encode(
-              data, format: format, quality: quality, keepMetadata: keepMetadata)
+              data, format: format, quality: quality,
+              keepMetadata: keepMetadata, targetDepth: bitDepth)
             DispatchQueue.main.async {
               result(out.map { FlutterStandardTypedData(bytes: $0) })
             }
+          }
+        case "probeImage":
+          guard let typed = args?["bytes"] as? FlutterStandardTypedData else {
+            result(nil)
+            return
+          }
+          let data = typed.data
+          DispatchQueue.global(qos: .userInitiated).async {
+            let info = ImageProbeNative.probe(data)
+            DispatchQueue.main.async { result(info) }
           }
         default:
           result(FlutterMethodNotImplemented)
@@ -224,21 +237,29 @@ private enum MetadataStripper {
 
 /// Compresses image data to HEIC or JPEG using ImageIO directly. Decoding
 /// straight to the source's CGImage means an opaque photo stays opaque (no
-/// spurious alpha → no "AlphaLast" warning, no size bloat). The source's colour
-/// profile rides along inside the CGImage; display orientation is always kept,
-/// and the full camera metadata (Exif/TIFF/GPS) is copied only when requested.
+/// spurious alpha → no "AlphaLast" warning, no size bloat) and a 10-bit photo
+/// stays 10-bit. The source's colour profile rides along inside the CGImage;
+/// display orientation is always kept; full camera metadata (Exif/TIFF/GPS) is
+/// copied only when requested. The HDR gain map is carried over (unless the
+/// caller forces 8-bit SDR), so compressing no longer flattens HDR.
+///
+/// [targetDepth]: 0 = match the source (preserve HDR); 8 = force SDR (redraw at
+/// 8-bit and drop the gain map). Higher-than-source is meaningless and treated
+/// as "match" (the UI warns about it).
+///
 /// Returns nil if the source can't be decoded or the format isn't writable on
 /// this OS (e.g. a device with no HEVC encoder) — the Dart side then falls back.
 private enum ImageEncoderNative {
   static func encode(
-    _ data: Data, format: String, quality: Int, keepMetadata: Bool
+    _ data: Data, format: String, quality: Int, keepMetadata: Bool,
+    targetDepth: Int
   ) -> Data? {
     guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
       NSLog("hayn/encode: source create failed")
       return nil
     }
     guard CGImageSourceGetCount(source) > 0,
-          let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+          var image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
       NSLog("hayn/encode: decode failed")
       return nil
     }
@@ -251,6 +272,11 @@ private enum ImageEncoderNative {
       NSLog("hayn/encode: unsupported format \(format)")
       return nil
     }
+
+    // Force-SDR path: redraw into an 8-bit context so a 10-bit source becomes a
+    // clean 8-bit image; the gain map is then intentionally dropped below.
+    let forceSdr = targetDepth == 8 && image.bitsPerComponent > 8
+    if forceSdr, let flat = Self.redraw8Bit(image) { image = flat }
 
     let out = NSMutableData()
     guard let dest = CGImageDestinationCreateWithData(
@@ -275,6 +301,22 @@ private enum ImageEncoderNative {
     }
 
     CGImageDestinationAddImage(dest, image, props as CFDictionary)
+
+    // Carry the HDR gain map (Apple stores HDR as an SDR image + this auxiliary
+    // image) UNLESS the user asked for SDR. Without this, a re-encode strips the
+    // HDR look. Try the modern ISO gain map first, then the classic one.
+    if !forceSdr, #available(iOS 14.1, *) {
+      for auxType in [
+        "kCGImageAuxiliaryDataTypeISOGainMap" as CFString,
+        kCGImageAuxiliaryDataTypeHDRGainMap,
+      ] {
+        if let aux = CGImageSourceCopyAuxiliaryDataInfoAtIndex(
+          source, 0, auxType) {
+          CGImageDestinationAddAuxiliaryDataInfo(dest, auxType, aux)
+        }
+      }
+    }
+
     guard CGImageDestinationFinalize(dest) else {
       NSLog("hayn/encode: finalize failed for \(uti)")
       return nil
@@ -282,8 +324,59 @@ private enum ImageEncoderNative {
     let result = out as Data
     if result.isEmpty { return nil }
     NSLog("hayn/encode: \(format) q\(quality) keepMeta:\(keepMetadata) "
-      + "\(data.count) → \(result.count)")
+      + "depth:\(targetDepth) sdr:\(forceSdr) \(data.count) → \(result.count)")
     return result
+  }
+
+  /// Redraw a (possibly 10/16-bit) image into a standard 8-bit RGB bitmap.
+  static func redraw8Bit(_ image: CGImage) -> CGImage? {
+    let w = image.width, h = image.height
+    let space = CGColorSpace(name: CGColorSpace.sRGB) ?? image.colorSpace
+    guard let space = space,
+          let ctx = CGContext(
+            data: nil, width: w, height: h, bitsPerComponent: 8,
+            bytesPerRow: 0, space: space,
+            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else {
+      return nil
+    }
+    ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+    return ctx.makeImage()
+  }
+}
+
+/// Read-only inspection of an image's real bit depth, alpha-channel presence and
+/// HDR status — straight from ImageIO, so it's accurate for HEIC (which
+/// package:image can't even decode). We report what the file ACTUALLY contains,
+/// never a guess from the container type.
+private enum ImageProbeNative {
+  static func probe(_ data: Data) -> [String: Any]? {
+    guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+          CGImageSourceGetCount(source) > 0,
+          let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
+            as? [CFString: Any] else {
+      NSLog("hayn/probe: read failed")
+      return nil
+    }
+    let depth = (props[kCGImagePropertyDepth] as? NSNumber)?.intValue ?? 8
+    let hasAlpha = (props[kCGImagePropertyHasAlpha] as? NSNumber)?.boolValue
+      ?? false
+    let colorModel = (props[kCGImagePropertyColorModel] as? String) ?? ""
+    // HDR if there's a gain map, OR the pixels are deeper than 8-bit.
+    var hasGainMap = false
+    if #available(iOS 14.1, *) {
+      hasGainMap =
+        CGImageSourceCopyAuxiliaryDataInfoAtIndex(
+          source, 0, kCGImageAuxiliaryDataTypeHDRGainMap) != nil
+        || CGImageSourceCopyAuxiliaryDataInfoAtIndex(
+          source, 0, "kCGImageAuxiliaryDataTypeISOGainMap" as CFString) != nil
+    }
+    let isHdr = hasGainMap || depth > 8
+    return [
+      "bitDepth": depth,
+      "hasAlpha": hasAlpha,
+      "isHdr": isHdr,
+      "colorModel": colorModel,
+    ]
   }
 }
 

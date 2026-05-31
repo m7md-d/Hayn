@@ -661,6 +661,26 @@ class AppLocalizationsEn extends AppLocalizations {
   String get metaOpenInMaps => 'Open in Maps';
 
   @override
+  String get metaBitDepth => 'Bit depth';
+
+  @override
+  String get metaTransparency => 'Transparency';
+
+  @override
+  String get metaDynamicRange => 'Dynamic range';
+
+  @override
+  String bitDepthBits(int n) {
+    return '$n-bit';
+  }
+
+  @override
+  String get commonYes => 'Yes';
+
+  @override
+  String get commonNo => 'No';
+
+  @override
   String get assetDetailDone => 'Done';
 
   @override
@@ -701,6 +721,20 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get compressKeepTimeDesc =>
       'Off: the copy is dated now and sorts to the top';
+
+  @override
+  String get compressBitDepth => 'Bit depth';
+
+  @override
+  String get compressBitDepthDesc => '10-bit keeps HDR; 8-bit forces SDR';
+
+  @override
+  String get compressBitDepthMatch => 'Match';
+
+  @override
+  String compressBitDepthHigher(int n) {
+    return 'Higher than the original ($n-bit) — no quality gain';
+  }
 
   @override
   String get compressLowQ => 'Lower quality — smaller file';

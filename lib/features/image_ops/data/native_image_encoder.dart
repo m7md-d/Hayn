@@ -23,12 +23,14 @@ abstract final class NativeImageEncoder {
 
   /// Encode [source] to [format] ('heic' | 'jpeg') at [quality] (0–100). Copies
   /// full metadata when [keepMetadata]; otherwise keeps only display orientation
-  /// (drops Exif/GPS).
+  /// (drops Exif/GPS). [bitDepth] 0 = match the source (preserves HDR); 8 =
+  /// force SDR (drops the gain map). Higher-than-source is treated as match.
   static Future<Uint8List?> encode({
     required Uint8List source,
     required String format,
     required int quality,
     required bool keepMetadata,
+    int bitDepth = 0,
   }) async {
     try {
       final res = await channel.invokeMethod<Uint8List>('encodeImage', {
@@ -36,6 +38,7 @@ abstract final class NativeImageEncoder {
         'format': format,
         'quality': quality,
         'keepMetadata': keepMetadata,
+        'bitDepth': bitDepth,
       });
       return (res != null && res.isNotEmpty) ? res : null;
     } catch (_) {

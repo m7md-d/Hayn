@@ -57,6 +57,7 @@ abstract final class ImageEncoder {
     required int quality,
     required bool hasAlpha,
     required bool keepMetadata,
+    int bitDepth = 0,
     int? maxWidth,
     int? maxHeight,
   }) async {
@@ -66,6 +67,7 @@ abstract final class ImageEncoder {
         format: fmt,
         quality: quality,
         keepMetadata: keepMetadata,
+        bitDepth: bitDepth,
         maxWidth: maxWidth,
         maxHeight: maxHeight,
       );
@@ -101,6 +103,7 @@ abstract final class ImageEncoder {
     required DefaultFormat format,
     required int quality,
     required bool keepMetadata,
+    int bitDepth = 0,
     int? maxWidth,
     int? maxHeight,
   }) async {
@@ -153,6 +156,7 @@ abstract final class ImageEncoder {
           format: format == DefaultFormat.heic ? 'heic' : 'jpeg',
           quality: quality.clamp(1, 100),
           keepMetadata: keepMetadata,
+          bitDepth: bitDepth,
         );
         if (native != null && native.isNotEmpty) return native;
       }

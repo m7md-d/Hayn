@@ -26,6 +26,9 @@ class HaynAdvancedSettingsCard extends ConsumerWidget {
     required this.onFormatChanged,
     required this.onQualityChanged,
     required this.onKeepMetaChanged,
+    this.bitDepth,
+    this.onBitDepthChanged,
+    this.sourceBitDepth,
     this.keepOriginalTime,
     this.onKeepOriginalTimeChanged,
     this.keepTrashBackup,
@@ -39,6 +42,16 @@ class HaynAdvancedSettingsCard extends ConsumerWidget {
   final ValueChanged<DefaultFormat> onFormatChanged;
   final ValueChanged<double> onQualityChanged;
   final ValueChanged<bool> onKeepMetaChanged;
+
+  /// Output bit depth: 0 = match the source (keeps HDR), 8 = force SDR, 10 =
+  /// deep colour. Null hides the row; it's only shown for deep-colour-capable
+  /// formats (HEIC/AVIF) where the choice is meaningful.
+  final int? bitDepth;
+  final ValueChanged<int>? onBitDepthChanged;
+
+  /// The source image's real bit depth, used to warn when the user picks a
+  /// higher depth than the original (no quality gain). Null = unknown.
+  final int? sourceBitDepth;
 
   /// Keep the ORIGINAL capture time on the new copy. Independent of
   /// [keepMetadata] (info/location) so the user can keep location yet have the
@@ -99,6 +112,15 @@ class HaynAdvancedSettingsCard extends ConsumerWidget {
       onChanged: onFormatChanged,
       options: options,
     );
+  }
+
+  /// The bit-depth row only makes sense for deep-colour-capable formats
+  /// (HEIC/AVIF) and when the caller wired it up. JPEG/WebP/PNG hide it.
+  bool _showBitDepth(FormatCapabilities caps) {
+    if (bitDepth == null || onBitDepthChanged == null) return false;
+    final effective =
+        format == DefaultFormat.auto ? DefaultFormat.resolveAuto(caps) : format;
+    return effective == DefaultFormat.heic || effective == DefaultFormat.avif;
   }
 
   @override
@@ -179,6 +201,44 @@ class HaynAdvancedSettingsCard extends ConsumerWidget {
                     ? l.compressHighQ
                     : l.compressMidQ,
           ),
+
+          // ── Bit depth (HEIC/AVIF only — where deep colour / HDR applies) ──
+          if (_showBitDepth(caps)) ...[
+            const Divider(height: AppSpacing.lg),
+            Text(l.compressBitDepth, style: theme.textTheme.bodyMedium),
+            const SizedBox(height: 2),
+            Text(l.compressBitDepthDesc,
+                style: theme.textTheme.bodySmall?.copyWith(color: hc.text2)),
+            const SizedBox(height: AppSpacing.s2),
+            HaynSegmentedPill<int>(
+              value: bitDepth!,
+              onChanged: onBitDepthChanged!,
+              items: [
+                HaynSegmentItem(value: 0, label: l.compressBitDepthMatch),
+                HaynSegmentItem(value: 8, label: l.bitDepthBits(8)),
+                HaynSegmentItem(value: 10, label: l.bitDepthBits(10)),
+              ],
+            ),
+            if (sourceBitDepth != null &&
+                bitDepth! > 0 &&
+                bitDepth! > sourceBitDepth!) ...[
+              const SizedBox(height: AppSpacing.s2),
+              Row(
+                children: [
+                  Icon(Icons.info_outline_rounded,
+                      size: 14, color: hc.warningColor),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      l.compressBitDepthHigher(sourceBitDepth!),
+                      style: theme.textTheme.bodySmall
+                          ?.copyWith(color: hc.warningColor),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
 
           const Divider(height: AppSpacing.lg),
 

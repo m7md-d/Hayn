@@ -666,6 +666,26 @@ class AppLocalizationsAr extends AppLocalizations {
   String get metaOpenInMaps => 'افتح في الخرائط';
 
   @override
+  String get metaBitDepth => 'عمق البت';
+
+  @override
+  String get metaTransparency => 'الشفافية';
+
+  @override
+  String get metaDynamicRange => 'النطاق الديناميكي';
+
+  @override
+  String bitDepthBits(int n) {
+    return '$n-بت';
+  }
+
+  @override
+  String get commonYes => 'نعم';
+
+  @override
+  String get commonNo => 'لا';
+
+  @override
   String get assetDetailDone => 'تم';
 
   @override
@@ -706,6 +726,20 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get compressKeepTimeDesc =>
       'عند الإطفاء تُؤرَّخ النسخة بالوقت الحالي فتظهر بالأعلى';
+
+  @override
+  String get compressBitDepth => 'عمق البت';
+
+  @override
+  String get compressBitDepthDesc => '10-بت يحفظ HDR، و8-بت يفرض SDR';
+
+  @override
+  String get compressBitDepthMatch => 'مطابق';
+
+  @override
+  String compressBitDepthHigher(int n) {
+    return 'أعلى من الأصل ($n-بت) — بلا فائدة للجودة';
+  }
 
   @override
   String get compressLowQ => 'جودة أقل — حجم أصغر';
