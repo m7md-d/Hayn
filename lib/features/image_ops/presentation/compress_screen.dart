@@ -82,10 +82,6 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   int _encodeSeq = 0;
   Timer? _debounce;
 
-  /// Set while the comparison viewer has 2+ fingers or is zoomed in — the
-  /// ListView freezes so the pinch isn't stolen as a scroll.
-  bool _viewerZoomLocked = false;
-
   @override
   void initState() {
     super.initState();
@@ -293,8 +289,6 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
                   : HaynComparisonViewer(
                       beforeLabel: l.compressOriginalLabel,
                       afterLabel: l.compressPreviewLabel,
-                      onZoomStateChanged: (locked) =>
-                          setState(() => _viewerZoomLocked = locked),
                       before: Image.memory(
                         _previewBytes!,
                         fit: BoxFit.contain,
@@ -349,9 +343,6 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
             child: ListView(
               padding: const EdgeInsets.fromLTRB(
                   AppSpacing.md, 0, AppSpacing.md, 120),
-              physics: _viewerZoomLocked
-                  ? const NeverScrollableScrollPhysics()
-                  : null,
               children: [
           // ── Mode content ───────────────────────────────────────────────
           AnimatedSwitcher(

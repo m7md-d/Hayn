@@ -10,6 +10,7 @@ import '../domain/image_format_policy.dart';
 import 'gallery_saver.dart';
 import 'image_encoder.dart';
 import 'image_probe.dart';
+import 'output_name.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ImageCompressTask — the actual compress/convert engine, run through the
@@ -103,7 +104,7 @@ class ImageCompressTask extends MediaTask {
 
         final asset = await GallerySaver.saveImage(
           encoded.bytes,
-          filename: _outName(entity, encoded.extension),
+          filename: await outputFilename(entity, encoded.extension),
           // Time and location are independent choices now.
           creationDate: keepOriginalTime ? entity.createDateTime : null,
           latitude: keepMetadata ? entity.latitude : null,
@@ -126,13 +127,6 @@ class ImageCompressTask extends MediaTask {
       throw StateError('No image was saved');
     }
     yield TaskProgress(progress: 1, phase: '$saved/$total');
-  }
-
-  String _outName(AssetEntity entity, String ext) {
-    final title = entity.title ?? 'image';
-    final dot = title.lastIndexOf('.');
-    final base = dot > 0 ? title.substring(0, dot) : title;
-    return '$base.$ext';
   }
 
   @override

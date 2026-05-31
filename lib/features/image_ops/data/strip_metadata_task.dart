@@ -9,6 +9,7 @@ import 'gallery_saver.dart';
 import 'image_probe.dart';
 import 'metadata.dart';
 import 'native_image_stripper.dart';
+import 'output_name.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // StripMetadataTask — saves a metadata-free copy of each selected image
@@ -92,7 +93,7 @@ class StripMetadataTask extends MediaTask {
       try {
         final asset = await GallerySaver.saveImage(
           Uint8List.fromList(bytes),
-          filename: _outName(entity, ext),
+          filename: await outputFilename(entity, ext, suffix: 'clean'),
           // No date/GPS — this is the strip tool.
         );
         if (asset != null) {
@@ -115,13 +116,6 @@ class StripMetadataTask extends MediaTask {
       throw StateError('Nothing was stripped');
     }
     yield TaskProgress(progress: 1, phase: '$saved/$total');
-  }
-
-  String _outName(AssetEntity entity, String ext) {
-    final title = entity.title ?? 'image';
-    final dot = title.lastIndexOf('.');
-    final base = dot > 0 ? title.substring(0, dot) : title;
-    return '${base}_clean.$ext';
   }
 
   @override

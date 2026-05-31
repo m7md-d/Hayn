@@ -15,6 +15,7 @@ import '../domain/image_format_policy.dart';
 import 'gallery_saver.dart';
 import 'image_encoder.dart';
 import 'image_probe.dart';
+import 'output_name.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ImageCropTask — applies the editor's rotate/flip/crop to the FULL-resolution
@@ -116,7 +117,7 @@ class ImageCropTask extends MediaTask {
 
     final saved = await GallerySaver.saveImage(
       encoded.bytes,
-      filename: _outName(entity, encoded.extension),
+      filename: await outputFilename(entity, encoded.extension, suffix: 'crop'),
       creationDate: entity.createDateTime,
       latitude: entity.latitude,
       longitude: entity.longitude,
@@ -146,13 +147,6 @@ class ImageCropTask extends MediaTask {
     }
   }
 
-  String _outName(AssetEntity entity, String ext) {
-    final title = entity.title ?? 'image';
-    final dot = title.lastIndexOf('.');
-    final base = dot > 0 ? title.substring(0, dot) : title;
-    return '${base}_crop.$ext';
-  }
-
   @override
   Future<void> cancel() async => _cancelled = true;
 
@@ -177,6 +171,17 @@ Uint8List? transformRgba(
   double fh,
 ) {
   if (rgba.length < width * height * 4) return null;
+  // Cheap opacity check on the raw alpha bytes. The engine always hands us
+  // RGBA, but for an opaque photo (every alpha == 255) we drop the alpha so the
+  // PNG → HEIC encode doesn't ship a useless alpha channel (which iOS warns
+  // about and which doubles decode memory + grows the file).
+  var opaque = true;
+  for (var i = 3; i < rgba.length; i += 4) {
+    if (rgba[i] != 255) {
+      opaque = false;
+      break;
+    }
+  }
   var im = img.Image.fromBytes(
     width: width,
     height: height,
@@ -184,6 +189,7 @@ Uint8List? transformRgba(
     numChannels: 4,
     order: img.ChannelOrder.rgba,
   );
+  if (opaque) im = im.convert(numChannels: 3);
   if (rotationQuarters % 4 != 0) {
     im = img.copyRotate(im, angle: 90 * (rotationQuarters % 4));
   }
