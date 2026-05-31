@@ -220,6 +220,9 @@
   "metaLens": "Lens",
   "metaExposure": "Exposure",
   "metaIso": "ISO",
+  "metaBitrate": "Bit rate",
+  "metaFrames": "Frames",
+  "metaOpenInMaps": "Open in Maps",
 
   "assetDetailDone": "Done",
   "assetDetailComingSoon": "{name} — coming in next phase",

@@ -606,6 +606,15 @@ class AppLocalizationsAr extends AppLocalizations {
   String get metaIso => 'ISO';
 
   @override
+  String get metaBitrate => 'معدّل البِت';
+
+  @override
+  String get metaFrames => 'الإطارات';
+
+  @override
+  String get metaOpenInMaps => 'افتح في الخرائط';
+
+  @override
   String get assetDetailDone => 'تم';
 
   @override

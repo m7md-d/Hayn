@@ -1,8 +1,10 @@
 import 'dart:io';
 import 'package:exif/exif.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:intl/intl.dart';
 import 'package:photo_manager/photo_manager.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../../app/l10n/app_localizations.dart';
 import '../../../../app/theme/app_theme_extension.dart';
 import '../../../../app/theme/design_tokens.dart';
@@ -101,6 +103,20 @@ class _AssetMetadataSheetState extends State<AssetMetadataSheet> {
     }
   }
 
+  // Hand off to the device's maps app at the photo's coordinates. This is a
+  // user-initiated OS handoff (the app makes no network call itself); the maps
+  // app is local. iOS opens Apple Maps; Android uses the geo: scheme.
+  Future<void> _openMaps(double lat, double lng) async {
+    final uri = Platform.isIOS
+        ? Uri.parse('https://maps.apple.com/?ll=$lat,$lng&q=$lat,$lng')
+        : Uri.parse('geo:$lat,$lng?q=$lat,$lng');
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      // No maps handler / not permitted — silently ignore.
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final hc = context.hc;
@@ -120,13 +136,28 @@ class _AssetMetadataSheetState extends State<AssetMetadataSheet> {
               asset.latitude != 0 &&
               asset.longitude != 0;
 
-          // Technical section: resolution (stills) + any EXIF camera facts.
+          // Bit rate (video) — derived from size + duration; a real technical
+          // fact without needing to probe codecs.
+          final durSecs = asset.videoDuration.inSeconds;
+          String? bitrate;
+          if (isVideo && durSecs > 0 && (facts?.sizeBytes ?? 0) > 0) {
+            final mbps = (facts!.sizeBytes! * 8) / durSecs / 1e6;
+            bitrate = '${mbps.toStringAsFixed(mbps >= 10 ? 0 : 1)} Mbps';
+          }
+
+          // Technical section: resolution + EXIF (stills) or bit rate (video).
           final technical = <Widget>[
-            if (!isVideo && mp >= 0.1)
+            if (mp >= 0.1)
               _MetaRow(
                 icon: Icons.high_quality_outlined,
                 label: l.metaMegapixels,
                 value: '${_trim(mp)} MP',
+              ),
+            if (bitrate != null)
+              _MetaRow(
+                icon: Icons.speed_rounded,
+                label: l.metaBitrate,
+                value: bitrate,
               ),
             if (exif?.camera != null)
               _MetaRow(
@@ -202,6 +233,8 @@ class _AssetMetadataSheetState extends State<AssetMetadataSheet> {
                             label: l.metaLocation,
                             value:
                                 '${asset.latitude!.toStringAsFixed(4)}, ${asset.longitude!.toStringAsFixed(4)}',
+                            onTap: () =>
+                                _openMaps(asset.latitude!, asset.longitude!),
                           ),
                       ],
                     ),
@@ -311,24 +344,30 @@ class _MetaRow extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.value,
+    this.onTap,
   });
 
   final IconData icon;
   final String label;
   final String value;
 
+  /// When set the row is tappable (e.g. location → maps) and shows an accent
+  /// value + a chevron.
+  final VoidCallback? onTap;
+
   @override
   Widget build(BuildContext context) {
     final hc = context.hc;
     final theme = Theme.of(context);
-    return Padding(
+    final tappable = onTap != null;
+    final row = Padding(
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpacing.md,
         vertical: AppSpacing.s3,
       ),
       child: Row(
         children: [
-          Icon(icon, size: 18, color: hc.text2),
+          Icon(icon, size: 18, color: tappable ? hc.accent : hc.text2),
           const SizedBox(width: AppSpacing.s3),
           Text(label, style: theme.textTheme.bodyMedium),
           const SizedBox(width: AppSpacing.md),
@@ -339,13 +378,26 @@ class _MetaRow extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               maxLines: 2,
               style: theme.textTheme.bodyMedium?.copyWith(
-                color: hc.text2,
+                color: tappable ? hc.accent : hc.text2,
+                fontWeight: tappable ? FontWeight.w600 : null,
                 fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),
           ),
+          if (tappable) ...[
+            const SizedBox(width: 2),
+            Icon(Icons.chevron_right_rounded, size: 18, color: hc.accent),
+          ],
         ],
       ),
+    );
+    if (!tappable) return row;
+    return InkWell(
+      onTap: () {
+        HapticFeedback.selectionClick();
+        onTap!();
+      },
+      child: row,
     );
   }
 }

@@ -269,76 +269,90 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
         onDone: _apply,
         doneLabel: l.commonDone,
       ),
-      body: ListView(
-        padding: const EdgeInsets.only(
-          left: AppSpacing.md, right: AppSpacing.md, top: AppSpacing.s2,
-          bottom: 120,
-        ),
-        physics: _viewerZoomLocked
-            ? const NeverScrollableScrollPhysics()
-            : null,
+      // The preview + Auto/Advanced toggle stay FIXED at the top; only the
+      // settings/result/button below scroll. So you can zoom-compare and reach
+      // the controls independently without the preview scrolling away.
+      body: Column(
         children: [
-          // ── Comparison preview ────────────────────────────────────────
-          AspectRatio(
-            aspectRatio: 4 / 3,
-            child: _previewBytes == null
-                ? Container(
-                    decoration: BoxDecoration(
-                      color: hc.surfaceSunken,
-                      borderRadius: BorderRadius.circular(AppRadius.lg),
+          // ── Fixed: comparison preview ─────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+                AppSpacing.md, AppSpacing.s2, AppSpacing.md, 0),
+            child: AspectRatio(
+              aspectRatio: 4 / 3,
+              child: _previewBytes == null
+                  ? Container(
+                      decoration: BoxDecoration(
+                        color: hc.surfaceSunken,
+                        borderRadius: BorderRadius.circular(AppRadius.lg),
+                      ),
+                      child: const Center(
+                        child: CircularProgressIndicator(strokeWidth: 2.4),
+                      ),
+                    )
+                  : HaynComparisonViewer(
+                      beforeLabel: l.compressOriginalLabel,
+                      afterLabel: l.compressPreviewLabel,
+                      onZoomStateChanged: (locked) =>
+                          setState(() => _viewerZoomLocked = locked),
+                      before: Image.memory(
+                        _previewBytes!,
+                        fit: BoxFit.contain,
+                        gaplessPlayback: true,
+                      ),
+                      after: _afterWidget(),
                     ),
-                    child: const Center(
-                      child: CircularProgressIndicator(strokeWidth: 2.4),
-                    ),
-                  )
-                : HaynComparisonViewer(
-                    beforeLabel: l.compressOriginalLabel,
-                    afterLabel: l.compressPreviewLabel,
-                    onZoomStateChanged: (locked) =>
-                        setState(() => _viewerZoomLocked = locked),
-                    before: Image.memory(
-                      _previewBytes!,
-                      fit: BoxFit.contain,
-                      gaplessPlayback: true,
-                    ),
-                    after: _afterWidget(),
-                  ),
+            ),
           ),
-          const SizedBox(height: AppSpacing.s2),
 
-          // ── Asset switcher (only when batch) ─────────────────────────
+          // ── Fixed: asset switcher (only when batch) ───────────────────
           if (isBatch)
-            SizedBox(
-              height: 56,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: _ids.length,
-                separatorBuilder: (_, __) => const SizedBox(width: AppSpacing.s2),
-                itemBuilder: (ctx, i) => _AssetSwitcherTile(
-                  id: _ids[i],
-                  selected: i == _activeAssetIndex,
-                  onTap: () => _switchActive(i),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.md, AppSpacing.s2, AppSpacing.md, 0),
+              child: SizedBox(
+                height: 56,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: _ids.length,
+                  separatorBuilder: (_, __) =>
+                      const SizedBox(width: AppSpacing.s2),
+                  itemBuilder: (ctx, i) => _AssetSwitcherTile(
+                    id: _ids[i],
+                    selected: i == _activeAssetIndex,
+                    onTap: () => _switchActive(i),
+                  ),
                 ),
               ),
             ),
-          if (isBatch) const SizedBox(height: AppSpacing.md),
-          if (!isBatch) const SizedBox(height: AppSpacing.s2),
 
-          // ── Mode segmented ─────────────────────────────────────────────
-          HaynSegmentedPill<_Mode>(
-            value: _mode,
-            onChanged: (m) {
-              setState(() => _mode = m);
-              _scheduleEncode();
-            },
-            items: [
-              HaynSegmentItem(value: _Mode.auto, label: l.compressModeAuto),
-              HaynSegmentItem(
-                  value: _Mode.advanced, label: l.compressModeAdvanced),
-            ],
+          // ── Fixed: Auto/Advanced toggle ───────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+                AppSpacing.md, AppSpacing.s3, AppSpacing.md, AppSpacing.s3),
+            child: HaynSegmentedPill<_Mode>(
+              value: _mode,
+              onChanged: (m) {
+                setState(() => _mode = m);
+                _scheduleEncode();
+              },
+              items: [
+                HaynSegmentItem(value: _Mode.auto, label: l.compressModeAuto),
+                HaynSegmentItem(
+                    value: _Mode.advanced, label: l.compressModeAdvanced),
+              ],
+            ),
           ),
-          const SizedBox(height: AppSpacing.md),
 
+          // ── Scrollable: settings + result + action ────────────────────
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.md, 0, AppSpacing.md, 120),
+              physics: _viewerZoomLocked
+                  ? const NeverScrollableScrollPhysics()
+                  : null,
+              children: [
           // ── Mode content ───────────────────────────────────────────────
           AnimatedSwitcher(
             duration: AppDuration.normal,
@@ -418,6 +432,9 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
                   l.settingsPrivacy,
                   style: theme.textTheme.labelSmall?.copyWith(color: hc.text3),
                 ),
+              ],
+            ),
+          ),
               ],
             ),
           ),

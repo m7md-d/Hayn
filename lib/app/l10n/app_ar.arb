@@ -220,6 +220,9 @@
   "metaLens": "العدسة",
   "metaExposure": "التعريض",
   "metaIso": "ISO",
+  "metaBitrate": "معدّل البِت",
+  "metaFrames": "الإطارات",
+  "metaOpenInMaps": "افتح في الخرائط",
 
   "assetDetailDone": "تم",
   "assetDetailComingSoon": "{name} — قريبًا في المرحلة التالية",

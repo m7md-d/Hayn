@@ -1208,6 +1208,24 @@ abstract class AppLocalizations {
   /// **'ISO'**
   String get metaIso;
 
+  /// No description provided for @metaBitrate.
+  ///
+  /// In en, this message translates to:
+  /// **'Bit rate'**
+  String get metaBitrate;
+
+  /// No description provided for @metaFrames.
+  ///
+  /// In en, this message translates to:
+  /// **'Frames'**
+  String get metaFrames;
+
+  /// No description provided for @metaOpenInMaps.
+  ///
+  /// In en, this message translates to:
+  /// **'Open in Maps'**
+  String get metaOpenInMaps;
+
   /// No description provided for @assetDetailDone.
   ///
   /// In en, this message translates to:

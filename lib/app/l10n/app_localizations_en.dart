@@ -601,6 +601,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get metaIso => 'ISO';
 
   @override
+  String get metaBitrate => 'Bit rate';
+
+  @override
+  String get metaFrames => 'Frames';
+
+  @override
+  String get metaOpenInMaps => 'Open in Maps';
+
+  @override
   String get assetDetailDone => 'Done';
 
   @override
