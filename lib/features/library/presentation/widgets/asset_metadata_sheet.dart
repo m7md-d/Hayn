@@ -43,29 +43,36 @@ class _AssetMetadataSheetState extends State<AssetMetadataSheet> {
 
   Future<_FileFacts> _loadFacts() async {
     final asset = widget.asset;
-    final file = await asset.file;
     final title = await asset.titleAsync;
     int? size;
-    if (file != null && await file.exists()) {
-      size = await file.length();
-    }
 
-    // EXIF + the native bit-depth/alpha/HDR probe (stills only). We read the
-    // bytes ONCE and feed both. Defensive: any failure just keeps the
-    // Technical section minimal.
+    // EXIF + the native bit-depth/alpha/HDR probe (stills only). Crucially we
+    // probe the ORIGINAL bytes, not asset.file — the latter can be a derivative
+    // that has lost the HDR gain map / true bit depth (which is why a real HDR
+    // photo was being reported as SDR 8-bit). Defensive: any failure just keeps
+    // the Technical section minimal.
     _Exif? exifFacts;
     NativeImageInfo? imageInfo;
     VideoProbeInfo? video;
-    if (asset.type == AssetType.image && file != null) {
+    if (asset.type == AssetType.image) {
       try {
-        final bytes = await file.readAsBytes();
-        exifFacts = await _readExifBytes(bytes);
-        imageInfo = await NativeImageProbe.probe(bytes);
+        final bytes = await asset.originBytes;
+        if (bytes != null) {
+          size = bytes.length;
+          exifFacts = await _readExifBytes(bytes);
+          imageInfo = await NativeImageProbe.probe(bytes);
+        }
       } catch (_) {
-        // leave both null
+        // leave facts minimal
       }
-    } else if (asset.type == AssetType.video) {
-      video = await NativeVideoProbe.probe(asset.id);
+    } else {
+      final file = await asset.file;
+      if (file != null && await file.exists()) {
+        size = await file.length();
+      }
+      if (asset.type == AssetType.video) {
+        video = await NativeVideoProbe.probe(asset.id);
+      }
     }
 
     return _FileFacts(

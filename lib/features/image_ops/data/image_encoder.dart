@@ -15,10 +15,11 @@ import 'native_image_encoder.dart';
 //
 // Engines:
 //   • AVIF       → flutter_avif.encodeAvif (libaom, royalty-free; multithread).
-//   • HEIC/JPEG  → NativeImageEncoder (iOS ImageIO) first, flutter_image_compress
-//                  as the fallback. The native path avoids the "AlphaLast"
-//                  warning and carries real camera EXIF into HEIC.
-//   • WebP/PNG   → flutter_image_compress (libwebp / system).
+//   • HEIC/JPEG/PNG → NativeImageEncoder (iOS ImageIO) first, with
+//                  flutter_image_compress as the fallback. The native path
+//                  avoids the "AlphaLast" warning and carries real camera
+//                  metadata (the plugin only did EXIF for JPEG).
+//   • WebP       → flutter_image_compress (libwebp; encode is Android-only).
 // Both run their heavy work off the Dart main isolate (FFI thread / platform
 // thread), so callers don't need to spawn an isolate just for the encode.
 //
@@ -143,20 +144,30 @@ abstract final class ImageEncoder {
       };
       if (cf == null) return null;
 
-      // Prefer our own ImageIO encoder for HEIC/JPEG: it avoids the plugin's
-      // "opaque image with AlphaLast" warning and carries real camera EXIF into
-      // HEIC. Only when there's no downscale cap (a cap falls through to the
-      // plugin, which scales). Native returns null off-iOS / on any failure, so
-      // the plugin below stays the safety net.
+      // Prefer our own ImageIO encoder for HEIC/JPEG/PNG: it avoids the plugin's
+      // "opaque image with AlphaLast" warning and carries real camera metadata
+      // (the plugin only did EXIF for JPEG). Only when there's no downscale cap
+      // (a cap falls through to the plugin, which scales). Native returns null
+      // off-iOS / on any failure, so the plugin below stays the safety net.
       final noCap = maxWidth == null && maxHeight == null;
-      if (noCap &&
-          (format == DefaultFormat.heic || format == DefaultFormat.jpeg)) {
+      const nativeFormats = {
+        DefaultFormat.heic,
+        DefaultFormat.jpeg,
+        DefaultFormat.png,
+      };
+      if (noCap && nativeFormats.contains(format)) {
         final native = await NativeImageEncoder.encode(
           source: source,
-          format: format == DefaultFormat.heic ? 'heic' : 'jpeg',
+          format: switch (format) {
+            DefaultFormat.heic => 'heic',
+            DefaultFormat.png => 'png',
+            _ => 'jpeg',
+          },
           quality: quality.clamp(1, 100),
           keepMetadata: keepMetadata,
-          bitDepth: bitDepth,
+          // Only HEIC honours a forced depth; PNG must keep its alpha and JPEG
+          // is 8-bit anyway, so they always match the source.
+          bitDepth: format == DefaultFormat.heic ? bitDepth : 0,
         );
         if (native != null && native.isNotEmpty) return native;
       }

@@ -268,6 +268,7 @@ private enum ImageEncoderNative {
     switch format.lowercased() {
     case "heic": uti = "public.heic" as CFString
     case "jpeg", "jpg": uti = "public.jpeg" as CFString
+    case "png": uti = "public.png" as CFString
     default:
       NSLog("hayn/encode: unsupported format \(format)")
       return nil
@@ -305,11 +306,15 @@ private enum ImageEncoderNative {
     // Carry the HDR gain map (Apple stores HDR as an SDR image + this auxiliary
     // image) UNLESS the user asked for SDR. Without this, a re-encode strips the
     // HDR look. Try the modern ISO gain map first, then the classic one.
-    if !forceSdr, #available(iOS 14.1, *) {
-      for auxType in [
-        "kCGImageAuxiliaryDataTypeISOGainMap" as CFString,
-        kCGImageAuxiliaryDataTypeHDRGainMap,
-      ] {
+    if !forceSdr {
+      var auxTypes: [CFString] = []
+      if #available(iOS 14.1, *) {
+        auxTypes.append(kCGImageAuxiliaryDataTypeHDRGainMap)
+      }
+      if #available(iOS 18.0, *) {
+        auxTypes.append(kCGImageAuxiliaryDataTypeISOGainMap)
+      }
+      for auxType in auxTypes {
         if let aux = CGImageSourceCopyAuxiliaryDataInfoAtIndex(
           source, 0, auxType) {
           CGImageDestinationAddAuxiliaryDataInfo(dest, auxType, aux)
@@ -328,15 +333,21 @@ private enum ImageEncoderNative {
     return result
   }
 
-  /// Redraw a (possibly 10/16-bit) image into a standard 8-bit RGB bitmap.
+  /// Redraw a (possibly 10/16-bit) image into a standard 8-bit RGB bitmap,
+  /// preserving an alpha channel if the source has one (so an SDR PNG keeps its
+  /// transparency).
   static func redraw8Bit(_ image: CGImage) -> CGImage? {
     let w = image.width, h = image.height
-    let space = CGColorSpace(name: CGColorSpace.sRGB) ?? image.colorSpace
-    guard let space = space,
-          let ctx = CGContext(
-            data: nil, width: w, height: h, bitsPerComponent: 8,
-            bytesPerRow: 0, space: space,
-            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else {
+    guard let space = CGColorSpace(name: CGColorSpace.sRGB) ?? image.colorSpace
+    else { return nil }
+    let a = image.alphaInfo
+    let hasAlpha = !(a == .none || a == .noneSkipFirst || a == .noneSkipLast)
+    let bitmap = hasAlpha
+      ? CGImageAlphaInfo.premultipliedLast.rawValue
+      : CGImageAlphaInfo.noneSkipLast.rawValue
+    guard let ctx = CGContext(
+      data: nil, width: w, height: h, bitsPerComponent: 8,
+      bytesPerRow: 0, space: space, bitmapInfo: bitmap) else {
       return nil
     }
     ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
@@ -361,14 +372,16 @@ private enum ImageProbeNative {
     let hasAlpha = (props[kCGImagePropertyHasAlpha] as? NSNumber)?.boolValue
       ?? false
     let colorModel = (props[kCGImagePropertyColorModel] as? String) ?? ""
-    // HDR if there's a gain map, OR the pixels are deeper than 8-bit.
+    // HDR if there's a gain map (classic or the iOS 18 ISO one), OR the pixels
+    // are deeper than 8-bit.
     var hasGainMap = false
     if #available(iOS 14.1, *) {
-      hasGainMap =
-        CGImageSourceCopyAuxiliaryDataInfoAtIndex(
-          source, 0, kCGImageAuxiliaryDataTypeHDRGainMap) != nil
-        || CGImageSourceCopyAuxiliaryDataInfoAtIndex(
-          source, 0, "kCGImageAuxiliaryDataTypeISOGainMap" as CFString) != nil
+      hasGainMap = CGImageSourceCopyAuxiliaryDataInfoAtIndex(
+        source, 0, kCGImageAuxiliaryDataTypeHDRGainMap) != nil
+    }
+    if !hasGainMap, #available(iOS 18.0, *) {
+      hasGainMap = CGImageSourceCopyAuxiliaryDataInfoAtIndex(
+        source, 0, kCGImageAuxiliaryDataTypeISOGainMap) != nil
     }
     let isHdr = hasGainMap || depth > 8
     return [
