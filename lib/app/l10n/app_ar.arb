@@ -232,6 +232,8 @@
   "metaIso": "ISO",
   "metaBitrate": "معدّل البِت",
   "metaFrames": "الإطارات",
+  "metaCodec": "الترميز",
+  "metaFrameRate": "معدّل الإطارات",
   "metaOpenInMaps": "افتح في الخرائط",
 
   "assetDetailDone": "تم",

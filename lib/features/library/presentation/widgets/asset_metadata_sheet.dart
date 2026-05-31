@@ -9,6 +9,7 @@ import '../../../../app/l10n/app_localizations.dart';
 import '../../../../app/theme/app_theme_extension.dart';
 import '../../../../app/theme/design_tokens.dart';
 import '../../../../shared/widgets/widgets.dart';
+import '../../data/native_video_probe.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AssetMetadataSheet — read-only details shown from the (i) action in the Asset
@@ -50,8 +51,11 @@ class _AssetMetadataSheetState extends State<AssetMetadataSheet> {
     // EXIF (stills only) — camera, lens, exposure. Defensive: any failure just
     // means the Technical section stays minimal.
     _Exif? exifFacts;
+    VideoProbeInfo? video;
     if (asset.type == AssetType.image && file != null) {
       exifFacts = await _readExif(file);
+    } else if (asset.type == AssetType.video) {
+      video = await NativeVideoProbe.probe(asset.id);
     }
 
     return _FileFacts(
@@ -59,6 +63,7 @@ class _AssetMetadataSheetState extends State<AssetMetadataSheet> {
       sizeBytes: size,
       format: _formatLabel(title, asset.title),
       exif: exifFacts,
+      video: video,
     );
   }
 
@@ -145,7 +150,10 @@ class _AssetMetadataSheetState extends State<AssetMetadataSheet> {
             bitrate = '${mbps.toStringAsFixed(mbps >= 10 ? 0 : 1)} Mbps';
           }
 
-          // Technical section: resolution + EXIF (stills) or bit rate (video).
+          final video = facts?.video;
+
+          // Technical section: resolution + EXIF (stills) or codec/fps/bitrate
+          // (video).
           final technical = <Widget>[
             if (mp >= 0.1)
               _MetaRow(
@@ -153,9 +161,27 @@ class _AssetMetadataSheetState extends State<AssetMetadataSheet> {
                 label: l.metaMegapixels,
                 value: '${_trim(mp)} MP',
               ),
-            if (bitrate != null)
+            if (video != null && video.codec.isNotEmpty)
+              _MetaRow(
+                icon: Icons.memory_rounded,
+                label: l.metaCodec,
+                value: video.codec,
+              ),
+            if (video != null && video.fps > 0)
               _MetaRow(
                 icon: Icons.speed_rounded,
+                label: l.metaFrameRate,
+                value: '${_trim(video.fps)} fps',
+              ),
+            if (video != null && video.frames > 0)
+              _MetaRow(
+                icon: Icons.filter_none_rounded,
+                label: l.metaFrames,
+                value: '${video.frames}',
+              ),
+            if (bitrate != null)
+              _MetaRow(
+                icon: Icons.data_usage_rounded,
                 label: l.metaBitrate,
                 value: bitrate,
               ),
@@ -324,11 +350,13 @@ class _AssetMetadataSheetState extends State<AssetMetadataSheet> {
 }
 
 class _FileFacts {
-  const _FileFacts({this.filename, this.sizeBytes, this.format, this.exif});
+  const _FileFacts(
+      {this.filename, this.sizeBytes, this.format, this.exif, this.video});
   final String? filename;
   final int? sizeBytes;
   final String? format;
   final _Exif? exif;
+  final VideoProbeInfo? video;
 }
 
 class _Exif {

@@ -1262,6 +1262,18 @@ abstract class AppLocalizations {
   /// **'Frames'**
   String get metaFrames;
 
+  /// No description provided for @metaCodec.
+  ///
+  /// In en, this message translates to:
+  /// **'Codec'**
+  String get metaCodec;
+
+  /// No description provided for @metaFrameRate.
+  ///
+  /// In en, this message translates to:
+  /// **'Frame rate'**
+  String get metaFrameRate;
+
   /// No description provided for @metaOpenInMaps.
   ///
   /// In en, this message translates to:

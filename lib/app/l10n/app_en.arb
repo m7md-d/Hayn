@@ -232,6 +232,8 @@
   "metaIso": "ISO",
   "metaBitrate": "Bit rate",
   "metaFrames": "Frames",
+  "metaCodec": "Codec",
+  "metaFrameRate": "Frame rate",
   "metaOpenInMaps": "Open in Maps",
 
   "assetDetailDone": "Done",

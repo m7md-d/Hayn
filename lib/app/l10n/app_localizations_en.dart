@@ -652,6 +652,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get metaFrames => 'Frames';
 
   @override
+  String get metaCodec => 'Codec';
+
+  @override
+  String get metaFrameRate => 'Frame rate';
+
+  @override
   String get metaOpenInMaps => 'Open in Maps';
 
   @override

@@ -1,3 +1,5 @@
+import AVFoundation
+import CoreMedia
 import Flutter
 import ImageIO
 import Photos
@@ -70,6 +72,82 @@ import UIKit
         }
       }
     }
+
+    // Read-only technical probe for a video asset (codec / fps / frame count),
+    // which photo_manager doesn't expose. Offline only — never pulls from
+    // iCloud. Returns nil for non-videos or anything not locally available.
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "HaynVideoProbe") {
+      let channel = FlutterMethodChannel(
+        name: "hayn/video",
+        binaryMessenger: registrar.messenger()
+      )
+      channel.setMethodCallHandler { call, result in
+        guard call.method == "probe" else {
+          result(FlutterMethodNotImplemented)
+          return
+        }
+        let id = (call.arguments as? [String: Any])?["id"] as? String ?? ""
+        DispatchQueue.global(qos: .userInitiated).async {
+          let info = VideoProbe.probe(id)
+          DispatchQueue.main.async { result(info) }
+        }
+      }
+    }
+  }
+}
+
+/// Reads a video's codec, frame rate and frame count via AVFoundation.
+private enum VideoProbe {
+  static func probe(_ id: String) -> [String: Any]? {
+    if id.isEmpty { return nil }
+    let assets = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil)
+    guard let asset = assets.firstObject, asset.mediaType == .video else {
+      return nil
+    }
+
+    let options = PHVideoRequestOptions()
+    options.isNetworkAccessAllowed = false // offline only (no iCloud pull)
+    options.deliveryMode = .fastFormat
+
+    let semaphore = DispatchSemaphore(value: 0)
+    var out: [String: Any]?
+    PHImageManager.default().requestAVAsset(forVideo: asset, options: options) {
+      avAsset, _, _ in
+      defer { semaphore.signal() }
+      guard let track = avAsset?.tracks(withMediaType: .video).first else { return }
+      let fps = Double(track.nominalFrameRate)
+      let seconds = track.timeRange.duration.seconds
+      let frames = (fps > 0 && seconds.isFinite) ? Int((fps * seconds).rounded()) : 0
+      var codec = ""
+      if let desc = track.formatDescriptions.first {
+        let subType = CMFormatDescriptionGetMediaSubType(desc as! CMFormatDescription)
+        codec = VideoProbe.fourCC(subType)
+      }
+      out = ["codec": codec, "fps": fps, "frames": frames]
+    }
+    // Bounded wait so a stuck request can't hang the worker forever.
+    _ = semaphore.wait(timeout: .now() + 8)
+    return out
+  }
+
+  /// Map a CoreMedia FourCC to a friendly codec name.
+  static func fourCC(_ code: FourCharCode) -> String {
+    let chars = [
+      Character(UnicodeScalar((code >> 24) & 0xFF)!),
+      Character(UnicodeScalar((code >> 16) & 0xFF)!),
+      Character(UnicodeScalar((code >> 8) & 0xFF)!),
+      Character(UnicodeScalar(code & 0xFF)!),
+    ]
+    let raw = String(chars).trimmingCharacters(in: .whitespaces)
+    switch raw.lowercased() {
+    case "hvc1", "hev1": return "HEVC (H.265)"
+    case "avc1", "avc3": return "H.264"
+    case "av01": return "AV1"
+    case "vp09": return "VP9"
+    case "mp4v": return "MPEG-4"
+    case "jpeg": return "Motion JPEG"
+    default: return raw
+    }
   }
 }
 
@@ -79,40 +157,53 @@ import UIKit
 /// JPEG, PNG…). Returns nil if the image can't be read or written.
 private enum MetadataStripper {
   static func strip(_ data: Data) -> Data? {
-    guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-          let uti = CGImageSourceGetType(source) else { return nil }
+    guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+      NSLog("hayn/metadata: CGImageSourceCreateWithData failed")
+      return nil
+    }
+    guard let uti = CGImageSourceGetType(source) else {
+      NSLog("hayn/metadata: CGImageSourceGetType returned nil")
+      return nil
+    }
     let count = CGImageSourceGetCount(source)
-    guard count > 0 else { return nil }
+    guard count > 0 else {
+      NSLog("hayn/metadata: image count is 0")
+      return nil
+    }
 
     let out = NSMutableData()
     guard let dest = CGImageDestinationCreateWithData(
       out as CFMutableData, uti, count, nil
-    ) else { return nil }
-
-    for i in 0..<count {
-      // Null out the metadata-bearing dictionaries; keep orientation so the
-      // photo doesn't come out sideways.
-      var props: [CFString: Any] = [
-        kCGImagePropertyExifDictionary: kCFNull as Any,
-        kCGImagePropertyGPSDictionary: kCFNull as Any,
-        kCGImagePropertyIPTCDictionary: kCFNull as Any,
-        kCGImagePropertyTIFFDictionary: kCFNull as Any,
-        kCGImagePropertyExifAuxDictionary: kCFNull as Any,
-      ]
-      if let srcProps = CGImageSourceCopyPropertiesAtIndex(source, i, nil)
-        as? [CFString: Any],
-        let orientation = srcProps[kCGImagePropertyOrientation] {
-        props[kCGImagePropertyOrientation] = orientation
-      }
-      CGImageDestinationAddImageFromSource(dest, source, i, props as CFDictionary)
+    ) else {
+      // Most likely an unwritable container on this OS (e.g. AVIF write).
+      NSLog("hayn/metadata: CGImageDestinationCreateWithData failed for \(uti)")
+      return nil
     }
 
-    guard CGImageDestinationFinalize(dest) else { return nil }
+    // Remove the privacy-bearing metadata; leave orientation + the rest of the
+    // image untouched. (Keeping it minimal is more robust across formats than
+    // nulling every dictionary.)
+    let stripProps: [CFString: Any] = [
+      kCGImagePropertyExifDictionary: kCFNull as Any,
+      kCGImagePropertyGPSDictionary: kCFNull as Any,
+    ]
+    for i in 0..<count {
+      CGImageDestinationAddImageFromSource(
+        dest, source, i, stripProps as CFDictionary)
+    }
+
+    guard CGImageDestinationFinalize(dest) else {
+      NSLog("hayn/metadata: CGImageDestinationFinalize failed for \(uti)")
+      return nil
+    }
     let result = out as Data
-    // Guard against an unexpected re-encode that BALLOONS the file — if the
-    // "stripped" output is somehow bigger than the original, refuse it so the
-    // Dart side skips rather than producing a larger copy.
-    if result.isEmpty || result.count > data.count { return nil }
+    // Refuse a wildly larger output (a real re-encode) so strip can never
+    // balloon a file; a lossless copy is ≤ the original.
+    if result.isEmpty || result.count > data.count {
+      NSLog("hayn/metadata: output \(result.count) vs original \(data.count) — refused")
+      return nil
+    }
+    NSLog("hayn/metadata: stripped \(data.count) → \(result.count) (\(uti))")
     return result
   }
 }

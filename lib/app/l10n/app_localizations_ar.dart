@@ -657,6 +657,12 @@ class AppLocalizationsAr extends AppLocalizations {
   String get metaFrames => 'الإطارات';
 
   @override
+  String get metaCodec => 'الترميز';
+
+  @override
+  String get metaFrameRate => 'معدّل الإطارات';
+
+  @override
   String get metaOpenInMaps => 'افتح في الخرائط';
 
   @override
