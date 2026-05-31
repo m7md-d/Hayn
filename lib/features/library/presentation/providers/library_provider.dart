@@ -1,13 +1,20 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/services.dart' show MethodCall;
-import 'package:flutter/widgets.dart' show ScrollController;
+import 'package:flutter/widgets.dart'
+    show
+        AppLifecycleState,
+        ScrollController,
+        VoidCallback,
+        WidgetsBinding,
+        WidgetsBindingObserver;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_manager/photo_manager.dart';
 import '../../../../data/index/index_providers.dart';
 import '../../../../data/index/media_index_database.dart';
 import '../../domain/entities/library_sort_filter.dart';
 import '../../domain/entities/media_filter.dart';
+import 'asset_entity_cache.dart';
 import 'asset_size_cache.dart';
 
 enum LibraryPermissionStatus { unknown, granted, limited, denied }
@@ -222,12 +229,26 @@ class LibraryState {
   }
 }
 
+/// Forwards app-resume events to the library so it can re-sync. Photo deletions
+/// / edits made in the Photos app while Hayn is backgrounded don't fire the
+/// in-app change callback, so resuming is our reliable cue to reconcile.
+class _LifecycleObserver extends WidgetsBindingObserver {
+  _LifecycleObserver(this.onResume);
+  final VoidCallback onResume;
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) onResume();
+  }
+}
+
 class LibraryNotifier extends Notifier<LibraryState> {
   AssetPathEntity? _currentPath;
   bool _indexReady = false;
   bool _syncing = false;
   bool _loadingMore = false;
   Timer? _changeDebounce;
+  _LifecycleObserver? _lifecycle;
 
   /// Index-backed mode drives the whole library view (default browse AND
   /// sort/filter) once the index is populated — so byte sizes come from the
@@ -263,10 +284,17 @@ class LibraryNotifier extends Notifier<LibraryState> {
     // deleted, edited while the app is open), re-sync after a short debounce.
     PhotoManager.addChangeCallback(_onLibraryChanged);
     PhotoManager.startChangeNotify();
+    // And reconcile on resume — changes made in the Photos app while we were
+    // backgrounded never reach the in-app callback, so this is what keeps a
+    // deleted photo from lingering in the grid when the user comes back.
+    _lifecycle = _LifecycleObserver(_onAppResumed);
+    WidgetsBinding.instance.addObserver(_lifecycle!);
     ref.onDispose(() {
       _changeDebounce?.cancel();
       PhotoManager.removeChangeCallback(_onLibraryChanged);
       PhotoManager.stopChangeNotify();
+      final obs = _lifecycle;
+      if (obs != null) WidgetsBinding.instance.removeObserver(obs);
     });
 
     // Load albums (for the strip) + an immediate first page so the grid is
@@ -279,8 +307,19 @@ class LibraryNotifier extends Notifier<LibraryState> {
 
   void _onLibraryChanged(MethodCall _) {
     _changeDebounce?.cancel();
-    _changeDebounce =
-        Timer(const Duration(seconds: 2), () => unawaited(_ensureSync()));
+    _changeDebounce = Timer(
+      const Duration(seconds: 2),
+      () => unawaited(_ensureSync(refresh: true)),
+    );
+  }
+
+  void _onAppResumed() {
+    // A photo may have been deleted/edited in the Photos app while we were
+    // away. Re-sync now (no debounce) and force-refresh the source handle so a
+    // stale count can't hide the change. Cancel any pending change-debounce so
+    // we don't run twice back-to-back.
+    _changeDebounce?.cancel();
+    unawaited(_ensureSync(refresh: true));
   }
 
   Future<void> requestPermissionAndRetry() async {
@@ -444,14 +483,22 @@ class LibraryNotifier extends Notifier<LibraryState> {
   }
 
   /// Background: bring the index up to date, then refresh the view if the user
-  /// is sorting/filtering so results expand to the whole library.
-  Future<void> _ensureSync() async {
+  /// is sorting/filtering so results expand to the whole library. Pass
+  /// [refresh] after a device-library change (or app resume) to first drop the
+  /// source's cached handle so a stale count can't mask the change.
+  Future<void> _ensureSync({bool refresh = false}) async {
     if (_syncing) return;
     _syncing = true;
     try {
       final index = ref.read(mediaIndexServiceProvider);
       final db = ref.read(mediaIndexDatabaseProvider);
-      await index.syncMetadata();
+      if (refresh) index.invalidateSource();
+      final removed = await index.syncMetadata();
+      // Drop deleted assets from the entity cache at once so the grid stops
+      // rendering their (now-dangling) thumbnails before the spine reloads.
+      for (final id in removed) {
+        AssetEntityCache.evict(id);
+      }
       _indexReady = (await db.totalCount()) > 0;
       if (_dbMode) await _loadIndexSpine();
       await index.resolveSizes();

@@ -11,18 +11,19 @@ import 'aspect_ratio_chips.dart';
 // area (BoxFit.contain math). Rotation + flip are applied via Transform so
 // the on-screen layout stays predictable.
 //
-// The crop rectangle is held in screen coordinates so that hit-testing the
-// handles is straightforward. On every change the screen-space rect is
-// converted to a normalised image-space rect (fractions 0..1) and pushed
-// to [onChange] so the parent can persist it / pass it to the encoder.
+// Zoom model (matches iOS Photos): the crop FRAME lives in plain screen
+// coordinates and never scales — only the IMAGE pans/zooms beneath it. Zooming
+// in therefore lets you select a smaller part of the image with precision while
+// the frame keeps the same on-screen size. The pan is constrained so the image
+// always fully covers the frame (you can never crop empty space).
 //
-// Gesture model:
-//   • Pan starts → hit-test handles within [_handleHitRadius]; if no handle
-//     is hit and the point is inside the rect, drag the whole rect.
-//   • Pan updates → mutate the rect according to the active handle. Aspect
-//     ratio is preserved when an [aspectRatio] is supplied (corner handles
-//     scale along the diagonal; edge handles snap to the locked ratio).
-//   • Pan ends → clear active handle, leave rect at rest.
+// Gesture model (a single onScale recognizer, so there's no recognizer fight):
+//   • 1 finger on a resize handle → reshape the frame.
+//   • 1 finger elsewhere          → pan the image beneath the frame.
+//   • 2 fingers                   → zoom + pan the image (focal pinned).
+// On every change the screen-space frame is un-projected through the image
+// transform into a normalised image-space rect (fractions 0..1) and pushed to
+// [onChange] so the parent can persist it / pass it to the encoder.
 // ─────────────────────────────────────────────────────────────────────────────
 
 enum _CropHandle {
@@ -66,25 +67,22 @@ class CropCanvas extends StatefulWidget {
 
   static const double _handleHitRadius = 28;
   static const double _minRectSide = 60;
+  static const double _maxZoom = 8;
 
   @override
   State<CropCanvas> createState() => _CropCanvasState();
 }
 
 class _CropCanvasState extends State<CropCanvas> {
-  Rect _imgRect = Rect.zero; // image area in viewport coords
-  Rect _cropRect = Rect.zero; // crop area in viewport coords
+  Rect _imgRect = Rect.zero; // image area in base (unzoomed) viewport coords
+  Rect _cropRect = Rect.zero; // crop FRAME in screen coords (never scaled)
   Size _lastViewport = Size.zero;
   _CropHandle _active = _CropHandle.none;
-  Offset _grabOffset = Offset.zero; // for body drag
   bool _initialised = false;
 
-  // Pinch-zoom of the canvas. The image + overlay are drawn in "base" viewport
-  // coordinates and shown through a translate∘scale transform, so screen↔base
-  // is a simple invertible map: base = (screen - _pan) / _zoom. A single
-  // onScale gesture drives everything — 1 finger resizes a handle (or pans when
-  // zoomed), 2 fingers zoom/pan — so there's no recognizer fight (which is what
-  // made the old InteractiveViewer approach feel heavy).
+  // Zoom/pan of the IMAGE only. The image is shown through a translate∘scale
+  // transform; the frame is drawn outside it. base→screen is s = b*_zoom + _pan,
+  // so screen→base is b = (s - _pan) / _zoom.
   double _zoom = 1.0;
   Offset _pan = Offset.zero;
   double _gestureStartZoom = 1.0;
@@ -96,6 +94,44 @@ class _CropCanvasState extends State<CropCanvas> {
     _zoom = 1.0;
     _pan = Offset.zero;
   }
+
+  // The image's on-screen rect under the current zoom/pan.
+  Rect _displayImgRect() => Rect.fromLTRB(
+        _imgRect.left * _zoom + _pan.dx,
+        _imgRect.top * _zoom + _pan.dy,
+        _imgRect.right * _zoom + _pan.dx,
+        _imgRect.bottom * _zoom + _pan.dy,
+      );
+
+  // The frame may sit anywhere on the visible image — i.e. the displayed image
+  // clipped to the viewport.
+  Rect _frameBounds() {
+    final view = Offset.zero & _lastViewport;
+    final b = _displayImgRect().intersect(view);
+    if (b.width <= 0 || b.height <= 0) return view;
+    return b;
+  }
+
+  // Constrain the pan so the displayed image always fully covers the frame
+  // (no empty space can fall inside the crop). When the frame is larger than
+  // the image on an axis, centre it instead.
+  Offset _clampPan(Offset p, double z) {
+    final maxX = _cropRect.left - _imgRect.left * z;
+    final minX = _cropRect.right - _imgRect.right * z;
+    final maxY = _cropRect.top - _imgRect.top * z;
+    final minY = _cropRect.bottom - _imgRect.bottom * z;
+    final dx = minX <= maxX ? p.dx.clamp(minX, maxX) : (minX + maxX) / 2;
+    final dy = minY <= maxY ? p.dy.clamp(minY, maxY) : (minY + maxY) / 2;
+    return Offset(dx, dy);
+  }
+
+  // Screen-space rect → base (unzoomed) viewport coords.
+  Rect _screenToBaseRect(Rect r) => Rect.fromLTRB(
+        (r.left - _pan.dx) / _zoom,
+        (r.top - _pan.dy) / _zoom,
+        (r.right - _pan.dx) / _zoom,
+        (r.bottom - _pan.dy) / _zoom,
+      );
 
   void _recomputeImageRect(Size viewport) {
     final rotated = widget.rotationQuarters.isOdd;
@@ -125,6 +161,7 @@ class _CropCanvasState extends State<CropCanvas> {
   void _applyAspectRatioToRect() {
     final ratio = widget.aspectRatio;
     if (ratio == null) return;
+    final bounds = _frameBounds();
     final cx = _cropRect.center.dx;
     final cy = _cropRect.center.dy;
     var w = _cropRect.width;
@@ -134,8 +171,8 @@ class _CropCanvasState extends State<CropCanvas> {
     } else {
       h = w / ratio;
     }
-    final maxW = _imgRect.width;
-    final maxH = _imgRect.height;
+    final maxW = bounds.width;
+    final maxH = bounds.height;
     if (w > maxW) {
       w = maxW;
       h = w / ratio;
@@ -145,24 +182,30 @@ class _CropCanvasState extends State<CropCanvas> {
       w = h * ratio;
     }
     _cropRect = Rect.fromCenter(center: Offset(cx, cy), width: w, height: h);
-    _cropRect = _clampToImage(_cropRect);
+    _cropRect = _clampFrame(_cropRect);
   }
 
-  Rect _clampToImage(Rect r) {
-    final left = r.left.clamp(_imgRect.left, _imgRect.right - r.width);
-    final top = r.top.clamp(_imgRect.top, _imgRect.bottom - r.height);
-    return Rect.fromLTWH(left, top, r.width, r.height);
+  /// Clamp the frame into the visible-image bounds. The SIZE is clamped first so
+  /// the position-clamp limits can never invert (lower > upper), which is what
+  /// `double.clamp` throws on.
+  Rect _clampFrame(Rect r) {
+    final b = _frameBounds();
+    final w = r.width.clamp(0.0, b.width);
+    final h = r.height.clamp(0.0, b.height);
+    final left = r.left.clamp(b.left, b.right - w);
+    final top = r.top.clamp(b.top, b.bottom - h);
+    return Rect.fromLTWH(left, top, w, h);
   }
 
-  /// Convert a screen-space rect into a normalised rect (0..1) of the
-  /// underlying source image. Rotation + flip are inverted so the rect
-  /// describes pixels of the ORIGINAL image, not the transformed view.
-  Rect _toImageFraction(Rect viewportRect) {
+  /// Convert a base-space rect into a normalised rect (0..1) of the underlying
+  /// source image. Rotation + flip are inverted so the rect describes pixels of
+  /// the ORIGINAL image, not the transformed view.
+  Rect _toImageFraction(Rect baseRect) {
     if (_imgRect.width == 0 || _imgRect.height == 0) return Rect.zero;
-    var left = (viewportRect.left - _imgRect.left) / _imgRect.width;
-    var top = (viewportRect.top - _imgRect.top) / _imgRect.height;
-    var right = (viewportRect.right - _imgRect.left) / _imgRect.width;
-    var bottom = (viewportRect.bottom - _imgRect.top) / _imgRect.height;
+    var left = (baseRect.left - _imgRect.left) / _imgRect.width;
+    var top = (baseRect.top - _imgRect.top) / _imgRect.height;
+    var right = (baseRect.right - _imgRect.left) / _imgRect.width;
+    var bottom = (baseRect.bottom - _imgRect.top) / _imgRect.height;
 
     if (widget.flipH) {
       final newLeft = 1 - right;
@@ -180,11 +223,17 @@ class _CropCanvasState extends State<CropCanvas> {
     for (var i = 0; i < (4 - widget.rotationQuarters) % 4; i++) {
       r = Rect.fromLTRB(r.top, 1 - r.right, r.bottom, 1 - r.left);
     }
-    return r;
+    // Guard against tiny float drift at the edges.
+    return Rect.fromLTRB(
+      r.left.clamp(0.0, 1.0),
+      r.top.clamp(0.0, 1.0),
+      r.right.clamp(0.0, 1.0),
+      r.bottom.clamp(0.0, 1.0),
+    );
   }
 
   void _notify() {
-    widget.onChange(_toImageFraction(_cropRect));
+    widget.onChange(_toImageFraction(_screenToBaseRect(_cropRect)));
   }
 
   _CropHandle _hitTest(Offset p) {
@@ -218,11 +267,14 @@ class _CropCanvasState extends State<CropCanvas> {
     _gestureStartZoom = _zoom;
     _gestureBaseFocal = _toBase(d.localFocalPoint);
     if (d.pointerCount == 1) {
-      final handle = _hitTest(_gestureBaseFocal);
-      _active = handle;
-      if (handle != _CropHandle.none) {
-        _grabOffset = _gestureBaseFocal - _cropRect.topLeft;
+      final handle = _hitTest(d.localFocalPoint);
+      // Only the resize handles grab the frame; touching the body (or empty
+      // space) pans the image instead of moving the frame.
+      if (handle != _CropHandle.none && handle != _CropHandle.body) {
+        _active = handle;
         HapticFeedback.selectionClick();
+      } else {
+        _active = _CropHandle.none;
       }
     } else {
       _active = _CropHandle.none;
@@ -230,28 +282,26 @@ class _CropCanvasState extends State<CropCanvas> {
   }
 
   void _onScaleUpdate(ScaleUpdateDetails d) {
-    // Two fingers (or an active pinch) → zoom + pan the canvas; keep the focal
-    // point pinned under the fingers. The crop rect is untouched.
+    // Two fingers (or any pinch) → zoom + pan the IMAGE only. The frame is
+    // fixed on screen; keep the focal point pinned and the image covering it.
     if (d.pointerCount >= 2 || d.scale != 1.0) {
-      final z = (_gestureStartZoom * d.scale).clamp(1.0, 6.0);
+      final z = (_gestureStartZoom * d.scale).clamp(1.0, CropCanvas._maxZoom);
+      final p = d.localFocalPoint - _gestureBaseFocal * z;
       setState(() {
         _zoom = z;
-        // At 1× the image fills normally (no offset); above 1× keep the pinch
-        // focal point pinned under the fingers.
-        _pan = z <= 1.001
-            ? Offset.zero
-            : d.localFocalPoint - _gestureBaseFocal * z;
+        _pan = _clampPan(p, z);
       });
+      _notify();
       return;
     }
-    // One finger: drag a handle, or pan the image when zoomed in.
+    // One finger with no handle grabbed → pan the image under the frame.
     if (_active == _CropHandle.none) {
-      if (_zoom > 1.01) {
-        setState(() => _pan += d.focalPointDelta);
-      }
+      setState(() => _pan = _clampPan(_pan + d.focalPointDelta, _zoom));
+      _notify();
       return;
     }
-    final p = _toBase(d.localFocalPoint);
+    // One finger on a handle → reshape the frame (plain screen coordinates).
+    final p = d.localFocalPoint;
     var r = _cropRect;
     switch (_active) {
       case _CropHandle.topLeft:
@@ -279,10 +329,6 @@ class _CropCanvasState extends State<CropCanvas> {
         r = Rect.fromLTRB(r.left, r.top, p.dx, r.bottom);
         break;
       case _CropHandle.body:
-        final newTopLeft = p - _grabOffset;
-        r = Rect.fromLTWH(
-            newTopLeft.dx, newTopLeft.dy, r.width, r.height);
-        break;
       case _CropHandle.none:
         return;
     }
@@ -291,10 +337,10 @@ class _CropCanvasState extends State<CropCanvas> {
     // along the diagonal so the user "feels" the constraint immediately).
     r = _snapMinSize(r);
     final ratio = widget.aspectRatio;
-    if (ratio != null && _active != _CropHandle.body) {
+    if (ratio != null) {
       r = _snapToRatio(r, ratio, _active);
     }
-    r = _clampToImage(r);
+    r = _clampFrame(r);
 
     setState(() => _cropRect = r);
     _notify();
@@ -444,7 +490,10 @@ class _CropCanvasState extends State<CropCanvas> {
             if (mounted) _notify();
           });
         } else {
-          _cropRect = _clampToImage(_cropRect);
+          // Viewport changed (e.g. device rotation): a stale zoom can't be
+          // trusted against the new geometry — reset it and re-clamp.
+          _resetZoom();
+          _cropRect = _clampFrame(_cropRect);
         }
       }
       // For rotation 90/270 we render the image into a SizedBox that's
@@ -454,64 +503,67 @@ class _CropCanvasState extends State<CropCanvas> {
       final rotated = widget.rotationQuarters.isOdd;
       final preW = rotated ? _imgRect.height : _imgRect.width;
       final preH = rotated ? _imgRect.width : _imgRect.height;
-      // One gesture detector OUTSIDE the zoom transform (so its coordinates are
-      // plain screen space); the image + overlay live INSIDE the transform and
-      // scale together. base = (screen - _pan) / _zoom.
+      // One gesture detector over the whole canvas. Only the IMAGE lives inside
+      // the zoom/pan transform; the crop frame is painted outside it so it
+      // keeps its on-screen size regardless of zoom.
       return GestureDetector(
         behavior: HitTestBehavior.opaque,
         onScaleStart: _onScaleStart,
         onScaleUpdate: _onScaleUpdate,
         onScaleEnd: _onScaleEnd,
         child: ClipRect(
-          child: Transform(
-            transform: Matrix4.identity()
-              ..translateByDouble(_pan.dx, _pan.dy, 0, 1)
-              ..scaleByDouble(_zoom, _zoom, 1, 1),
-            child: Stack(
-              children: [
-                // ── Image with rotation + flip ─────────────────────────
-                Positioned(
-                  left: _imgRect.left,
-                  top: _imgRect.top,
-                  width: _imgRect.width,
-                  height: _imgRect.height,
-                  child: Center(
-                    child: Transform(
-                      alignment: Alignment.center,
-                      transform: Matrix4.identity()
-                        ..rotateZ(widget.rotationQuarters * math.pi / 2)
-                        ..scaleByDouble(
-                          widget.flipH ? -1.0 : 1.0,
-                          widget.flipV ? -1.0 : 1.0,
-                          1.0,
-                          1.0,
-                        ),
-                      child: SizedBox(
-                        width: preW,
-                        height: preH,
-                        child: Image.memory(
-                          widget.imageBytes,
-                          fit: BoxFit.contain,
-                          gaplessPlayback: true,
+          child: Stack(
+            children: [
+              // ── Image with zoom/pan, then rotation + flip ──────────────
+              Transform(
+                transform: Matrix4.identity()
+                  ..translateByDouble(_pan.dx, _pan.dy, 0, 1)
+                  ..scaleByDouble(_zoom, _zoom, 1, 1),
+                child: Stack(
+                  children: [
+                    Positioned(
+                      left: _imgRect.left,
+                      top: _imgRect.top,
+                      width: _imgRect.width,
+                      height: _imgRect.height,
+                      child: Center(
+                        child: Transform(
+                          alignment: Alignment.center,
+                          transform: Matrix4.identity()
+                            ..rotateZ(widget.rotationQuarters * math.pi / 2)
+                            ..scaleByDouble(
+                              widget.flipH ? -1.0 : 1.0,
+                              widget.flipV ? -1.0 : 1.0,
+                              1.0,
+                              1.0,
+                            ),
+                          child: SizedBox(
+                            width: preW,
+                            height: preH,
+                            child: Image.memory(
+                              widget.imageBytes,
+                              fit: BoxFit.contain,
+                              gaplessPlayback: true,
+                            ),
+                          ),
                         ),
                       ),
                     ),
-                  ),
+                  ],
                 ),
-                // ── Crop overlay (painted in base coords; gestures handled
-                // by the outer detector). ─────────────────────────────────
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: CustomPaint(
-                      painter: _CropOverlayPainter(
-                        cropRect: _cropRect,
-                        accent: context.hc.accent,
-                      ),
+              ),
+              // ── Crop frame (screen coords, never scaled). ─────────────────
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: CustomPaint(
+                    painter: _CropOverlayPainter(
+                      cropRect: _cropRect,
+                      accent: context.hc.accent,
                     ),
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       );

@@ -69,4 +69,8 @@ abstract final class AssetEntityCache {
   }
 
   static void clear() => _store.clear();
+
+  /// Drop a single entity (e.g. it was deleted on device), so a stale handle
+  /// can't keep rendering a thumbnail for a photo that no longer exists.
+  static void evict(String id) => _store.remove(id);
 }

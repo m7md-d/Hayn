@@ -17,6 +17,7 @@ AssetEntity _a(String id, {int type = 1, int created = 0}) => AssetEntity(
 class _FakeSource implements AssetMetadataSource {
   _FakeSource(this.assets);
   List<AssetEntity> assets;
+  int invalidateCalls = 0;
 
   @override
   Future<int> count() async => assets.length;
@@ -24,6 +25,9 @@ class _FakeSource implements AssetMetadataSource {
   @override
   Future<List<AssetEntity>> range(int start, int end) async =>
       assets.sublist(start, math.min(end, assets.length));
+
+  @override
+  void invalidate() => invalidateCalls++;
 }
 
 void main() {
@@ -53,9 +57,21 @@ void main() {
     await svc.syncMetadata();
 
     source.assets = [_a('a'), _a('c')]; // 'b' deleted on device
-    await svc.syncMetadata();
+    final removed = await svc.syncMetadata();
 
     expect(await db.allIds(), {'a', 'c'});
+    expect(removed, {'b'}); // surfaced so callers can evict caches at once
+  });
+
+  test('invalidateSource forwards to the asset source', () async {
+    final source = _FakeSource([_a('a')]);
+    final svc = MediaIndexService(
+      db: db,
+      source: source,
+      sizeLookup: (_) async => {},
+    );
+    svc.invalidateSource();
+    expect(source.invalidateCalls, 1);
   });
 
   test('re-sync preserves an already-resolved byte size', () async {

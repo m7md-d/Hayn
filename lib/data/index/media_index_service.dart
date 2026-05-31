@@ -24,6 +24,11 @@ import 'media_size_channel.dart';
 abstract interface class AssetMetadataSource {
   Future<int> count();
   Future<List<AssetEntity>> range(int start, int end);
+
+  /// Drop any cached handle so the next [count]/[range] re-reads the live
+  /// library. Called after the device library changes (or the app resumes) so
+  /// a stale handle can't report an out-of-date count.
+  void invalidate();
 }
 
 class PhotoManagerAssetSource implements AssetMetadataSource {
@@ -41,6 +46,9 @@ class PhotoManagerAssetSource implements AssetMetadataSource {
     _all = path;
     return path;
   }
+
+  @override
+  void invalidate() => _all = null;
 
   @override
   Future<int> count() async {
@@ -78,8 +86,14 @@ class MediaIndexService {
   /// past a gigabyte while scrolling. A missing size simply shows no badge.
   static const int unknownSize = 0;
 
-  /// Enumerate the whole library, upsert metadata, prune vanished rows.
-  Future<void> syncMetadata({int batch = 500}) async {
+  /// Tell the asset source its cached handle is stale (so the next sync reads
+  /// the live library). Cheap; safe to call before every change-driven sync.
+  void invalidateSource() => source.invalidate();
+
+  /// Enumerate the whole library, upsert metadata, prune vanished rows. Returns
+  /// the ids that were pruned (deleted on device since the last sync) so the
+  /// caller can drop them from any in-memory caches immediately.
+  Future<Set<String>> syncMetadata({int batch = 500}) async {
     final total = await source.count();
     final seen = <String>{};
 
@@ -95,6 +109,7 @@ class MediaIndexService {
 
     final removed = (await db.allIds()).difference(seen);
     if (removed.isNotEmpty) await db.deleteIds(removed);
+    return removed;
   }
 
   /// Fill missing byte sizes from the platform's cheap native lookup only.
