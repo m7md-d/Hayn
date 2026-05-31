@@ -4,6 +4,7 @@ import 'package:flutter_avif/flutter_avif.dart' as avif;
 import 'package:flutter_image_compress/flutter_image_compress.dart' as fic;
 
 import '../../settings/providers/preferences_providers.dart';
+import 'avif_exif.dart';
 import 'native_image_encoder.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -123,16 +124,14 @@ abstract final class ImageEncoder {
           // CPU-bound — use more threads + a faster speed to cut the wait.
           maxThreads: 8,
           speed: 8,
-          // IMPORTANT: keepExif MUST stay false. The package decodes with
-          // ui.instantiateImageCodec (which already BAKES EXIF orientation into
-          // the pixels) but, when keepExif is true, ALSO copies the original
-          // Orientation tag into the output — so viewers rotate a second time
-          // and the photo comes out sideways. Dropping in-file EXIF here is
-          // consistent with our other formats; capture date + GPS are still
-          // carried at the gallery-asset level by the saver.
-          keepExif: false,
+          // Keep the camera EXIF (ImageIO can't ENCODE AVIF, so flutter_avif is
+          // our only AVIF encoder). It bakes orientation into the pixels AND
+          // re-embeds the original Orientation tag → a double rotation. We undo
+          // just that below by rewriting the embedded Orientation to 1 (pixels
+          // are already upright), keeping every other value. Honour keepMetadata.
+          keepExif: keepMetadata,
         );
-        return out;
+        return keepMetadata ? AvifExif.normalizeOrientation(out) : out;
       }
 
       final cf = switch (format) {
