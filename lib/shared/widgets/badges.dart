@@ -80,7 +80,10 @@ class HaynSavingsBadge extends StatelessWidget {
     super.key,
   });
 
-  /// Negative value e.g. -42 for 42 % saved.
+  /// Signed size change: negative = saved (e.g. -42 for 42 % smaller), positive
+  /// = GREW (e.g. +12 for 12 % bigger). Compression isn't always positive — a
+  /// PNG of a photo, or a small JPEG re-encoded, can grow — so the badge flips
+  /// to a warning colour + up arrow when it does.
   final int percent;
   final String? bytes;
   final bool compact;
@@ -89,7 +92,13 @@ class HaynSavingsBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final hc = context.hc;
     final theme = Theme.of(context);
-    final label = bytes == null ? '$percent%' : '$percent%  •  $bytes';
+    final grew = percent > 0;
+    final color = grew ? hc.warningColor : hc.successColor;
+    final bg = grew ? hc.warningSoft : hc.successSoft;
+    final sign = grew ? '+' : '−';
+    final label = bytes == null
+        ? '$sign${percent.abs()}%'
+        : '$sign${percent.abs()}%  •  $bytes';
 
     return Container(
       padding: EdgeInsets.symmetric(
@@ -97,13 +106,14 @@ class HaynSavingsBadge extends StatelessWidget {
         vertical: compact ? 3 : 5,
       ),
       decoration: BoxDecoration(
-        color: hc.successSoft,
+        color: bg,
         borderRadius: BorderRadius.circular(AppRadius.full),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.south_rounded, size: compact ? 12 : 14, color: hc.successColor),
+          Icon(grew ? Icons.north_rounded : Icons.south_rounded,
+              size: compact ? 12 : 14, color: color),
           const SizedBox(width: 4),
           Text(
             label,
@@ -111,7 +121,7 @@ class HaynSavingsBadge extends StatelessWidget {
                     ? theme.textTheme.labelSmall
                     : theme.textTheme.labelLarge)
                 ?.copyWith(
-              color: hc.successColor,
+              color: color,
               fontWeight: FontWeight.w600,
               fontFeatures: const [FontFeature.tabularFigures()],
             ),

@@ -34,6 +34,8 @@ class CompressEstimateCard extends StatelessWidget {
     final savedPercent = (est != null && originalBytes > 0)
         ? ((1 - expected / originalBytes) * 100).round()
         : 0;
+    // Compression isn't always a win — a PNG of a photo can grow.
+    final grew = !loading && originalBytes > 0 && expected > originalBytes;
     final refining = estimate?.refining ?? true;
     final eta = estimate?.etaSeconds;
 
@@ -89,7 +91,7 @@ class CompressEstimateCard extends StatelessWidget {
                         Text(
                           loading ? '…' : _bytes(expected),
                           style: theme.textTheme.titleLarge?.copyWith(
-                            color: hc.successColor,
+                            color: grew ? hc.warningColor : hc.successColor,
                             fontFeatures: const [FontFeature.tabularFigures()],
                           ),
                         ),
