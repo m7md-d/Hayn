@@ -164,6 +164,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
         quality: q,
         hasAlpha: _hasAlpha,
         keepMetadata: _keepMetadata,
+        keepOriginalTime: _keepOriginalTime,
         bitDepth: _bitDepth,
       );
       if (!mounted || seq != _encodeSeq) return;

@@ -103,6 +103,7 @@ class ImageCompressTask extends MediaTask {
           quality: quality,
           hasAlpha: hasAlpha,
           keepMetadata: keepMetadata,
+          keepOriginalTime: keepOriginalTime,
           bitDepth: bitDepth,
         );
         if (_cancelled) return;

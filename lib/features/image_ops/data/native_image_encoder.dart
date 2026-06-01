@@ -21,15 +21,18 @@ abstract final class NativeImageEncoder {
   // Shares the lossless-strip channel; the native side multiplexes by method.
   static const MethodChannel channel = MethodChannel('hayn/metadata');
 
-  /// Encode [source] to [format] ('heic' | 'jpeg') at [quality] (0–100). Copies
-  /// full metadata when [keepMetadata]; otherwise keeps only display orientation
-  /// (drops Exif/GPS). [bitDepth] 0 = match the source (preserves HDR); 8 =
-  /// force SDR (drops the gain map). Higher-than-source is treated as match.
+  /// Encode [source] to [format] ('heic' | 'jpeg' | 'png') at [quality] (0–100).
+  /// The native side copies the whole source property set then removes only what
+  /// the flags drop: [keepMetadata] governs camera/GPS + the HDR gain map;
+  /// [keepOriginalTime] (independent) governs the in-file capture date. [bitDepth]
+  /// 0 = match the source, 8 = re-encode the base at 8-bit (colour precision
+  /// only — HDR is kept regardless).
   static Future<Uint8List?> encode({
     required Uint8List source,
     required String format,
     required int quality,
     required bool keepMetadata,
+    bool keepOriginalTime = true,
     int bitDepth = 0,
   }) async {
     try {
@@ -38,6 +41,7 @@ abstract final class NativeImageEncoder {
         'format': format,
         'quality': quality,
         'keepMetadata': keepMetadata,
+        'keepOriginalTime': keepOriginalTime,
         'bitDepth': bitDepth,
       });
       return (res != null && res.isNotEmpty) ? res : null;

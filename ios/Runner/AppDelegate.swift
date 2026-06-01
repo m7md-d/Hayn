@@ -73,13 +73,17 @@ import UIKit
           }
           let quality = (args?["quality"] as? NSNumber)?.intValue ?? 80
           let keepMetadata = (args?["keepMetadata"] as? Bool) ?? true
-          // 0 = match the source's depth (keeps HDR); 8 = force SDR.
+          // Time is independent of keepMetadata (its own toggle).
+          let keepTime = (args?["keepOriginalTime"] as? Bool) ?? true
+          // 0 = match the source's depth; 8 = re-encode the base at 8-bit
+          // (colour precision only — HDR is governed separately).
           let bitDepth = (args?["bitDepth"] as? NSNumber)?.intValue ?? 0
           let data = typed.data
           DispatchQueue.global(qos: .userInitiated).async {
             let out = ImageEncoderNative.encode(
               data, format: format, quality: quality,
-              keepMetadata: keepMetadata, targetDepth: bitDepth)
+              keepMetadata: keepMetadata, keepOriginalTime: keepTime,
+              targetDepth: bitDepth)
             DispatchQueue.main.async {
               result(out.map { FlutterStandardTypedData(bytes: $0) })
             }
@@ -239,20 +243,23 @@ private enum MetadataStripper {
 /// straight to the source's CGImage means an opaque photo stays opaque (no
 /// spurious alpha → no "AlphaLast" warning, no size bloat) and a 10-bit photo
 /// stays 10-bit. The source's colour profile rides along inside the CGImage;
-/// display orientation is always kept; full camera metadata (Exif/TIFF/GPS) is
-/// copied only when requested. The HDR gain map is carried over (unless the
-/// caller forces 8-bit SDR), so compressing no longer flattens HDR.
+/// display orientation is always kept. Metadata is handled by COPYING the whole
+/// source property set and then removing only what the toggles say to drop, so
+/// we always know exactly what survives. The HDR gain map is tied to
+/// keepMetadata (Photos needs the maker-note headroom we only keep then to
+/// render HDR), and is INDEPENDENT of bit depth.
 ///
-/// [targetDepth]: 0 = match the source (preserve HDR); 8 = force SDR (redraw at
-/// 8-bit and drop the gain map). Higher-than-source is meaningless and treated
-/// as "match" (the UI warns about it).
+/// [keepOriginalTime]: when false, the in-file capture date is removed so a
+/// re-dated copy isn't stamped with the original time (time is its own toggle).
+/// [targetDepth]: 0 = match the source; 8 = re-encode the base at 8-bit (colour
+/// precision only — does NOT drop HDR). Higher-than-source is treated as match.
 ///
 /// Returns nil if the source can't be decoded or the format isn't writable on
 /// this OS (e.g. a device with no HEVC encoder) — the Dart side then falls back.
 private enum ImageEncoderNative {
   static func encode(
     _ data: Data, format: String, quality: Int, keepMetadata: Bool,
-    targetDepth: Int
+    keepOriginalTime: Bool, targetDepth: Int
   ) -> Data? {
     guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
       NSLog("hayn/encode: source create failed")
@@ -274,10 +281,11 @@ private enum ImageEncoderNative {
       return nil
     }
 
-    // Force-SDR path: redraw into an 8-bit context so a 10-bit source becomes a
-    // clean 8-bit image; the gain map is then intentionally dropped below.
-    let forceSdr = targetDepth == 8 && image.bitsPerComponent > 8
-    if forceSdr, let flat = Self.redraw8Bit(image) { image = flat }
+    // Re-encode the base at 8-bit when asked (a 10-bit source → 8-bit). This is
+    // COLOUR PRECISION only; the HDR gain map below is independent and is kept
+    // regardless, so an 8-bit photo can still be HDR.
+    let force8Bit = targetDepth == 8 && image.bitsPerComponent > 8
+    if force8Bit, let flat = Self.redraw8Bit(image) { image = flat }
 
     let out = NSMutableData()
     guard let dest = CGImageDestinationCreateWithData(
@@ -289,24 +297,19 @@ private enum ImageEncoderNative {
     }
 
     let q = max(0.0, min(1.0, Double(quality) / 100.0))
-    var props: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: q]
     let srcProps = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
       as? [CFString: Any]
-    if keepMetadata, let srcProps = srcProps {
-      // Carry everything: camera Exif/TIFF, GPS, orientation, colour profile…
-      for (k, v) in srcProps { props[k] = v }
-    } else if let orientation = srcProps?[kCGImagePropertyOrientation] {
-      // Privacy: drop Exif/GPS but keep display orientation so the photo isn't
-      // rotated by losing its tag.
-      props[kCGImagePropertyOrientation] = orientation
-    }
-
+    let props = Self.buildProperties(
+      srcProps, quality: q,
+      keepMetadata: keepMetadata, keepOriginalTime: keepOriginalTime)
     CGImageDestinationAddImage(dest, image, props as CFDictionary)
 
-    // Carry the HDR gain map (Apple stores HDR as an SDR image + this auxiliary
-    // image) UNLESS the user asked for SDR. Without this, a re-encode strips the
-    // HDR look. Try the modern ISO gain map first, then the classic one.
-    if !forceSdr {
+    // The HDR gain map (Apple stores HDR as a base image + this auxiliary) is
+    // tied to keepMetadata: Photos needs the maker-note HDR headroom — which we
+    // only keep then — to actually RENDER HDR. Copying the gain map without that
+    // metadata would make the file CLAIM HDR yet look flat, so we keep them
+    // together. Independent of bit depth.
+    if keepMetadata {
       var auxTypes: [CFString] = []
       if #available(iOS 14.1, *) {
         auxTypes.append(kCGImageAuxiliaryDataTypeHDRGainMap)
@@ -329,8 +332,49 @@ private enum ImageEncoderNative {
     let result = out as Data
     if result.isEmpty { return nil }
     NSLog("hayn/encode: \(format) q\(quality) keepMeta:\(keepMetadata) "
-      + "depth:\(targetDepth) sdr:\(forceSdr) \(data.count) → \(result.count)")
+      + "keepTime:\(keepOriginalTime) 8bit:\(force8Bit) "
+      + "\(data.count) → \(result.count)")
     return result
+  }
+
+  /// Build destination properties by COPYING the whole source set and then
+  /// removing only what the toggles say to drop — so we always know exactly what
+  /// survives (no blind "keep" call). Time is governed by keepOriginalTime,
+  /// independent of keepMetadata.
+  static func buildProperties(
+    _ srcProps: [CFString: Any]?, quality: Double,
+    keepMetadata: Bool, keepOriginalTime: Bool
+  ) -> [CFString: Any] {
+    var props: [CFString: Any] =
+      [kCGImageDestinationLossyCompressionQuality: quality]
+    guard let src = srcProps else { return props }
+
+    if keepMetadata {
+      for (k, v) in src { props[k] = v } // copy everything…
+      if !keepOriginalTime { Self.removeDateTags(&props) } // …then drop the date
+    } else {
+      // Privacy: keep ONLY display orientation. Colour fidelity rides inside the
+      // CGImage, so dropping the profile name here doesn't shift colour.
+      if let o = src[kCGImagePropertyOrientation] {
+        props[kCGImagePropertyOrientation] = o
+      }
+      if !keepOriginalTime { Self.removeDateTags(&props) }
+    }
+    return props
+  }
+
+  /// Strip the in-file capture date (EXIF DateTimeOriginal/Digitized + TIFF
+  /// DateTime) so a re-dated copy isn't stamped with the original moment.
+  static func removeDateTags(_ props: inout [CFString: Any]) {
+    if var exif = props[kCGImagePropertyExifDictionary] as? [CFString: Any] {
+      exif.removeValue(forKey: kCGImagePropertyExifDateTimeOriginal)
+      exif.removeValue(forKey: kCGImagePropertyExifDateTimeDigitized)
+      props[kCGImagePropertyExifDictionary] = exif
+    }
+    if var tiff = props[kCGImagePropertyTIFFDictionary] as? [CFString: Any] {
+      tiff.removeValue(forKey: kCGImagePropertyTIFFDateTime)
+      props[kCGImagePropertyTIFFDictionary] = tiff
+    }
   }
 
   /// Redraw a (possibly 10/16-bit) image into a standard 8-bit RGB bitmap,
@@ -372,8 +416,10 @@ private enum ImageProbeNative {
     let hasAlpha = (props[kCGImagePropertyHasAlpha] as? NSNumber)?.boolValue
       ?? false
     let colorModel = (props[kCGImagePropertyColorModel] as? String) ?? ""
-    // HDR if there's a gain map (classic or the iOS 18 ISO one), OR the pixels
-    // are deeper than 8-bit.
+
+    // HDR (dynamic range) is a gain map OR an HDR transfer function — NOT bit
+    // depth. A 10-bit photo can be plain SDR, and an 8-bit photo can be HDR via
+    // a gain map, so we never infer HDR from depth.
     var hasGainMap = false
     if #available(iOS 14.1, *) {
       hasGainMap = CGImageSourceCopyAuxiliaryDataInfoAtIndex(
@@ -383,7 +429,12 @@ private enum ImageProbeNative {
       hasGainMap = CGImageSourceCopyAuxiliaryDataInfoAtIndex(
         source, 0, kCGImageAuxiliaryDataTypeISOGainMap) != nil
     }
-    let isHdr = hasGainMap || depth > 8
+    var hdrTransfer = false
+    if #available(iOS 14.0, *),
+       let cs = CGImageSourceCreateImageAtIndex(source, 0, nil)?.colorSpace {
+      hdrTransfer = CGColorSpaceUsesITUR_2100TF(cs)
+    }
+    let isHdr = hasGainMap || hdrTransfer
     return [
       "bitDepth": depth,
       "hasAlpha": hasAlpha,

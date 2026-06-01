@@ -59,6 +59,7 @@ abstract final class ImageEncoder {
     required int quality,
     required bool hasAlpha,
     required bool keepMetadata,
+    bool keepOriginalTime = true,
     int bitDepth = 0,
     int? maxWidth,
     int? maxHeight,
@@ -69,6 +70,7 @@ abstract final class ImageEncoder {
         format: fmt,
         quality: quality,
         keepMetadata: keepMetadata,
+        keepOriginalTime: keepOriginalTime,
         bitDepth: bitDepth,
         maxWidth: maxWidth,
         maxHeight: maxHeight,
@@ -105,6 +107,7 @@ abstract final class ImageEncoder {
     required DefaultFormat format,
     required int quality,
     required bool keepMetadata,
+    bool keepOriginalTime = true,
     int bitDepth = 0,
     int? maxWidth,
     int? maxHeight,
@@ -164,6 +167,7 @@ abstract final class ImageEncoder {
           },
           quality: quality.clamp(1, 100),
           keepMetadata: keepMetadata,
+          keepOriginalTime: keepOriginalTime,
           // Only HEIC honours a forced depth; PNG must keep its alpha and JPEG
           // is 8-bit anyway, so they always match the source.
           bitDepth: format == DefaultFormat.heic ? bitDepth : 0,

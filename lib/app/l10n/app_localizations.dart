@@ -1403,7 +1403,7 @@ abstract class AppLocalizations {
   /// No description provided for @compressBitDepthDesc.
   ///
   /// In en, this message translates to:
-  /// **'10-bit keeps HDR; 8-bit forces SDR'**
+  /// **'Colour precision per channel — HDR is kept either way'**
   String get compressBitDepthDesc;
 
   /// No description provided for @compressBitDepthMatch.

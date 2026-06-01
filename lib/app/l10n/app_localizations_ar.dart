@@ -731,7 +731,8 @@ class AppLocalizationsAr extends AppLocalizations {
   String get compressBitDepth => 'عمق البت';
 
   @override
-  String get compressBitDepthDesc => '10-بت يحفظ HDR، و8-بت يفرض SDR';
+  String get compressBitDepthDesc =>
+      'دقة الألوان لكل قناة — والـHDR يُحفظ في الحالتين';
 
   @override
   String get compressBitDepthMatch => 'مطابق';

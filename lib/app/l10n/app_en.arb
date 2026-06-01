@@ -259,7 +259,7 @@
   "compressKeepTime": "Keep original time",
   "compressKeepTimeDesc": "Off: the copy is dated now and sorts to the top",
   "compressBitDepth": "Bit depth",
-  "compressBitDepthDesc": "10-bit keeps HDR; 8-bit forces SDR",
+  "compressBitDepthDesc": "Colour precision per channel — HDR is kept either way",
   "compressBitDepthMatch": "Match",
   "compressBitDepthHigher": "Higher than the original ({n}-bit) — no quality gain",
   "@compressBitDepthHigher": { "placeholders": { "n": { "type": "int" } } },
