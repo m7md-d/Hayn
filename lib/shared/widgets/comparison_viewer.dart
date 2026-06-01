@@ -30,7 +30,7 @@ class HaynComparisonViewer extends StatefulWidget {
     required this.beforeLabel,
     required this.afterLabel,
     this.initialFraction = 0.5,
-    this.maxScale = 8.0,
+    this.maxScale = 16.0,
     this.onZoomStateChanged,
     super.key,
   });
