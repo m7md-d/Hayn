@@ -1,18 +1,20 @@
+import '../../features/image_ops/domain/compress_estimator.dart';
 import '../../features/settings/providers/preferences_providers.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // BatchSavingsEstimator — predicts how many bytes a compress / surgical-replace
-// run will save on a selection.
+// run will save on a selection (the library "savings chip" + surgical batch).
 //
-// Works off per-asset facts pulled from the on-device index (size + pixel
-// dimensions), so it covers EVERY selected item — not just the pages currently
-// loaded in the grid. Output size is modelled from dimensions × a format/
-// quality bytes-per-pixel factor and capped at the original (a compression
-// pass never grows a file), which tracks reality far better than a flat ratio
-// of the original byte size.
+// Delegates to the shared CompressEstimator's metadata PRIOR — the same model
+// the compress screen uses — so the chip reflects the real engine: a sub-linear
+// content curve driven by each item's source bits-per-pixel, not a flat factor.
+// Instant (index facts only, no encoding), spanning the WHOLE selection. Output
+// is still capped at the original here (a "savings" indicator shows 0 %, not a
+// negative, when a format would grow a file).
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Minimal per-asset facts the estimate needs (from the index).
+/// Minimal per-asset facts the estimate needs (from the index). Optional
+/// [mimeType] sharpens the per-format model; null falls back to a generic curve.
 typedef AssetSizeFacts = ({int sizeBytes, int width, int height});
 
 class BatchSavingsEstimate {
@@ -50,13 +52,19 @@ abstract final class BatchSavingsEstimator {
   }) {
     if (facts.isEmpty) return BatchSavingsEstimate.empty;
 
-    final bpp = bytesPerPixel(format, quality);
     var totalOriginal = 0;
     var totalOutput = 0;
     for (final f in facts) {
       totalOriginal += f.sizeBytes;
-      var out = (f.width * f.height * bpp).round();
-      // Compression never grows a file: cap the estimate at the original.
+      // Per-item prediction from the shared model (sub-linear in source bpp).
+      final item = EstimateItem(
+        pixels: f.width * f.height,
+        sourceBytes: f.sizeBytes,
+        family: SourceFamily.other, // index facts here carry no mime
+      );
+      var out = CompressEstimator.predictItemBytes(item, format, quality);
+      // Savings indicator: a compression pass shows 0 %, not a negative, if a
+      // format would grow a file — cap at the original.
       if (f.sizeBytes > 0 && out > f.sizeBytes) out = f.sizeBytes;
       totalOutput += out;
     }

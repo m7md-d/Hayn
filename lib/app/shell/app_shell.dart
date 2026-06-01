@@ -4,9 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:photo_manager/photo_manager.dart' show AssetType;
+import 'package:photo_manager/photo_manager.dart'
+    show AssetType, PhotoManager;
 import '../../core/isolates/task_runner.dart';
 import '../../features/image_ops/data/strip_metadata_task.dart';
+import '../../features/library/data/native_share.dart';
+import '../../features/library/presentation/providers/asset_entity_cache.dart';
 import '../l10n/app_localizations.dart';
 import '../theme/app_theme_extension.dart';
 import '../theme/design_tokens.dart';
@@ -70,6 +73,66 @@ class _AppShellState extends ConsumerState<AppShell> {
       return;
     }
     context.push('$base/${Uri.encodeComponent(ids.first)}');
+  }
+
+  /// Selection "more" → share / delete the whole selection.
+  Future<void> _selectionMore(
+      BuildContext context, List<String> ids, AppLocalizations l) async {
+    if (ids.isEmpty) return;
+    HapticFeedback.lightImpact();
+    await showHaynActionSheet(
+      context: context,
+      cancelLabel: l.commonCancel,
+      actions: [
+        HaynSheetAction(
+          label: l.actionShare,
+          icon: Icons.ios_share_rounded,
+          onTap: () => _shareSelection(context, ids, l),
+        ),
+        HaynSheetAction(
+          label: l.commonDelete,
+          icon: Icons.delete_outline_rounded,
+          destructive: true,
+          onTap: () => _deleteSelection(context, ids, l),
+        ),
+      ],
+    );
+  }
+
+  /// Delete the selection from the device gallery. iOS shows ONE batch
+  /// confirmation; on confirm we drop them from the index/view at once.
+  Future<void> _deleteSelection(
+      BuildContext context, List<String> ids, AppLocalizations l) async {
+    var deleted = const <String>[];
+    try {
+      deleted = await PhotoManager.editor.deleteWithIds(ids);
+    } catch (_) {
+      // fall through
+    }
+    if (!context.mounted) return;
+    if (deleted.isEmpty) return; // user cancelled iOS's dialog
+    await ref.read(libraryProvider.notifier).removeAssets(deleted.toSet());
+    if (!context.mounted) return;
+    HaynSnack.success(context, l.deleteDone);
+    ref.read(libraryProvider.notifier).clearSelection();
+  }
+
+  /// Share the selection via the OS sheet. Capped — exporting thousands of
+  /// originals is infeasible — so we share the first [_shareCap].
+  Future<void> _shareSelection(
+      BuildContext context, List<String> ids, AppLocalizations l) async {
+    const shareCap = 12;
+    final take = ids.take(shareCap).toList();
+    final paths = <String>[];
+    for (final id in take) {
+      final file = await (await AssetEntityCache.load(id))?.originFile;
+      if (file != null) paths.add(file.path);
+    }
+    if (paths.isEmpty) {
+      if (context.mounted) HaynSnack.info(context, l.actionFailed);
+      return;
+    }
+    await NativeShare.shareFiles(paths);
   }
 
   @override
@@ -145,7 +208,8 @@ class _AppShellState extends ConsumerState<AppShell> {
                     context.push('/surgical/batch', extra: ids);
                   }
                 },
-                onMore: () {},
+                onMore: () =>
+                    _selectionMore(context, libraryState.selectedIds.toList(), l),
               )
             : _HaynNavBar(
                 key: const ValueKey('nav-bar'),

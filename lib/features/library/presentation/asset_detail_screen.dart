@@ -524,6 +524,8 @@ class _AssetPageState extends State<_AssetPage>
     with TickerProviderStateMixin {
   Uint8List? _lowResBytes;
   Uint8List? _hiResBytes;
+  Uint8List? _fullResBytes; // full-resolution original, loaded on zoom
+  bool _loadingFull = false;
   // Materialised lazily from the entry id; needed for the video player and the
   // inline metadata sheet. Null until it resolves.
   AssetEntity? _entity;
@@ -545,7 +547,7 @@ class _AssetPageState extends State<_AssetPage>
   bool _zoomLocked = false;
 
   static const double _minScale = 1.0;
-  static const double _maxScale = 4.0;
+  static const double _maxScale = 8.0;
   static const double _dismissThreshold = 120;
   static const double _dismissVelocityThreshold = 800;
   static const double _infoThreshold = 90;
@@ -646,7 +648,27 @@ class _AssetPageState extends State<_AssetPage>
   void _setZoomLocked(bool locked) {
     if (_zoomLocked == locked) return;
     setState(() => _zoomLocked = locked);
+    if (locked) _loadFullRes(); // zooming in → swap to the full-res original
     widget.onZoomLockedChanged?.call(locked);
+  }
+
+  /// On zoom, swap in the FULL-RESOLUTION original — the 1080-px hi-res blurs
+  /// when magnified, so pixel-peeping needs the real thing. One image, loaded
+  /// on demand (never for the whole library). Falls back to hi-res on failure.
+  Future<void> _loadFullRes() async {
+    if (_fullResBytes != null || _loadingFull || _entity == null) return;
+    _loadingFull = true;
+    final id = widget.entry.id;
+    try {
+      final data = await _entity!.originBytes;
+      if (mounted && widget.entry.id == id && data != null && data.isNotEmpty) {
+        setState(() => _fullResBytes = data);
+      }
+    } catch (_) {
+      // keep the hi-res
+    } finally {
+      _loadingFull = false;
+    }
   }
 
   void _onPointerDown(PointerDownEvent e) {
@@ -915,6 +937,15 @@ class _AssetPageState extends State<_AssetPage>
                                 filterQuality: FilterQuality.high,
                               ),
                       ),
+                      // Full-resolution original, drawn on top once zoomed in.
+                      if (_fullResBytes != null)
+                        Image.memory(
+                          _fullResBytes!,
+                          fit: BoxFit.contain,
+                          gaplessPlayback: true,
+                          filterQuality: FilterQuality.high,
+                          errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                        ),
                     ],
                   ),
           ),
