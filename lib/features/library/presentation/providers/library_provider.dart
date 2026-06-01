@@ -10,6 +10,7 @@ import 'package:flutter/widgets.dart'
         WidgetsBindingObserver;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_manager/photo_manager.dart';
+import '../../../../core/isolates/task_runner.dart';
 import '../../../../data/index/index_providers.dart';
 import '../../../../data/index/media_index_database.dart';
 import '../../domain/entities/library_sort_filter.dart';
@@ -259,7 +260,26 @@ class LibraryNotifier extends Notifier<LibraryState> {
   bool get _dbMode => _indexReady && state.selectedAlbumId == null;
 
   @override
-  LibraryState build() => const LibraryState();
+  LibraryState build() {
+    // Fold fresh task outputs (compressed/duplicated copies) into the library
+    // the moment a task completes — immediate + cheap (indexes just those ids),
+    // so new assets appear without waiting for the debounced device-change sync.
+    ref.listen<List<TaskState>>(taskRunnerProvider, (prev, next) {
+      final doneBefore = <String>{
+        for (final t in (prev ?? const <TaskState>[]))
+          if (t.status == TaskStatus.completed) t.task.id,
+      };
+      final fresh = <String>[];
+      for (final t in next) {
+        if (t.status == TaskStatus.completed &&
+            !doneBefore.contains(t.task.id)) {
+          fresh.addAll(t.task.outputAssetIds);
+        }
+      }
+      if (fresh.isNotEmpty) unawaited(ingestNewAssets(fresh));
+    });
+    return const LibraryState();
+  }
 
   Future<void> init() async {
     if (state.permissionStatus != LibraryPermissionStatus.unknown) return;
@@ -459,6 +479,52 @@ class LibraryNotifier extends Notifier<LibraryState> {
   Future<void> clearSortFilter() async {
     if (!state.sortFilter.hasAnyActive) return;
     await setSortFilter(LibrarySortFilter.cleared);
+  }
+
+  /// Immediately drop deleted assets from the index + view — no full enumerate.
+  /// Called right after a known removal (our delete action) so the grid updates
+  /// at once instead of waiting for the debounced device-change sync.
+  Future<void> removeAssets(Set<String> ids) async {
+    if (ids.isEmpty) return;
+    for (final id in ids) {
+      AssetEntityCache.evict(id);
+    }
+    await ref.read(mediaIndexDatabaseProvider).deleteIds(ids);
+    if (_dbMode) {
+      await _loadIndexSpine();
+    } else {
+      state = state.copyWith(
+        entries: state.entries.where((e) => !ids.contains(e.id)).toList(),
+        assets: state.assets.where((a) => !ids.contains(a.id)).toList(),
+        displayAssets:
+            state.displayAssets.where((a) => !ids.contains(a.id)).toList(),
+        totalCount: (state.totalCount - ids.length).clamp(0, 1 << 31).toInt(),
+      );
+    }
+    if (state.selectedIds.intersection(ids).isNotEmpty) {
+      state = state.copyWith(selectedIds: state.selectedIds.difference(ids));
+    }
+  }
+
+  /// Immediately fold freshly-created assets (task outputs) into the index +
+  /// view in sort order, without a full enumerate. Indexes only [ids].
+  Future<void> ingestNewAssets(List<String> ids) async {
+    if (ids.isEmpty) return;
+    final entities = <AssetEntity>[];
+    for (final id in ids) {
+      final e = await AssetEntity.fromId(id);
+      if (e != null) entities.add(e);
+    }
+    if (entities.isEmpty) return;
+    final index = ref.read(mediaIndexServiceProvider);
+    await index.indexAssets(entities);
+    await index.resolveSizesFor(ids);
+    _indexReady = true;
+    if (_dbMode) {
+      await _loadIndexSpine();
+    } else {
+      await _reload();
+    }
   }
 
   // ── Private ────────────────────────────────────────────────────

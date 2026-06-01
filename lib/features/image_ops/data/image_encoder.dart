@@ -4,7 +4,6 @@ import 'package:flutter_avif/flutter_avif.dart' as avif;
 import 'package:flutter_image_compress/flutter_image_compress.dart' as fic;
 
 import '../../settings/providers/preferences_providers.dart';
-import 'avif_exif.dart';
 import 'native_image_encoder.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -117,6 +116,14 @@ abstract final class ImageEncoder {
         // Lower quantizer = higher quality. Map 0–100 → ~[55..12].
         final maxQ = (63 - quality * 0.5).round().clamp(12, 55);
         final minQ = (maxQ - 12).clamp(0, maxQ);
+        // IMPORTANT: keepExif stays FALSE for AVIF. flutter_avif (our only AVIF
+        // encoder — iOS ImageIO can't WRITE AVIF) mishandles EXIF: it produces a
+        // rotated image and a stuck capture date, and patching the embedded tag
+        // afterwards didn't hold on-device. With keepExif:false the orientation
+        // is correct and the date is governed at the gallery-asset level
+        // (creationDate), like our other asset-level metadata. In-file camera
+        // EXIF + HDR simply aren't carryable through this encoder — HEIC is the
+        // format for those.
         final out = await avif.encodeAvif(
           source,
           minQuantizer: minQ,
@@ -127,14 +134,9 @@ abstract final class ImageEncoder {
           // CPU-bound — use more threads + a faster speed to cut the wait.
           maxThreads: 8,
           speed: 8,
-          // Keep the camera EXIF (ImageIO can't ENCODE AVIF, so flutter_avif is
-          // our only AVIF encoder). It bakes orientation into the pixels AND
-          // re-embeds the original Orientation tag → a double rotation. We undo
-          // just that below by rewriting the embedded Orientation to 1 (pixels
-          // are already upright), keeping every other value. Honour keepMetadata.
-          keepExif: keepMetadata,
+          keepExif: false,
         );
-        return keepMetadata ? AvifExif.normalizeOrientation(out) : out;
+        return out;
       }
 
       final cf = switch (format) {

@@ -90,6 +90,14 @@ class MediaIndexService {
   /// the live library). Cheap; safe to call before every change-driven sync.
   void invalidateSource() => source.invalidate();
 
+  /// Upsert a KNOWN set of assets (e.g. fresh task outputs) without enumerating
+  /// the whole library — for an immediate, cheap UI refresh after a mutation.
+  Future<void> indexAssets(Iterable<AssetEntity> assets) async {
+    final rows = assets.map(_toRow).toList();
+    if (rows.isEmpty) return;
+    await db.upsertAll(rows);
+  }
+
   /// Enumerate the whole library, upsert metadata, prune vanished rows. Returns
   /// the ids that were pruned (deleted on device since the last sync) so the
   /// caller can drop them from any in-memory caches immediately.

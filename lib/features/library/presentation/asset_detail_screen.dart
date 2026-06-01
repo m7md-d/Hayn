@@ -165,18 +165,6 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
 
   // ── App-bar "more" → asset actions (share / duplicate / delete) ────────────
 
-  Future<void> _openMore() async {
-    HapticFeedback.lightImpact();
-    await showHaynSheet<void>(
-      context: context,
-      builder: (ctx) => _AssetActionsSheet(
-        onShare: _share,
-        onDuplicate: _duplicate,
-        onDelete: _delete,
-      ),
-    );
-  }
-
   /// Hand the original file to the OS share sheet (native, no network).
   Future<void> _share() async {
     final l = AppLocalizations.of(context);
@@ -239,36 +227,26 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
     return outputFilename(e, ext, suffix: 'copy');
   }
 
-  /// Delete from the device gallery after a clear confirmation. iOS also shows
-  /// its own system prompt; on success the file lands in Recently Deleted.
+  /// Delete from the device gallery. iOS ENFORCES its own deletion dialog (apps
+  /// can't silently delete photos), so we don't stack a second confirmation —
+  /// that system prompt IS the clear confirm. On confirm the file lands in
+  /// Recently Deleted. We then drop it from the library immediately (no waiting
+  /// for the debounced device-change sync) and leave the viewer.
   Future<void> _delete() async {
     final l = AppLocalizations.of(context);
-    final ok = await showHaynDestructiveConfirm(
-      context: context,
-      title: l.deleteConfirmTitle,
-      message: l.deleteConfirmMessage,
-      confirmLabel: l.commonDelete,
-      cancelLabel: l.commonCancel,
-      icon: Icons.delete_outline_rounded,
-    );
-    if (!ok || !mounted) return;
     final id = _curId;
     var deleted = const <String>[];
     try {
       deleted = await PhotoManager.editor.deleteWithIds([id]);
     } catch (_) {
-      // fall through to the failure message
+      // fall through
     }
     if (!mounted) return;
-    if (deleted.isNotEmpty) {
-      AssetEntityCache.evict(id);
-      HaynSnack.success(context, l.deleteDone);
-      // The asset is gone — leave the viewer; the library re-syncs via the
-      // PhotoManager change callback.
-      if (Navigator.of(context).canPop()) Navigator.of(context).pop();
-    } else {
-      HaynSnack.info(context, l.actionFailed);
-    }
+    if (deleted.isEmpty) return; // user cancelled iOS's dialog — nothing to do
+    await ref.read(libraryProvider.notifier).removeAssets({id});
+    if (!mounted) return;
+    HaynSnack.success(context, l.deleteDone);
+    if (Navigator.of(context).canPop()) Navigator.of(context).pop();
   }
 
   // iOS PhotoKit ids contain '/' (e.g. UUID/L0/001); a raw interpolation into
@@ -394,7 +372,9 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
             child: _DetailAppBar(
               title: _titleFor(_entries[_currentIndex]),
               onInfo: () => _openInfo(context),
-              onMore: _openMore,
+              onShare: _share,
+              onDuplicate: _duplicate,
+              onDelete: _delete,
             ),
           ),
         ),
@@ -1176,11 +1156,15 @@ class _DetailAppBar extends StatelessWidget {
   const _DetailAppBar({
     required this.title,
     required this.onInfo,
-    required this.onMore,
+    required this.onShare,
+    required this.onDuplicate,
+    required this.onDelete,
   });
   final String title;
   final VoidCallback onInfo;
-  final VoidCallback onMore;
+  final VoidCallback onShare;
+  final VoidCallback onDuplicate;
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -1219,9 +1203,49 @@ class _DetailAppBar extends StatelessWidget {
             icon: const Icon(Icons.info_outline_rounded),
             onPressed: onInfo,
           ),
-          IconButton(
+          // A popup anchored to the button (it scales out FROM here, just under
+          // the dots) rather than a sheet from the bottom.
+          PopupMenuButton<int>(
             icon: const Icon(Icons.more_horiz_rounded),
-            onPressed: onMore,
+            color: context.hc.surface,
+            position: PopupMenuPosition.under,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppRadius.lg),
+            ),
+            onSelected: (v) {
+              HapticFeedback.lightImpact();
+              switch (v) {
+                case 0:
+                  onShare();
+                case 1:
+                  onDuplicate();
+                case 2:
+                  onDelete();
+              }
+            },
+            itemBuilder: (ctx) {
+              final l = AppLocalizations.of(ctx);
+              final hc = ctx.hc;
+              PopupMenuItem<int> item(int v, IconData icon, String label,
+                      {Color? color}) =>
+                  PopupMenuItem<int>(
+                    value: v,
+                    child: Row(
+                      children: [
+                        Icon(icon, size: 20, color: color ?? hc.text2),
+                        const SizedBox(width: AppSpacing.s3),
+                        Text(label, style: TextStyle(color: color)),
+                      ],
+                    ),
+                  );
+              return [
+                item(0, Icons.ios_share_rounded, l.actionShare),
+                item(1, Icons.copy_rounded, l.actionDuplicate),
+                const PopupMenuDivider(),
+                item(2, Icons.delete_outline_rounded, l.commonDelete,
+                    color: hc.dangerColor),
+              ];
+            },
           ),
         ],
       ),
@@ -1359,75 +1383,6 @@ class _DetailActionButtonState extends State<_DetailActionButton> {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// _AssetActionsSheet — the app-bar "more" menu: share / duplicate / delete.
-// A clean iOS-style row list (delete in the destructive colour, set off by a
-// divider) rather than a stack of big buttons.
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _AssetActionsSheet extends StatelessWidget {
-  const _AssetActionsSheet({
-    required this.onShare,
-    required this.onDuplicate,
-    required this.onDelete,
-  });
-
-  final VoidCallback onShare;
-  final VoidCallback onDuplicate;
-  final VoidCallback onDelete;
-
-  @override
-  Widget build(BuildContext context) {
-    final l = AppLocalizations.of(context);
-    final hc = context.hc;
-    final theme = Theme.of(context);
-
-    Widget row(IconData icon, String label, VoidCallback onTap,
-        {bool destructive = false}) {
-      final color = destructive ? hc.dangerColor : null;
-      return InkWell(
-        onTap: () {
-          HapticFeedback.lightImpact();
-          Navigator.of(context).pop();
-          onTap();
-        },
-        child: Padding(
-          padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.md, vertical: AppSpacing.md),
-          child: Row(
-            children: [
-              Icon(icon, size: 22, color: color ?? hc.text2),
-              const SizedBox(width: AppSpacing.md),
-              Text(
-                label,
-                style: theme.textTheme.bodyLarge?.copyWith(
-                  color: color,
-                  fontWeight: destructive ? FontWeight.w600 : null,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          row(Icons.ios_share_rounded, l.actionShare, onShare),
-          row(Icons.copy_rounded, l.actionDuplicate, onDuplicate),
-          const Divider(height: 1),
-          row(Icons.delete_outline_rounded, l.commonDelete, onDelete,
-              destructive: true),
-          const SizedBox(height: AppSpacing.s2),
-        ],
       ),
     );
   }
