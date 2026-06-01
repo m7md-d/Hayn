@@ -206,6 +206,32 @@ void main() {
     });
   });
 
+  group('CompressEstimator.selectSampleIndices (dynamic + stratified)', () {
+    test('small batch → sample everything (exact path)', () {
+      final items = _batch(15);
+      expect(CompressEstimator.selectSampleIndices(items, 24).length, 15);
+    });
+
+    test('large batch → capped, and covers every content stratum', () {
+      // Two very different strata: 100 heavy JPEG + 100 tiny PNG.
+      final items = <EstimateItem>[
+        for (var i = 0; i < 100; i++) _mk(SourceFamily.jpeg, 0.95, 9000000),
+        for (var i = 0; i < 100; i++) _mk(SourceFamily.png, 0.3, 500000),
+      ];
+      final picked = CompressEstimator.selectSampleIndices(items, 16);
+      expect(picked.length, 16);
+      // Both strata must be represented (not all from one).
+      final heavy = picked.where((i) => i < 100).length;
+      final tiny = picked.where((i) => i >= 100).length;
+      expect(heavy, greaterThan(0));
+      expect(tiny, greaterThan(0));
+    });
+
+    test('cap of 0 yields nothing', () {
+      expect(CompressEstimator.selectSampleIndices(_batch(10), 0), isEmpty);
+    });
+  });
+
   group('SourceFamily classification', () {
     test('maps mime types + extensions', () {
       expect(SourceFamilyFromMime.of('image/jpeg'), SourceFamily.jpeg);

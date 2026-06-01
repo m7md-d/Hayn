@@ -177,6 +177,27 @@ class MediaIndexDatabase extends _$MediaIndexDatabase {
     ];
   }
 
+  /// Per-item facts the size estimator needs (id + pixels + size + format), for
+  /// the whole selection, straight from the index — no file access.
+  Future<List<({String id, int width, int height, int sizeBytes, String? mimeType, String? title})>>
+      estimateFactsFor(List<String> ids) async {
+    if (ids.isEmpty) return const [];
+    final q = select(mediaAssets)
+      ..where((t) => t.id.isIn(ids) & t.sizeBytes.isBiggerThanValue(0));
+    final rows = await q.get();
+    return [
+      for (final r in rows)
+        (
+          id: r.id,
+          width: r.width,
+          height: r.height,
+          sizeBytes: r.sizeBytes!,
+          mimeType: r.mimeType,
+          title: r.title,
+        ),
+    ];
+  }
+
   /// Ids missing a resolved byte size — the size pass works through these.
   Future<List<String>> idsMissingSize({int limit = 200}) async {
     final q = selectOnly(mediaAssets)

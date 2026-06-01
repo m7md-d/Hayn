@@ -273,6 +273,58 @@ abstract final class CompressEstimator {
     );
   }
 
+  /// Choose WHICH items to sample, covering content strata first so a
+  /// heterogeneous batch (heavy RAW + tiny) is always represented, capped at
+  /// [maxSamples]. When the batch is no bigger than the cap, every item is
+  /// returned — i.e. "encode them all", which the small-N strategy uses for an
+  /// (essentially) exact total. Within a stratum, picks are spread by pixel size
+  /// so big and small members are both seen. Pure → unit-testable.
+  static List<int> selectSampleIndices(
+    List<EstimateItem> items,
+    int maxSamples,
+  ) {
+    final n = items.length;
+    if (maxSamples >= n) return [for (var i = 0; i < n; i++) i];
+    if (maxSamples <= 0) return const [];
+
+    final byStratum = <String, List<int>>{};
+    for (var i = 0; i < n; i++) {
+      (byStratum[_fineKey(items[i])] ??= []).add(i);
+    }
+    // Spread each stratum's members by pixel size (so we don't only sample the
+    // small ones), and round-robin across strata until the cap is hit.
+    final queues = <List<int>>[];
+    for (final idxs in byStratum.values) {
+      idxs.sort((a, b) => items[a].pixels.compareTo(items[b].pixels));
+      queues.add(_spread(idxs));
+    }
+    final picked = <int>[];
+    var added = true;
+    while (picked.length < maxSamples && added) {
+      added = false;
+      for (final q in queues) {
+        if (q.isEmpty) continue;
+        picked.add(q.removeAt(0));
+        added = true;
+        if (picked.length >= maxSamples) break;
+      }
+    }
+    return picked;
+  }
+
+  /// Reorder so consumption from the front samples the extremes then the middle
+  /// (largest, smallest, then the rest) — good coverage from few picks.
+  static List<int> _spread(List<int> sortedBySize) {
+    final out = <int>[];
+    var lo = 0, hi = sortedBySize.length - 1;
+    var takeHi = true;
+    while (lo <= hi) {
+      out.add(takeHi ? sortedBySize[hi--] : sortedBySize[lo++]);
+      takeHi = !takeHi;
+    }
+    return out;
+  }
+
   static double _median(List<double> sorted) {
     final n = sorted.length;
     if (n == 0) return double.nan;

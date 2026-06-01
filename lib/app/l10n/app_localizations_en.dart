@@ -735,6 +735,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get compressEstimatedSize => 'Estimated size';
 
   @override
+  String get compressEtaLabel => 'Est. time';
+
+  @override
   String get compressKeepMeta => 'Keep photo info';
 
   @override

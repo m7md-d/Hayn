@@ -16,6 +16,7 @@ import '../../../shared/widgets/widgets.dart';
 import '../../library/presentation/providers/asset_entity_cache.dart';
 import '../../library/presentation/widgets/id_thumbnail.dart';
 import '../../settings/providers/preferences_providers.dart';
+import '../data/compress_estimate_controller.dart';
 import '../data/image_compress_task.dart';
 import '../data/image_encoder.dart';
 import '../data/image_probe.dart';
@@ -66,9 +67,13 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   Uint8List? _previewBytes;
   int _activeAssetIndex = 0;
 
-  /// Summed original byte size of the WHOLE selection, from the index
-  /// (multi-select heuristic estimate).
+  /// Summed original byte size of the WHOLE selection, from the index.
   int _originalBytes = 0;
+
+  // ── Multi-image live size estimate ─────────────────────────────────────
+  CompressEstimateController? _estimateCtrl;
+  EstimateResult? _estimate;
+  Timer? _estimateDebounce;
 
   // ── Single-image real encode ──────────────────────────────────────────
   // For ONE image we don't guess: load the original, probe alpha, and run the
@@ -93,13 +98,40 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
     } else {
       _loadPreview();
       _loadOriginalBytes();
+      _scheduleEstimate();
     }
   }
 
   @override
   void dispose() {
     _debounce?.cancel();
+    _estimateDebounce?.cancel();
+    _estimateCtrl?.cancel();
     super.dispose();
+  }
+
+  /// Debounced live size estimate for a MULTI-image selection (single images
+  /// already show a real encode). Re-runs when format/quality change.
+  void _scheduleEstimate() {
+    if (_isSingle || _ids.isEmpty) return;
+    _estimateDebounce?.cancel();
+    _estimateDebounce = Timer(const Duration(milliseconds: 350), _runEstimate);
+  }
+
+  Future<void> _runEstimate() async {
+    _estimateCtrl?.cancel();
+    final ctrl = CompressEstimateController(ref);
+    _estimateCtrl = ctrl;
+    final q = _mode == _Mode.auto ? 80 : _quality.round();
+    await ctrl.run(
+      ids: _ids,
+      target: _format,
+      quality: q,
+      onUpdate: (r) {
+        if (!mounted || _estimateCtrl != ctrl) return;
+        setState(() => _estimate = r);
+      },
+    );
   }
 
   Future<void> _loadPreview() async {
@@ -337,6 +369,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
               onChanged: (m) {
                 setState(() => _mode = m);
                 _scheduleEncode();
+                _scheduleEstimate();
               },
               items: [
                 HaynSegmentItem(value: _Mode.auto, label: l.compressModeAuto),
@@ -384,10 +417,12 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
                     onFormatChanged: (v) {
                       setState(() => _format = v);
                       _scheduleEncode();
+                      _scheduleEstimate();
                     },
                     onQualityChanged: (v) {
                       setState(() => _quality = v);
                       _scheduleEncode();
+                      _scheduleEstimate();
                     },
                     onKeepMetaChanged: (v) {
                       setState(() => _keepMetadata = v);
@@ -411,8 +446,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
           else
             CompressEstimateCard(
               originalBytes: _originalBytes,
-              quality: _mode == _Mode.auto ? 80 : _quality.round(),
-              format: autoFormat,
+              estimate: _estimate,
             ),
           const SizedBox(height: AppSpacing.lg),
 

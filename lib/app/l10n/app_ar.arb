@@ -262,6 +262,7 @@
   "compressFormat": "الصيغة",
   "compressQuality": "الجودة",
   "compressEstimatedSize": "الحجم المتوقّع",
+  "compressEtaLabel": "الوقت المقدّر",
   "compressKeepMeta": "الاحتفاظ بمعلومات الصورة",
   "compressKeepMetaDesc": "بيانات الكاميرا والموقع (GPS)",
   "compressKeepTime": "الاحتفاظ بالوقت الأصلي",

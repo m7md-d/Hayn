@@ -262,6 +262,7 @@
   "compressFormat": "Format",
   "compressQuality": "Quality",
   "compressEstimatedSize": "Estimated size",
+  "compressEtaLabel": "Est. time",
   "compressKeepMeta": "Keep photo info",
   "compressKeepMetaDesc": "Camera details and location (GPS)",
   "compressKeepTime": "Keep original time",

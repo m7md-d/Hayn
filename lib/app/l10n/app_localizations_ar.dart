@@ -740,6 +740,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get compressEstimatedSize => 'الحجم المتوقّع';
 
   @override
+  String get compressEtaLabel => 'الوقت المقدّر';
+
+  @override
   String get compressKeepMeta => 'الاحتفاظ بمعلومات الصورة';
 
   @override

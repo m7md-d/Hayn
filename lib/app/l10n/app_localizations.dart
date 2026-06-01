@@ -1418,6 +1418,12 @@ abstract class AppLocalizations {
   /// **'Estimated size'**
   String get compressEstimatedSize;
 
+  /// No description provided for @compressEtaLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Est. time'**
+  String get compressEtaLabel;
+
   /// No description provided for @compressKeepMeta.
   ///
   /// In en, this message translates to:
