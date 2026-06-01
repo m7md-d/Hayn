@@ -111,8 +111,13 @@ class ImageCompressTask extends MediaTask {
         final asset = await GallerySaver.saveImage(
           encoded.bytes,
           filename: await outputFilename(entity, encoded.extension),
-          // Time and location are independent choices now.
-          creationDate: keepOriginalTime ? entity.createDateTime : null,
+          // Time + location are independent choices. When the user opts OUT of
+          // keeping the original time we must pass `now` EXPLICITLY, not null —
+          // PhotoKit falls back to the file's embedded EXIF date on null, which
+          // is why an AVIF copy kept its original time. `now` forces the asset
+          // to the top of the timeline regardless of any in-file date.
+          creationDate:
+              keepOriginalTime ? entity.createDateTime : DateTime.now(),
           latitude: keepMetadata ? entity.latitude : null,
           longitude: keepMetadata ? entity.longitude : null,
         );
