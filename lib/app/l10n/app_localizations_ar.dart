@@ -694,6 +694,31 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
+  String get actionShare => 'مشاركة';
+
+  @override
+  String get actionDuplicate => 'استنساخ';
+
+  @override
+  String get actionMoreTitle => 'خيارات';
+
+  @override
+  String get deleteConfirmTitle => 'حذف من الجهاز؟';
+
+  @override
+  String get deleteConfirmMessage =>
+      'سيُحذف من معرضك. يحتفظ به iOS في «المحذوفة مؤخرًا» لمدة ٣٠ يومًا.';
+
+  @override
+  String get deleteDone => 'تم الحذف';
+
+  @override
+  String get duplicateDone => 'تم الاستنساخ';
+
+  @override
+  String get actionFailed => 'حدث خطأ ما';
+
+  @override
   String get compressTitle => 'ضغط';
 
   @override

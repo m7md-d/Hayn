@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:photo_manager/photo_manager.dart';
@@ -29,6 +30,28 @@ abstract final class GallerySaver {
         title: filename,
         creationDate: creationDate,
         // Only pass a real fix — 0/null means "unknown", don't stamp (0,0).
+        latitude: (latitude != null && latitude != 0) ? latitude : null,
+        longitude: (longitude != null && longitude != 0) ? longitude : null,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Save a video [file] as a NEW gallery asset (used by Duplicate). Returns the
+  /// new asset or null. Never throws.
+  static Future<AssetEntity?> saveVideo(
+    File file, {
+    required String filename,
+    DateTime? creationDate,
+    double? latitude,
+    double? longitude,
+  }) async {
+    try {
+      return await PhotoManager.editor.saveVideo(
+        file,
+        title: filename,
+        creationDate: creationDate,
         latitude: (latitude != null && latitude != 0) ? latitude : null,
         longitude: (longitude != null && longitude != 0) ? longitude : null,
       );

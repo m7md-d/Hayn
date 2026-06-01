@@ -11,8 +11,11 @@ import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
 import '../../../core/isolates/task_runner.dart';
 import '../../../shared/widgets/widgets.dart';
+import '../../image_ops/data/gallery_saver.dart';
 import '../../image_ops/data/metadata.dart';
+import '../../image_ops/data/output_name.dart';
 import '../../image_ops/data/strip_metadata_task.dart';
+import '../data/native_share.dart';
 import 'providers/asset_entity_cache.dart';
 import 'providers/library_provider.dart';
 import 'providers/thumbnail_cache.dart';
@@ -160,6 +163,114 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
     HaynSnack.info(context, l.assetDetailComingSoon(name));
   }
 
+  // ── App-bar "more" → asset actions (share / duplicate / delete) ────────────
+
+  Future<void> _openMore() async {
+    HapticFeedback.lightImpact();
+    await showHaynSheet<void>(
+      context: context,
+      builder: (ctx) => _AssetActionsSheet(
+        onShare: _share,
+        onDuplicate: _duplicate,
+        onDelete: _delete,
+      ),
+    );
+  }
+
+  /// Hand the original file to the OS share sheet (native, no network).
+  Future<void> _share() async {
+    final l = AppLocalizations.of(context);
+    final entity = await AssetEntityCache.load(_curId);
+    final file = await entity?.originFile;
+    if (!mounted) return;
+    if (file == null) {
+      HaynSnack.info(context, l.actionFailed);
+      return;
+    }
+    await NativeShare.shareFiles([file.path]);
+  }
+
+  /// Save a pixel-exact copy as a new gallery asset (no re-encode).
+  Future<void> _duplicate() async {
+    final l = AppLocalizations.of(context);
+    final entity = await AssetEntityCache.load(_curId);
+    if (entity == null) {
+      if (mounted) HaynSnack.info(context, l.actionFailed);
+      return;
+    }
+    final name = await _duplicateName(entity);
+    AssetEntity? saved;
+    if (entity.type == AssetType.video) {
+      final file = await entity.originFile;
+      if (file != null) {
+        saved = await GallerySaver.saveVideo(
+          file,
+          filename: name,
+          creationDate: DateTime.now(),
+          latitude: entity.latitude,
+          longitude: entity.longitude,
+        );
+      }
+    } else {
+      final bytes = await entity.originBytes;
+      if (bytes != null) {
+        saved = await GallerySaver.saveImage(
+          bytes,
+          filename: name,
+          creationDate: DateTime.now(),
+          latitude: entity.latitude,
+          longitude: entity.longitude,
+        );
+      }
+    }
+    if (!mounted) return;
+    HaynSnack.success(
+      context,
+      saved != null ? l.duplicateDone : l.actionFailed,
+    );
+  }
+
+  Future<String> _duplicateName(AssetEntity e) async {
+    final title = await e.titleAsync;
+    final dot = title.lastIndexOf('.');
+    final ext = (dot >= 0 && dot < title.length - 1)
+        ? title.substring(dot + 1)
+        : (e.type == AssetType.video ? 'mp4' : 'jpg');
+    return outputFilename(e, ext, suffix: 'copy');
+  }
+
+  /// Delete from the device gallery after a clear confirmation. iOS also shows
+  /// its own system prompt; on success the file lands in Recently Deleted.
+  Future<void> _delete() async {
+    final l = AppLocalizations.of(context);
+    final ok = await showHaynDestructiveConfirm(
+      context: context,
+      title: l.deleteConfirmTitle,
+      message: l.deleteConfirmMessage,
+      confirmLabel: l.commonDelete,
+      cancelLabel: l.commonCancel,
+      icon: Icons.delete_outline_rounded,
+    );
+    if (!ok || !mounted) return;
+    final id = _curId;
+    var deleted = const <String>[];
+    try {
+      deleted = await PhotoManager.editor.deleteWithIds([id]);
+    } catch (_) {
+      // fall through to the failure message
+    }
+    if (!mounted) return;
+    if (deleted.isNotEmpty) {
+      AssetEntityCache.evict(id);
+      HaynSnack.success(context, l.deleteDone);
+      // The asset is gone — leave the viewer; the library re-syncs via the
+      // PhotoManager change callback.
+      if (Navigator.of(context).canPop()) Navigator.of(context).pop();
+    } else {
+      HaynSnack.info(context, l.actionFailed);
+    }
+  }
+
   // iOS PhotoKit ids contain '/' (e.g. UUID/L0/001); a raw interpolation into
   // a `/route/:id` path splits into extra segments and the target screen
   // resolves the wrong (or no) asset. Encode so the id stays one segment;
@@ -283,7 +394,7 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
             child: _DetailAppBar(
               title: _titleFor(_entries[_currentIndex]),
               onInfo: () => _openInfo(context),
-              onMore: () => _action(l.selectionMore),
+              onMore: _openMore,
             ),
           ),
         ),
@@ -362,6 +473,9 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
                           onCrop: _crop,
                           onStrip: _stripMetadata,
                           onSurgical: _surgical,
+                          // The bottom bar's "more" is for additional TOOLS
+                          // (its own topic) — distinct from the app-bar dots
+                          // which are asset actions (share/duplicate/delete).
                           onMore: () => _action(l.selectionMore),
                           // Dedicated video routes — the unified editor is
                           // still available via /video-edit/{id} for power
@@ -1245,6 +1359,75 @@ class _DetailActionButtonState extends State<_DetailActionButton> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _AssetActionsSheet — the app-bar "more" menu: share / duplicate / delete.
+// A clean iOS-style row list (delete in the destructive colour, set off by a
+// divider) rather than a stack of big buttons.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _AssetActionsSheet extends StatelessWidget {
+  const _AssetActionsSheet({
+    required this.onShare,
+    required this.onDuplicate,
+    required this.onDelete,
+  });
+
+  final VoidCallback onShare;
+  final VoidCallback onDuplicate;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    final hc = context.hc;
+    final theme = Theme.of(context);
+
+    Widget row(IconData icon, String label, VoidCallback onTap,
+        {bool destructive = false}) {
+      final color = destructive ? hc.dangerColor : null;
+      return InkWell(
+        onTap: () {
+          HapticFeedback.lightImpact();
+          Navigator.of(context).pop();
+          onTap();
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md, vertical: AppSpacing.md),
+          child: Row(
+            children: [
+              Icon(icon, size: 22, color: color ?? hc.text2),
+              const SizedBox(width: AppSpacing.md),
+              Text(
+                label,
+                style: theme.textTheme.bodyLarge?.copyWith(
+                  color: color,
+                  fontWeight: destructive ? FontWeight.w600 : null,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          row(Icons.ios_share_rounded, l.actionShare, onShare),
+          row(Icons.copy_rounded, l.actionDuplicate, onDuplicate),
+          const Divider(height: 1),
+          row(Icons.delete_outline_rounded, l.commonDelete, onDelete,
+              destructive: true),
+          const SizedBox(height: AppSpacing.s2),
+        ],
       ),
     );
   }

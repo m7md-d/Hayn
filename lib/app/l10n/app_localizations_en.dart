@@ -689,6 +689,31 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get actionShare => 'Share';
+
+  @override
+  String get actionDuplicate => 'Duplicate';
+
+  @override
+  String get actionMoreTitle => 'Options';
+
+  @override
+  String get deleteConfirmTitle => 'Delete from device?';
+
+  @override
+  String get deleteConfirmMessage =>
+      'This removes it from your gallery. iOS keeps it in Recently Deleted for 30 days.';
+
+  @override
+  String get deleteDone => 'Deleted';
+
+  @override
+  String get duplicateDone => 'Duplicated';
+
+  @override
+  String get actionFailed => 'Something went wrong';
+
+  @override
   String get compressTitle => 'Compress';
 
   @override

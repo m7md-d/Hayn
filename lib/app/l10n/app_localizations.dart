@@ -1328,6 +1328,54 @@ abstract class AppLocalizations {
   /// **'{name} — coming in next phase'**
   String assetDetailComingSoon(String name);
 
+  /// No description provided for @actionShare.
+  ///
+  /// In en, this message translates to:
+  /// **'Share'**
+  String get actionShare;
+
+  /// No description provided for @actionDuplicate.
+  ///
+  /// In en, this message translates to:
+  /// **'Duplicate'**
+  String get actionDuplicate;
+
+  /// No description provided for @actionMoreTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Options'**
+  String get actionMoreTitle;
+
+  /// No description provided for @deleteConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete from device?'**
+  String get deleteConfirmTitle;
+
+  /// No description provided for @deleteConfirmMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'This removes it from your gallery. iOS keeps it in Recently Deleted for 30 days.'**
+  String get deleteConfirmMessage;
+
+  /// No description provided for @deleteDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Deleted'**
+  String get deleteDone;
+
+  /// No description provided for @duplicateDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Duplicated'**
+  String get duplicateDone;
+
+  /// No description provided for @actionFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Something went wrong'**
+  String get actionFailed;
+
   /// No description provided for @compressTitle.
   ///
   /// In en, this message translates to:

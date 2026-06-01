@@ -14,6 +14,20 @@ import UIKit
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
+  /// The topmost presented view controller of the key window — where a share
+  /// sheet must be presented from.
+  static func topViewController() -> UIViewController? {
+    let root = UIApplication.shared.connectedScenes
+      .compactMap { $0 as? UIWindowScene }
+      .flatMap { $0.windows }
+      .first { $0.isKeyWindow }?.rootViewController
+    var top = root
+    while let presented = top?.presentedViewController {
+      top = presented
+    }
+    return top
+  }
+
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
 
@@ -100,6 +114,43 @@ import UIKit
           }
         default:
           result(FlutterMethodNotImplemented)
+        }
+      }
+    }
+
+    // OS share sheet (UIActivityViewController). A user-initiated handoff — the
+    // app makes no network call; nothing leaves the device unless the user picks
+    // a destination. Kept as a tiny native channel so we add no third-party
+    // dependency to a deliberately offline app.
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "HaynShare") {
+      let channel = FlutterMethodChannel(
+        name: "hayn/share",
+        binaryMessenger: registrar.messenger()
+      )
+      channel.setMethodCallHandler { call, result in
+        guard call.method == "shareFiles" else {
+          result(FlutterMethodNotImplemented)
+          return
+        }
+        let paths = (call.arguments as? [String: Any])?["paths"] as? [String] ?? []
+        let urls = paths.map { URL(fileURLWithPath: $0) }
+        DispatchQueue.main.async {
+          guard !urls.isEmpty, let top = AppDelegate.topViewController() else {
+            result(nil)
+            return
+          }
+          let vc = UIActivityViewController(
+            activityItems: urls, applicationActivities: nil)
+          // iPad requires a popover anchor or it crashes.
+          if let pop = vc.popoverPresentationController {
+            pop.sourceView = top.view
+            pop.sourceRect = CGRect(
+              x: top.view.bounds.midX, y: top.view.bounds.midY,
+              width: 0, height: 0)
+            pop.permittedArrowDirections = []
+          }
+          top.present(vc, animated: true)
+          result(nil)
         }
       }
     }
