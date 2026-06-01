@@ -116,22 +116,16 @@ abstract final class ImageEncoder {
         // Lower quantizer = higher quality. Map 0–100 → ~[55..12].
         final maxQ = (63 - quality * 0.5).round().clamp(12, 55);
         final minQ = (maxQ - 12).clamp(0, maxQ);
-        // flutter_avif mishandles orientation + capture date, so we don't trust
-        // it: we bake the rotation INTO the pixels natively and hand it an
-        // already-upright LOSSLESS PNG whose embedded EXIF is exactly what we
-        // want (orientation = 1, date per the toggle, camera/GPS per keepMeta).
-        // flutter_avif then just copies that EXIF in → correct orientation +
-        // time + metadata, with PNG being lossless so only the AVIF pass is
-        // lossy. Off-iOS the bake returns null → fall back to keepExif:false
-        // (orientation handled by the engine's own decode; date at asset level).
-        final baked = await NativeImageEncoder.bakeUpright(
-          source: source,
-          keepMetadata: keepMetadata,
-          keepOriginalTime: keepOriginalTime,
-        );
-        final input = baked ?? source;
+        // keepExif stays FALSE for AVIF — and we DON'T pre-bake. The earlier
+        // "bake to a lossless PNG" trick fixed in-file metadata but round-tripped
+        // a 25–100 MB PNG per image (held in Dart + re-decoded on top of the
+        // encoder's RGBA buffer), which OOM-killed large AVIF batches. With
+        // keepExif:false the engine's own decode already yields upright pixels,
+        // so orientation is correct, and the capture date is set at the gallery
+        // -asset level (creationDate). In-file camera EXIF isn't carried for AVIF
+        // — the memory cost isn't worth it; HEIC remains the full-metadata path.
         final out = await avif.encodeAvif(
-          input,
+          source,
           minQuantizer: minQ,
           maxQuantizer: maxQ,
           minQuantizerAlpha: minQ,
@@ -140,10 +134,7 @@ abstract final class ImageEncoder {
           // CPU-bound — use more threads + a faster speed to cut the wait.
           maxThreads: 8,
           speed: 8,
-          // Only copy EXIF when we produced the upright PNG AND the user wants
-          // metadata; otherwise embedding the source's tag would re-introduce
-          // the double rotation.
-          keepExif: baked != null && keepMetadata,
+          keepExif: false,
         );
         return out;
       }

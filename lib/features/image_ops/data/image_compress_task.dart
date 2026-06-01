@@ -46,6 +46,9 @@ class ImageCompressTask extends MediaTask {
   /// Target output bit depth: 0 = match source (preserves HDR), 8 = force SDR.
   final int bitDepth;
 
+  /// Release iOS's tmp-exported originals every this many images (memory).
+  static const int _cacheClearEvery = 12;
+
   /// Keep the ORIGINAL capture time on the copy. When false (default) the copy
   /// gets the current moment, so it lands at the top of the gallery timeline.
   /// Independent of [keepMetadata] so the user can keep location yet re-date.
@@ -130,9 +133,17 @@ class ImageCompressTask extends MediaTask {
       }
 
       done++;
+      // Memory hygiene for big batches: on iOS, reading originBytes EXPORTS each
+      // original to a tmp file — left unchecked a 10k run piles those up (disk +
+      // RAM) and the OS kills us. Release them every batch. Processing is already
+      // strictly one-at-a-time, so peak memory stays ~a single image.
+      if (done % _cacheClearEvery == 0) {
+        await PhotoManager.clearFileCache();
+      }
       yield TaskProgress(progress: done / total, phase: '$done/$total');
     }
 
+    await PhotoManager.clearFileCache();
     if (_cancelled) return;
     if (saved == 0) {
       throw StateError('No image was saved');
