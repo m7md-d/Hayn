@@ -49,4 +49,26 @@ abstract final class NativeImageEncoder {
       return null;
     }
   }
+
+  /// Bake the EXIF orientation INTO the pixels and return a LOSSLESS PNG whose
+  /// embedded metadata is corrected (orientation = 1; capture date kept/stripped
+  /// per [keepOriginalTime]; camera/GPS kept only when [keepMetadata]). Used to
+  /// hand flutter_avif an already-upright source so AVIF stops coming out
+  /// rotated / mis-dated. Returns null off-iOS or on failure (caller falls back).
+  static Future<Uint8List?> bakeUpright({
+    required Uint8List source,
+    required bool keepMetadata,
+    required bool keepOriginalTime,
+  }) async {
+    try {
+      final res = await channel.invokeMethod<Uint8List>('bakeUpright', {
+        'bytes': source,
+        'keepMetadata': keepMetadata,
+        'keepOriginalTime': keepOriginalTime,
+      });
+      return (res != null && res.isNotEmpty) ? res : null;
+    } catch (_) {
+      return null;
+    }
+  }
 }
