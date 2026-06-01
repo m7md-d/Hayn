@@ -49,4 +49,26 @@ abstract final class NativeImageEncoder {
       return null;
     }
   }
+
+  /// Bake the EXIF orientation INTO the pixels → a LOSSLESS PNG with corrected
+  /// metadata (orientation = 1; date per [keepOriginalTime]; camera/GPS per
+  /// [keepMetadata]). Used for AVIF (flutter_avif mishandles orientation/date)
+  /// and PNG output (PNG viewers ignore EXIF orientation). Lossless — no quality
+  /// loss. Returns null off-iOS / on failure (caller falls back).
+  static Future<Uint8List?> bakeUpright({
+    required Uint8List source,
+    required bool keepMetadata,
+    required bool keepOriginalTime,
+  }) async {
+    try {
+      final res = await channel.invokeMethod<Uint8List>('bakeUpright', {
+        'bytes': source,
+        'keepMetadata': keepMetadata,
+        'keepOriginalTime': keepOriginalTime,
+      });
+      return (res != null && res.isNotEmpty) ? res : null;
+    } catch (_) {
+      return null;
+    }
+  }
 }

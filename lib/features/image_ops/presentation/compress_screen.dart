@@ -71,7 +71,6 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   int _originalBytes = 0;
 
   // ── Multi-image live size estimate ─────────────────────────────────────
-  CompressEstimateController? _estimateCtrl;
   EstimateResult? _estimate;
   Timer? _estimateDebounce;
 
@@ -86,6 +85,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   NativeImageInfo? _info; // real bit depth / alpha / HDR of the source
   int _bitDepth = 0; // target: 0 = match source (preserves HDR), 8 = SDR
   EncodedImage? _encoded;
+  double _encodeMs = 0; // active image's real encode time (anchors the ETA)
   bool _encoding = false;
   int _encodeSeq = 0;
   Timer? _debounce;
@@ -93,53 +93,15 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   @override
   void initState() {
     super.initState();
-    if (_isSingle) {
-      _loadSingle();
-    } else {
-      _loadPreview();
-      _loadOriginalBytes();
-      _scheduleEstimate();
-    }
+    _loadActive();
+    if (!_isSingle) _loadOriginalBytes();
   }
 
   @override
   void dispose() {
     _debounce?.cancel();
     _estimateDebounce?.cancel();
-    _estimateCtrl?.cancel();
     super.dispose();
-  }
-
-  /// Debounced live size estimate for a MULTI-image selection (single images
-  /// already show a real encode). Re-runs when format/quality change.
-  void _scheduleEstimate() {
-    if (_isSingle || _ids.isEmpty) return;
-    _estimateDebounce?.cancel();
-    _estimateDebounce = Timer(const Duration(milliseconds: 350), _runEstimate);
-  }
-
-  Future<void> _runEstimate() async {
-    _estimateCtrl?.cancel();
-    final ctrl = CompressEstimateController(ref);
-    _estimateCtrl = ctrl;
-    final q = _mode == _Mode.auto ? 80 : _quality.round();
-    await ctrl.run(
-      ids: _ids,
-      target: _format,
-      quality: q,
-      onUpdate: (r) {
-        if (!mounted || _estimateCtrl != ctrl) return;
-        setState(() => _estimate = r);
-      },
-    );
-  }
-
-  Future<void> _loadPreview() async {
-    if (_ids.isEmpty) return;
-    final entity = await AssetEntityCache.load(_ids[_activeAssetIndex]);
-    final data = await entity
-        ?.thumbnailDataWithSize(const ThumbnailSize.square(1080));
-    if (mounted) setState(() => _previewBytes = data);
   }
 
   Future<void> _loadOriginalBytes() async {
@@ -147,10 +109,17 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
     final facts = await ref.read(mediaIndexDatabaseProvider).factsFor(_ids);
     final sum = facts.fold<int>(0, (s, f) => s + f.sizeBytes);
     if (mounted) setState(() => _originalBytes = sum);
+    _scheduleEstimate(); // instant metadata prior; refines after the encode
   }
 
-  Future<void> _loadSingle() async {
-    final entity = await AssetEntityCache.load(_ids.first);
+  /// Load the ACTIVE image (single, or the one selected in the batch switcher):
+  /// origin + thumbnail + alpha/HDR probe, then kick a real encode for the
+  /// preview. The encode of this one image doubles as the calibration anchor for
+  /// a batch estimate — so we never encode the whole selection (that OOM'd).
+  Future<void> _loadActive() async {
+    if (_ids.isEmpty) return;
+    final id = _ids[_activeAssetIndex];
+    final entity = await AssetEntityCache.load(id);
     if (entity == null || !mounted) return;
     final thumb =
         await entity.thumbnailDataWithSize(const ThumbnailSize.square(1080));
@@ -169,10 +138,11 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
     _scheduleEncode();
   }
 
-  /// Debounced real encode of the single image — re-runs when the format /
-  /// quality / metadata choice changes, without thrashing on every slider tick.
+  /// Debounced real encode of the ACTIVE image — re-runs when format / quality /
+  /// metadata change, without thrashing on every slider tick. Runs for both
+  /// single and multi (multi uses it as the preview + the estimate anchor).
   void _scheduleEncode() {
-    if (!_isSingle || _originBytes == null) return;
+    if (_originBytes == null) return;
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 350), _runEncode);
   }
@@ -189,7 +159,9 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
     final q = _mode == _Mode.auto ? 80 : _quality.round();
     final seq = ++_encodeSeq;
     setState(() => _encoding = true);
+    if (!_isSingle) _scheduleEstimate(); // show prior + spinner while encoding
     try {
+      final sw = Stopwatch()..start();
       final result = await ImageEncoder.encode(
         source: src,
         target: target.format,
@@ -199,49 +171,122 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
         keepOriginalTime: _keepOriginalTime,
         bitDepth: _bitDepth,
       );
+      sw.stop();
       if (!mounted || seq != _encodeSeq) return;
       setState(() {
         _encoded = result;
+        _encodeMs = sw.elapsedMicroseconds / 1000.0;
         _encoding = false;
       });
+      if (!_isSingle) _runEstimate(); // refine the batch estimate with the anchor
     } catch (_) {
       if (!mounted || seq != _encodeSeq) return;
       setState(() => _encoding = false);
+      if (!_isSingle) _runEstimate();
     }
   }
 
-  /// The "after" pane: the REAL decoded encode for a single image (AVIF needs
-  /// flutter_avif's provider; the rest decode natively), or — for multi-select
-  /// / while encoding — the source with a slight desaturation so the panes
-  /// still read as before vs after.
+  /// Debounced batch estimate (multi only). Light: metadata prior calibrated by
+  /// the active image's real encode (the anchor) — no per-image sampling.
+  void _scheduleEstimate() {
+    if (_isSingle || _ids.isEmpty) return;
+    _estimateDebounce?.cancel();
+    _estimateDebounce = Timer(const Duration(milliseconds: 250), _runEstimate);
+  }
+
+  Future<void> _runEstimate() async {
+    if (_isSingle) return;
+    final ctrl = CompressEstimateController(ref);
+    final q = _mode == _Mode.auto ? 80 : _quality.round();
+    // Anchor on the active image once its real encode is in.
+    final anchored = _encoded != null && !_encoding;
+    final res = await ctrl.estimate(
+      ids: _ids,
+      target: _format,
+      quality: q,
+      anchorId: anchored ? _ids[_activeAssetIndex] : null,
+      anchorRealBytes: anchored ? _encoded!.bytes.length : null,
+      anchorMs: anchored ? _encodeMs : null,
+    );
+    if (!mounted) return;
+    setState(() => _estimate = EstimateResult(
+          size: res.size,
+          refining: _encoding, // still computing the anchor
+          etaSeconds: res.etaSeconds,
+        ));
+  }
+
+  /// The "after" pane: the REAL full-resolution encode (single AND multi now —
+  /// multi compresses the active image for the preview). While that encode is in
+  /// flight it shows a CLEAR "compressing…" state over the dimmed source, never a
+  /// fake desaturated "result", so the user always knows whether it's done.
   Widget _afterWidget() {
     final enc = _encoded;
-    if (_isSingle && enc != null && !_encoding) {
-      if (enc.format == DefaultFormat.avif) {
-        return AvifImage.memory(enc.bytes, fit: BoxFit.contain);
-      }
-      // Full-resolution decode on purpose: the whole point of the comparison
-      // is to zoom in and inspect REAL compression artefacts. Downscaling the
-      // preview would defeat it. (Memory is handled by not thrashing encodes —
-      // the debounce — and by AVIF no longer being the slow auto default.)
-      return Image.memory(
-        enc.bytes,
-        fit: BoxFit.contain,
-        gaplessPlayback: true,
-        errorBuilder: (_, __, ___) =>
-            Image.memory(_previewBytes!, fit: BoxFit.contain),
+    final l = AppLocalizations.of(context);
+    final hc = context.hc;
+    if (_encoding || enc == null) {
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          if (_previewBytes != null)
+            Opacity(
+              opacity: 0.3,
+              child: Image.memory(_previewBytes!,
+                  fit: BoxFit.contain, gaplessPlayback: true),
+            ),
+          Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2.4, color: hc.accent),
+                ),
+                const SizedBox(height: AppSpacing.s3),
+                Text(l.compressComputing,
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: hc.text2)),
+              ],
+            ),
+          ),
+        ],
       );
     }
-    return ColorFiltered(
-      colorFilter: const ColorFilter.matrix([
-        0.95, 0.0, 0.0, 0.0, 0, //
-        0.0, 0.95, 0.0, 0.0, 0, //
-        0.0, 0.0, 0.95, 0.0, 0, //
-        0.0, 0.0, 0.0, 1.0, 0, //
-      ]),
-      child: Image.memory(_previewBytes!, fit: BoxFit.contain,
-          gaplessPlayback: true),
+    if (enc.format == DefaultFormat.avif) {
+      return AvifImage.memory(enc.bytes, fit: BoxFit.contain);
+    }
+    // Full-resolution decode on purpose: the comparison is for zooming in on
+    // REAL compression artefacts. Falls back to the thumbnail if a format won't
+    // decode in the engine.
+    return Image.memory(
+      enc.bytes,
+      fit: BoxFit.contain,
+      gaplessPlayback: true,
+      errorBuilder: (_, __, ___) =>
+          Image.memory(_previewBytes!, fit: BoxFit.contain),
     );
+  }
+
+  /// The "before" pane: the FULL-RESOLUTION original (so zooming compares true
+  /// quality), with the quick thumbnail as the placeholder until it loads / if a
+  /// format can't decode in the engine.
+  Widget _beforeWidget() {
+    final origin = _originBytes;
+    if (origin != null) {
+      return Image.memory(
+        origin,
+        fit: BoxFit.contain,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) => _previewBytes != null
+            ? Image.memory(_previewBytes!, fit: BoxFit.contain)
+            : const SizedBox.shrink(),
+      );
+    }
+    return Image.memory(_previewBytes!, fit: BoxFit.contain, gaplessPlayback: true);
   }
 
   /// True when the user forced an opaque format (JPEG) on a transparent image —
@@ -260,9 +305,10 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
     setState(() {
       _activeAssetIndex = newIndex;
       _previewBytes = null;
+      _encoded = null; // the old encode belonged to the previous image
     });
     HapticFeedback.selectionClick();
-    _loadPreview();
+    _loadActive();
   }
 
   void _apply() {
@@ -329,11 +375,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
                   : HaynComparisonViewer(
                       beforeLabel: l.compressOriginalLabel,
                       afterLabel: l.compressPreviewLabel,
-                      before: Image.memory(
-                        _previewBytes!,
-                        fit: BoxFit.contain,
-                        gaplessPlayback: true,
-                      ),
+                      before: _beforeWidget(),
                       after: _afterWidget(),
                     ),
             ),

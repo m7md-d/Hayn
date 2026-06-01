@@ -112,6 +112,21 @@ import UIKit
             let info = ImageProbeNative.probe(data)
             DispatchQueue.main.async { result(info) }
           }
+        case "bakeUpright":
+          guard let typed = args?["bytes"] as? FlutterStandardTypedData else {
+            result(nil)
+            return
+          }
+          let keepMeta = (args?["keepMetadata"] as? Bool) ?? true
+          let keepTime2 = (args?["keepOriginalTime"] as? Bool) ?? true
+          let data = typed.data
+          DispatchQueue.global(qos: .userInitiated).async {
+            let out = ImageBaker.bakeUprightPng(
+              data, keepMetadata: keepMeta, keepOriginalTime: keepTime2)
+            DispatchQueue.main.async {
+              result(out.map { FlutterStandardTypedData(bytes: $0) })
+            }
+          }
         default:
           result(FlutterMethodNotImplemented)
         }
@@ -447,6 +462,91 @@ private enum ImageEncoderNative {
     }
     ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
     return ctx.makeImage()
+  }
+}
+
+/// Bakes an image's EXIF orientation INTO the pixels and writes a LOSSLESS PNG
+/// carrying the corrected metadata (orientation = 1; capture date kept/stripped
+/// per the toggle; camera/GPS per keepMetadata). Used for two cases where the
+/// orientation TAG isn't honoured downstream, so the pixels themselves must be
+/// upright:
+///   • AVIF — flutter_avif otherwise double-rotates + mis-dates.
+///   • PNG output — PNG viewers (incl. Skia, used by the in-app preview) ignore
+///     EXIF orientation, so a tagged-but-unrotated PNG shows sideways.
+/// PNG is lossless, so this never degrades the image (no quality hack).
+private enum ImageBaker {
+  static func bakeUprightPng(
+    _ data: Data, keepMetadata: Bool, keepOriginalTime: Bool
+  ) -> Data? {
+    guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+          CGImageSourceGetCount(source) > 0,
+          let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+      NSLog("hayn/bake: decode failed")
+      return nil
+    }
+    let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
+      as? [CFString: Any]
+    let orientation =
+      (props?[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1
+    let upright = orientation == 1
+      ? image
+      : (Self.bake(image, exifOrientation: orientation) ?? image)
+
+    let out = NSMutableData()
+    guard let dest = CGImageDestinationCreateWithData(
+      out as CFMutableData, "public.png" as CFString, 1, nil
+    ) else {
+      NSLog("hayn/bake: png destination failed")
+      return nil
+    }
+    var destProps: [CFString: Any] = [:]
+    if keepMetadata, let p = props {
+      for (k, v) in p { destProps[k] = v }
+      if !keepOriginalTime { ImageEncoderNative.removeDateTags(&destProps) }
+    }
+    // Pixels are physically upright now → every orientation field must read 1.
+    destProps[kCGImagePropertyOrientation] = 1
+    if var tiff = destProps[kCGImagePropertyTIFFDictionary] as? [CFString: Any] {
+      tiff[kCGImagePropertyTIFFOrientation] = 1
+      destProps[kCGImagePropertyTIFFDictionary] = tiff
+    }
+    CGImageDestinationAddImage(dest, upright, destProps as CFDictionary)
+    guard CGImageDestinationFinalize(dest) else {
+      NSLog("hayn/bake: finalize failed")
+      return nil
+    }
+    let result = out as Data
+    if result.isEmpty { return nil }
+    NSLog("hayn/bake: ori\(orientation) meta:\(keepMetadata) "
+      + "keepTime:\(keepOriginalTime) \(data.count) → \(result.count)")
+    return result
+  }
+
+  /// Redraw applying the EXIF orientation so the output pixels are upright.
+  /// UIImage knows the per-orientation transform, so drawing it bakes it in.
+  static func bake(_ image: CGImage, exifOrientation o: Int) -> CGImage? {
+    let ui = UIImage(cgImage: image, scale: 1, orientation: Self.uiOrientation(o))
+    let format = UIGraphicsImageRendererFormat.default()
+    format.scale = 1
+    format.opaque = false
+    let renderer = UIGraphicsImageRenderer(size: ui.size, format: format)
+    let baked = renderer.image { _ in
+      ui.draw(in: CGRect(origin: .zero, size: ui.size))
+    }
+    return baked.cgImage
+  }
+
+  static func uiOrientation(_ o: Int) -> UIImage.Orientation {
+    switch o {
+    case 2: return .upMirrored
+    case 3: return .down
+    case 4: return .downMirrored
+    case 5: return .leftMirrored
+    case 6: return .right
+    case 7: return .rightMirrored
+    case 8: return .left
+    default: return .up
+    }
   }
 }
 

@@ -1,32 +1,23 @@
-import 'dart:async';
-
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:photo_manager/photo_manager.dart';
 
 import '../../../data/index/index_providers.dart';
 import '../../settings/providers/preferences_providers.dart';
 import '../domain/compress_estimator.dart';
-import 'image_encoder.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CompressEstimateController — live, accurate, memory-safe estimate for a
-// (possibly huge) selection.
+// CompressEstimateController — a FAST, memory-safe size/time estimate for a
+// multi-image selection.
 //
-// Accuracy: each sample is a REAL full-resolution encode of the original at the
-// chosen settings — exactly what the task produces — so there's ZERO
-// extrapolation bias. (Downscaled proxies/thumbnails were 2.5–3× too big at high
-// quality because shrinking an image concentrates detail and inflates its
-// bits-per-pixel.) Those real encodes also time the device per format, so the
-// ETA is truthful (a light WebP ≠ a heavy AVIF).
+// It does NO encoding of its own. (A sampling loop that encoded many full-res
+// images — PNG outputs are huge — is what OOM-killed a select-all run.) Instead:
+//   • the instant metadata PRIOR is computed from the index (pixels + source
+//     bytes + format) for the whole selection — zero IO, fine for 10k;
+//   • it's calibrated by ONE real data point: the active image the screen ALdy
+//     compresses for the preview. That single anchor pins the model to this
+//     batch + codec + device, and its encode time gives a per-format ETA.
 //
-// Memory: samples run STRICTLY one-at-a-time, awaited, with a hard count + a
-// wall-clock budget, and iOS tmp exports are released at the end. There's no
-// fire-and-forget work that could stack full-res encodes (that — a debug
-// self-test left unawaited — is what OOM-killed a select-all-10k run).
-//
-// Dynamic by N (≤24 → encode all ≈ exact; larger → up to [_maxSamples]
-// stratified, slow formats getting fewer but each exact, the prior covering the
-// remainder). Cancellable; the instant prior shows first and refines live.
+// One real encode (the preview the user is looking at anyway) → close-to-real
+// number, instantly, with no extra memory.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class EstimateResult {
@@ -44,26 +35,24 @@ class CompressEstimateController {
   CompressEstimateController(this.ref);
   final WidgetRef ref;
 
-  bool _cancelled = false;
-  void cancel() => _cancelled = true;
-
-  static const _budget = Duration(milliseconds: 2500);
-  static const _maxSamples = 16;
-
-  Future<void> run({
+  /// Compute the estimate. [anchorId]/[anchorRealBytes]/[anchorMs] are the real
+  /// result of compressing the active preview image (when available) — used to
+  /// calibrate the whole-batch prior + derive the ETA. With no anchor it returns
+  /// the instant prior. Never encodes; never throws.
+  Future<EstimateResult> estimate({
     required List<String> ids,
     required DefaultFormat target,
     required int quality,
-    required void Function(EstimateResult) onUpdate,
+    String? anchorId,
+    int? anchorRealBytes,
+    double? anchorMs,
   }) async {
     final facts = await ref.read(mediaIndexDatabaseProvider).estimateFactsFor(ids);
-    if (_cancelled) return;
     if (facts.isEmpty) {
-      onUpdate(const EstimateResult(
+      return const EstimateResult(
         size: SizeEstimate(low: 0, expected: 0, high: 0, confidence: 0),
         refining: false,
-      ));
-      return;
+      );
     }
 
     final items = [
@@ -75,84 +64,35 @@ class CompressEstimateController {
         ),
     ];
 
-    var current = CompressEstimator.prior(items, target, quality);
-    onUpdate(EstimateResult(size: current, refining: true));
-    if (_cancelled) return;
-
-    final n = items.length;
-    final cap = n <= 24 ? n : _maxSamples;
-    final indices = CompressEstimator.selectSampleIndices(items, cap);
-
-    final samples = <BppSample>[];
-    final clock = Stopwatch()..start();
-    var totalMs = 0.0, totalMp = 0.0;
-
-    for (final i in indices) {
-      if (_cancelled) return;
-      if (samples.isNotEmpty && clock.elapsed > _budget) break;
-      final m = await _sampleOne(facts[i].id, target, quality);
-      if (_cancelled) return;
-      if (m == null) continue;
-      samples.add(BppSample(
-        item: items[i],
-        predicted:
-            CompressEstimator.predictItemBytes(items[i], target, quality),
-        actual: m.bytes,
-      ));
-      totalMs += m.ms;
-      totalMp += items[i].pixels / 1e6;
-      current = CompressEstimator.calibrate(items, target, quality, samples);
-      onUpdate(EstimateResult(
-        size: current,
-        refining: true,
-        etaSeconds: _eta(items, totalMs, totalMp),
-      ));
+    EstimateItem? anchorItem;
+    BppSample? anchor;
+    if (anchorId != null && anchorRealBytes != null && anchorRealBytes > 0) {
+      final idx = facts.indexWhere((f) => f.id == anchorId);
+      if (idx >= 0) {
+        anchorItem = items[idx];
+        anchor = BppSample(
+          item: anchorItem,
+          predicted:
+              CompressEstimator.predictItemBytes(anchorItem, target, quality),
+          actual: anchorRealBytes,
+        );
+      }
     }
 
-    // Release the originals iOS exported to tmp while sampling.
-    await PhotoManager.clearFileCache();
-    if (_cancelled) return;
-    onUpdate(EstimateResult(
-      size: current,
-      refining: false,
-      etaSeconds: _eta(items, totalMs, totalMp),
-    ));
-  }
+    final size = anchor != null
+        ? CompressEstimator.calibrate(items, target, quality, [anchor])
+        : CompressEstimator.prior(items, target, quality);
 
-  /// One REAL full-resolution encode → exact output bytes + real encode time.
-  /// keepMetadata:false keeps the sample light (metadata adds only a few KB,
-  /// irrelevant to a size class). Null on any failure (sample skipped).
-  Future<({int bytes, double ms})?> _sampleOne(
-    String id,
-    DefaultFormat target,
-    int quality,
-  ) async {
-    try {
-      final origin = await (await AssetEntity.fromId(id))?.originBytes;
-      if (origin == null || _cancelled) return null;
-      final sw = Stopwatch()..start();
-      final enc = await ImageEncoder.encode(
-        source: origin,
-        target: target,
-        quality: quality,
-        hasAlpha: false,
-        keepMetadata: false,
-      );
-      sw.stop();
-      if (enc.bytes.isEmpty) return null;
-      return (bytes: enc.bytes.length, ms: sw.elapsedMicroseconds / 1000.0);
-    } catch (_) {
-      return null;
+    double? eta;
+    if (anchorMs != null && anchorMs > 0 && anchorItem != null) {
+      final anchorMp = anchorItem.pixels / 1e6;
+      if (anchorMp > 0) {
+        final batchMp = items.fold<double>(0, (s, it) => s + it.pixels / 1e6);
+        eta = (batchMp * (anchorMs / anchorMp)) / 1000.0;
+      }
     }
-  }
 
-  /// Total compress time from REAL per-megapixel encode timing (per format, per
-  /// device) — no fudge. Null until we have a sample.
-  double? _eta(List<EstimateItem> items, double totalMs, double totalMp) {
-    if (totalMp <= 0 || totalMs <= 0) return null;
-    final msPerMp = totalMs / totalMp;
-    final batchMp = items.fold<double>(0, (s, it) => s + it.pixels / 1e6);
-    return (batchMp * msPerMp) / 1000.0;
+    return EstimateResult(size: size, refining: false, etaSeconds: eta);
   }
 
   static String _ext(String? title) {

@@ -116,16 +116,21 @@ abstract final class ImageEncoder {
         // Lower quantizer = higher quality. Map 0–100 → ~[55..12].
         final maxQ = (63 - quality * 0.5).round().clamp(12, 55);
         final minQ = (maxQ - 12).clamp(0, maxQ);
-        // keepExif stays FALSE for AVIF — and we DON'T pre-bake. The earlier
-        // "bake to a lossless PNG" trick fixed in-file metadata but round-tripped
-        // a 25–100 MB PNG per image (held in Dart + re-decoded on top of the
-        // encoder's RGBA buffer), which OOM-killed large AVIF batches. With
-        // keepExif:false the engine's own decode already yields upright pixels,
-        // so orientation is correct, and the capture date is set at the gallery
-        // -asset level (creationDate). In-file camera EXIF isn't carried for AVIF
-        // — the memory cost isn't worth it; HEIC remains the full-metadata path.
+        // flutter_avif mishandles orientation + date, so we bake the rotation
+        // into the pixels natively and hand it an already-upright LOSSLESS PNG
+        // whose embedded EXIF is exactly what we want; it just copies that EXIF
+        // in → correct orientation + time + camera metadata, with PNG lossless so
+        // only the AVIF pass is lossy. (This is per-image, one-at-a-time in the
+        // task — NOT the cause of the earlier OOM, which was the estimate's
+        // sampling loop.) Off-iOS the bake is null → keepExif:false fallback.
+        final baked = await NativeImageEncoder.bakeUpright(
+          source: source,
+          keepMetadata: keepMetadata,
+          keepOriginalTime: keepOriginalTime,
+        );
+        final input = baked ?? source;
         final out = await avif.encodeAvif(
-          source,
+          input,
           minQuantizer: minQ,
           maxQuantizer: maxQ,
           minQuantizerAlpha: minQ,
@@ -134,7 +139,7 @@ abstract final class ImageEncoder {
           // CPU-bound — use more threads + a faster speed to cut the wait.
           maxThreads: 8,
           speed: 8,
-          keepExif: false,
+          keepExif: baked != null && keepMetadata,
         );
         return out;
       }
@@ -148,30 +153,35 @@ abstract final class ImageEncoder {
       };
       if (cf == null) return null;
 
-      // Prefer our own ImageIO encoder for HEIC/JPEG/PNG: it avoids the plugin's
-      // "opaque image with AlphaLast" warning and carries real camera metadata
-      // (the plugin only did EXIF for JPEG). Only when there's no downscale cap
-      // (a cap falls through to the plugin, which scales). Native returns null
-      // off-iOS / on any failure, so the plugin below stays the safety net.
       final noCap = maxWidth == null && maxHeight == null;
-      const nativeFormats = {
-        DefaultFormat.heic,
-        DefaultFormat.jpeg,
-        DefaultFormat.png,
-      };
+
+      // PNG output: viewers ignore EXIF orientation, so bake it into the pixels
+      // (lossless) rather than leave a tag that shows sideways. The bake also
+      // carries the corrected metadata. Falls through to the plugin off-iOS
+      // (Android applies orientation on decode).
+      if (noCap && format == DefaultFormat.png) {
+        final baked = await NativeImageEncoder.bakeUpright(
+          source: source,
+          keepMetadata: keepMetadata,
+          keepOriginalTime: keepOriginalTime,
+        );
+        if (baked != null && baked.isNotEmpty) return baked;
+      }
+
+      // Prefer our own ImageIO encoder for HEIC/JPEG: it avoids the plugin's
+      // "opaque image with AlphaLast" warning and carries real camera metadata
+      // (the plugin only did EXIF for JPEG), keeping the orientation TAG (which
+      // HEIC/JPEG viewers honour). Native returns null off-iOS / on failure, so
+      // the plugin below stays the safety net.
+      const nativeFormats = {DefaultFormat.heic, DefaultFormat.jpeg};
       if (noCap && nativeFormats.contains(format)) {
         final native = await NativeImageEncoder.encode(
           source: source,
-          format: switch (format) {
-            DefaultFormat.heic => 'heic',
-            DefaultFormat.png => 'png',
-            _ => 'jpeg',
-          },
+          format: format == DefaultFormat.heic ? 'heic' : 'jpeg',
           quality: quality.clamp(1, 100),
           keepMetadata: keepMetadata,
           keepOriginalTime: keepOriginalTime,
-          // Only HEIC honours a forced depth; PNG must keep its alpha and JPEG
-          // is 8-bit anyway, so they always match the source.
+          // Only HEIC honours a forced depth; JPEG is 8-bit anyway.
           bitDepth: format == DefaultFormat.heic ? bitDepth : 0,
         );
         if (native != null && native.isNotEmpty) return native;
