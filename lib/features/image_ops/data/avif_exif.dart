@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode, visibleForTesting;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AvifExif — fixes the orientation of a flutter_avif output.
@@ -27,10 +27,18 @@ abstract final class AvifExif {
   static Uint8List normalizeOrientation(Uint8List avif) {
     try {
       final tiffStart = _locateExifTiff(avif);
-      if (tiffStart == null) return avif;
+      if (tiffStart == null) {
+        if (kDebugMode) debugPrint('hayn/avif: Exif item not found — no fix');
+        return avif;
+      }
       final copy = Uint8List.fromList(avif);
-      return setTiffOrientation(copy, tiffStart, 1) ? copy : avif;
-    } catch (_) {
+      final ok = setTiffOrientation(copy, tiffStart, 1);
+      if (kDebugMode) {
+        debugPrint('hayn/avif: orientation patch ${ok ? "applied" : "skipped"}');
+      }
+      return ok ? copy : avif;
+    } catch (e) {
+      if (kDebugMode) debugPrint('hayn/avif: patch error $e');
       return avif;
     }
   }
@@ -44,11 +52,15 @@ abstract final class AvifExif {
     final iinf = _findBox(b, childrenStart, meta.end, 'iinf');
     final iloc = _findBox(b, childrenStart, meta.end, 'iloc');
     if (iinf == null || iloc == null) return null;
+    // Some muxers store small items (EXIF) inside an 'idat' box rather than
+    // 'mdat' (iloc construction_method == 1); offsets are then idat-relative.
+    final idat = _findBox(b, childrenStart, meta.end, 'idat');
+    final idatStart = idat?.contentStart ?? 0;
 
     final exifId = _exifItemId(b, iinf);
     if (exifId == null) return null;
 
-    final extent = _itemExtent(b, iloc, exifId);
+    final extent = _itemExtent(b, iloc, exifId, idatStart);
     if (extent == null) return null;
     final (off, len) = extent;
     if (off < 0 || len < 8 || off + len > b.length) return null;
@@ -96,7 +108,10 @@ abstract final class AvifExif {
   }
 
   /// Resolve the (absolute offset, length) of [itemId]'s first extent.
-  static (int, int)? _itemExtent(Uint8List b, _Box iloc, int itemId) {
+  /// [idatStart] is the content offset of the 'idat' box (0 if none), used when
+  /// the item's construction_method is 1 (idat-relative).
+  static (int, int)? _itemExtent(
+      Uint8List b, _Box iloc, int itemId, int idatStart) {
     final version = b[iloc.contentStart];
     var p = iloc.contentStart + 4; // after version + flags
     final offsetSize = b[p] >> 4;
@@ -149,11 +164,12 @@ abstract final class AvifExif {
         }
       }
 
-      if (id == itemId &&
-          constructionMethod == 0 &&
-          foundOffset != null &&
-          foundLength != null) {
-        return (baseOffset + foundOffset, foundLength);
+      if (id == itemId && foundOffset != null && foundLength != null) {
+        if (constructionMethod == 0) {
+          return (baseOffset + foundOffset, foundLength); // file offset
+        } else if (constructionMethod == 1) {
+          return (idatStart + baseOffset + foundOffset, foundLength); // idat
+        }
       }
     }
     return null;
