@@ -714,6 +714,22 @@ class AppLocalizationsEn extends AppLocalizations {
   String get actionFailed => 'Something went wrong';
 
   @override
+  String get shareLimitTitle => 'Share fewer at once';
+
+  @override
+  String shareLimitMessage(int count, int cap) {
+    return 'You selected $count items, but only $cap can be shared at a time. Share the first $cap?';
+  }
+
+  @override
+  String shareLimitConfirm(int cap) {
+    return 'Share $cap';
+  }
+
+  @override
+  String get sharePreparing => 'Preparing to share…';
+
+  @override
   String get compressTitle => 'Compress';
 
   @override

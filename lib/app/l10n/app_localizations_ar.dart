@@ -719,6 +719,22 @@ class AppLocalizationsAr extends AppLocalizations {
   String get actionFailed => 'حدث خطأ ما';
 
   @override
+  String get shareLimitTitle => 'شارك عددًا أقل دفعة واحدة';
+
+  @override
+  String shareLimitMessage(int count, int cap) {
+    return 'حدّدت $count عنصرًا، لكن يمكن مشاركة $cap فقط في المرة. أشارك أول $cap؟';
+  }
+
+  @override
+  String shareLimitConfirm(int cap) {
+    return 'شارك $cap';
+  }
+
+  @override
+  String get sharePreparing => 'جارٍ التحضير للمشاركة…';
+
+  @override
   String get compressTitle => 'ضغط';
 
   @override

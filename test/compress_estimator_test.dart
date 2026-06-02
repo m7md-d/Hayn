@@ -206,6 +206,91 @@ void main() {
     });
   });
 
+  group('CompressEstimator.calibrateWithAnchor (single preview anchor)', () {
+    BppSample anchorOf(
+        EstimateItem it, DefaultFormat target, int q, double ratio) {
+      final p = CompressEstimator.predictItemBytes(it, target, q);
+      return BppSample(item: it, predicted: p, actual: (p * ratio).round());
+    }
+
+    test('a homogeneous batch trusts the anchor (≈ applies its ratio)', () {
+      // Every item shares the anchor's family + bpp tier, so the lone sample
+      // generalises — the correction is applied at ~full weight (0.9).
+      final items = [
+        for (var i = 0; i < 40; i++) _mk(SourceFamily.jpeg, 0.9, 8000000)
+      ];
+      const target = DefaultFormat.heic;
+      const q = 80;
+      final prior = CompressEstimator.prior(items, target, q).expected;
+      // Real encode came out at half the prediction → alpha = 1+(0.5−1)*0.9.
+      final est = CompressEstimator.calibrateWithAnchor(
+          items, target, q, anchorOf(items.first, target, q, 0.5));
+      expect(est.expected / prior, closeTo(0.55, 0.04));
+    });
+
+    test('a lone far-stratum anchor does NOT rescale the whole batch', () {
+      // 60 low-detail JPEGs (the mass) + one high-detail PNG anchor (far in
+      // both family and bpp tier). A blind single-factor calibration would
+      // scale everything by the PNG's ratio; the de-biased one must not.
+      final items = <EstimateItem>[
+        for (var i = 0; i < 60; i++) _mk(SourceFamily.jpeg, 0.25, 6000000),
+        _mk(SourceFamily.png, 1.0, 6000000),
+      ];
+      const target = DefaultFormat.avif;
+      const q = 80;
+      final prior = CompressEstimator.prior(items, target, q).expected;
+      final anchor = anchorOf(items.last, target, q, 3.0); // under-predicted ×3
+      final deBiased =
+          CompressEstimator.calibrateWithAnchor(items, target, q, anchor)
+              .expected;
+      final blind =
+          CompressEstimator.calibrate(items, target, q, [anchor]).expected;
+      expect(deBiased / prior, lessThan(1.6),
+          reason: 'far anchor over-moved the batch');
+      expect(blind / prior, greaterThan(2.5),
+          reason: 'sanity: the blind path really does globally rescale');
+    });
+
+    test('switching the previewed anchor swings the total far less than blind',
+        () {
+      // Two small, distinct strata + a large neutral mass far from both. As the
+      // user flips the preview between an A and a B image, the de-biased total
+      // should barely move (the neutral mass stays near its prior), whereas a
+      // blind single-factor calibration would swing by the full ratio gap.
+      final items = <EstimateItem>[
+        for (var i = 0; i < 10; i++) _mk(SourceFamily.jpeg, 0.3, 5000000), // A
+        for (var i = 0; i < 10; i++) _mk(SourceFamily.heif, 0.95, 9000000), // B
+        for (var i = 0; i < 80; i++)
+          _mk(SourceFamily.other, 1.4, 4000000), // neutral mass (far from both)
+      ];
+      const target = DefaultFormat.heic;
+      const q = 80;
+      final aA = anchorOf(items.first, target, q, 0.5);
+      final aB = anchorOf(items[15], target, q, 2.0);
+      final swingDeBiased = (CompressEstimator.calibrateWithAnchor(
+                  items, target, q, aA)
+              .expected -
+          CompressEstimator.calibrateWithAnchor(items, target, q, aB).expected)
+          .abs();
+      final swingBlind =
+          (CompressEstimator.calibrate(items, target, q, [aA]).expected -
+                  CompressEstimator.calibrate(items, target, q, [aB]).expected)
+              .abs();
+      expect(swingDeBiased, lessThan(swingBlind * 0.5),
+          reason: 'preview bias not dampened enough');
+    });
+
+    test('a degenerate anchor falls back to the prior', () {
+      final items = _batch(30);
+      const target = DefaultFormat.heic;
+      const q = 80;
+      final prior = CompressEstimator.prior(items, target, q);
+      final bad = BppSample(item: items.first, predicted: 0, actual: 0);
+      final est = CompressEstimator.calibrateWithAnchor(items, target, q, bad);
+      expect(est.expected, prior.expected);
+    });
+  });
+
   group('CompressEstimator.selectSampleIndices (dynamic + stratified)', () {
     test('small batch → sample everything (exact path)', () {
       final items = _batch(15);

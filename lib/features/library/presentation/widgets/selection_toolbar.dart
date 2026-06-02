@@ -5,6 +5,7 @@ import '../../../../app/l10n/app_localizations.dart';
 import '../../../../app/theme/app_theme_extension.dart';
 import '../../../../app/theme/design_tokens.dart';
 import '../../../../core/batch/batch_savings_estimator.dart';
+import '../../../../core/capabilities/format_capabilities.dart';
 import '../../../../data/index/index_providers.dart';
 import '../../../settings/providers/preferences_providers.dart';
 import '../providers/library_provider.dart';
@@ -193,17 +194,34 @@ class _SavingsChipState extends ConsumerState<_SavingsChip> {
 
   Future<BatchSavingsEstimate> _estimate(
       List<String> ids, DefaultFormat format, int quality) async {
-    // Facts come from the index, so the estimate spans the WHOLE selection
-    // (even select-all over thousands), not just the loaded grid pages.
-    final facts = await ref.read(mediaIndexDatabaseProvider).factsFor(ids);
+    // Mime-aware facts from the index, so the chip classifies each source the
+    // SAME way the compress screen does — spanning the WHOLE selection (even
+    // select-all over thousands), not just the loaded grid pages.
+    final rows =
+        await ref.read(mediaIndexDatabaseProvider).estimateFactsFor(ids);
+    final facts = [
+      for (final r in rows)
+        BatchSavingsEstimator.factsFrom(
+          sizeBytes: r.sizeBytes,
+          width: r.width,
+          height: r.height,
+          mimeType: r.mimeType,
+          title: r.title,
+        ),
+    ];
     return BatchSavingsEstimator.estimate(
         facts: facts, format: format, quality: quality);
   }
 
   @override
   Widget build(BuildContext context) {
-    final format = ref.watch(defaultFormatProvider);
-    final quality = _qualityToInt(ref.watch(defaultQualityProvider));
+    // Resolve `auto` to the codec that will actually run — the compress screen
+    // models the real codec too, so both land on the same number.
+    final caps = ref.watch(formatCapabilitiesProvider);
+    final raw = ref.watch(defaultFormatProvider);
+    final format =
+        raw == DefaultFormat.auto ? DefaultFormat.resolveAuto(caps) : raw;
+    final quality = qualityIntFor(ref.watch(defaultQualityProvider));
     final ids = ref.watch(libraryProvider.select((s) => s.selectedIds));
     final key = Object.hash(ids.length, format, quality);
     if (key != _lastKey) {
@@ -283,12 +301,6 @@ class _SavingsChipState extends ConsumerState<_SavingsChip> {
       },
     );
   }
-
-  int _qualityToInt(DefaultQuality q) => switch (q) {
-        DefaultQuality.lightning => 50,
-        DefaultQuality.balanced => 80,
-        DefaultQuality.highest => 95,
-      };
 
   static String _formatBytes(int b) {
     if (b < 1024) return '$b B';

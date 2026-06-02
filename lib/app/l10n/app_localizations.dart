@@ -1376,6 +1376,30 @@ abstract class AppLocalizations {
   /// **'Something went wrong'**
   String get actionFailed;
 
+  /// No description provided for @shareLimitTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Share fewer at once'**
+  String get shareLimitTitle;
+
+  /// No description provided for @shareLimitMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'You selected {count} items, but only {cap} can be shared at a time. Share the first {cap}?'**
+  String shareLimitMessage(int count, int cap);
+
+  /// No description provided for @shareLimitConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Share {cap}'**
+  String shareLimitConfirm(int cap);
+
+  /// No description provided for @sharePreparing.
+  ///
+  /// In en, this message translates to:
+  /// **'Preparing to share…'**
+  String get sharePreparing;
+
   /// No description provided for @compressTitle.
   ///
   /// In en, this message translates to:

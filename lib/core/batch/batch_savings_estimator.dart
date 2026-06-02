@@ -13,9 +13,17 @@ import '../../features/settings/providers/preferences_providers.dart';
 // negative, when a format would grow a file).
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Minimal per-asset facts the estimate needs (from the index). Optional
-/// [mimeType] sharpens the per-format model; null falls back to a generic curve.
-typedef AssetSizeFacts = ({int sizeBytes, int width, int height});
+/// Minimal per-asset facts the estimate needs (from the index). [family] is the
+/// source codec (jpeg/heif/…), which the per-item model needs to read source
+/// bytes correctly — build it with [BatchSavingsEstimator.factsFrom] from the
+/// index's mime/title so the chip classifies content the SAME way the compress
+/// screen does (otherwise the two show different savings).
+typedef AssetSizeFacts = ({
+  int sizeBytes,
+  int width,
+  int height,
+  SourceFamily family,
+});
 
 class BatchSavingsEstimate {
   const BatchSavingsEstimate({
@@ -45,6 +53,29 @@ class BatchSavingsEstimate {
 }
 
 abstract final class BatchSavingsEstimator {
+  /// Build facts from an index row, classifying the source family from its
+  /// mime/title — so the chip's per-item model matches the compress screen's.
+  static AssetSizeFacts factsFrom({
+    required int sizeBytes,
+    required int width,
+    required int height,
+    String? mimeType,
+    String? title,
+  }) {
+    final t = title ?? '';
+    final dot = t.lastIndexOf('.');
+    final ext = (dot >= 0 && dot < t.length - 1) ? t.substring(dot + 1) : '';
+    return (
+      sizeBytes: sizeBytes,
+      width: width,
+      height: height,
+      family: SourceFamilyFromMime.of(mimeType, ext: ext),
+    );
+  }
+
+  /// [format] must be a CONCRETE codec — resolve `auto` (via
+  /// `DefaultFormat.resolveAuto`) before calling, so the modelled bytes match
+  /// the codec that will actually run (auto≈heic over-predicts AVIF by ~40%).
   static BatchSavingsEstimate estimate({
     required List<AssetSizeFacts> facts,
     required DefaultFormat format,
@@ -56,11 +87,12 @@ abstract final class BatchSavingsEstimator {
     var totalOutput = 0;
     for (final f in facts) {
       totalOriginal += f.sizeBytes;
-      // Per-item prediction from the shared model (sub-linear in source bpp).
+      // Per-item prediction from the shared model (sub-linear in source bpp),
+      // classified by the real source family so a PNG isn't read like a JPEG.
       final item = EstimateItem(
         pixels: f.width * f.height,
         sourceBytes: f.sizeBytes,
-        family: SourceFamily.other, // index facts here carry no mime
+        family: f.family,
       );
       var out = CompressEstimator.predictItemBytes(item, format, quality);
       // Savings indicator: a compression pass shows 0 %, not a negative, if a
@@ -80,24 +112,6 @@ abstract final class BatchSavingsEstimator {
       isApproximation: true,
       assetCount: facts.length,
     );
-  }
-
-  /// Rough output bytes per output pixel for a format at a quality. AVIF is the
-  /// most efficient, JPEG the least; higher quality → more bytes.
-  static double bytesPerPixel(DefaultFormat format, int quality) {
-    final base = switch (format) {
-      DefaultFormat.avif => 0.14,
-      DefaultFormat.heic => 0.20,
-      DefaultFormat.webp => 0.28,
-      DefaultFormat.jpeg => 0.42,
-      // PNG is lossless: huge for photos (usually capped at the original →
-      // ~0% saved), only wins on flat/transparent graphics.
-      DefaultFormat.png => 1.20,
-      DefaultFormat.auto => 0.16,
-    };
-    final q = quality.clamp(30, 100);
-    final qFactor = 0.5 + ((q - 30) / 70) * 1.0; // q30→0.5×, q100→1.5×
-    return base * qFactor;
   }
 
   /// Legacy flat-ratio heuristic, kept for the single-image compress preview.

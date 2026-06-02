@@ -69,5 +69,14 @@ enum DefaultQuality { lightning, balanced, highest }
 final defaultQualityProvider =
     StateProvider<DefaultQuality>((ref) => DefaultQuality.balanced);
 
+/// The 0–100 quality each speed target maps to. Shared so every surface that
+/// estimates or encodes (the selection chip AND the compress screen) reads the
+/// SAME number — otherwise the two show contradicting savings.
+int qualityIntFor(DefaultQuality q) => switch (q) {
+      DefaultQuality.lightning => 50,
+      DefaultQuality.balanced => 80,
+      DefaultQuality.highest => 95,
+    };
+
 // Trash retention in days.
 final trashRetentionProvider = StateProvider<int>((ref) => 14);

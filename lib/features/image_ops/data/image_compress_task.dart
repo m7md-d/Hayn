@@ -32,6 +32,8 @@ class ImageCompressTask extends MediaTask {
     required this.keepMetadata,
     this.keepOriginalTime = false,
     this.bitDepth = 0,
+    this.precomputedId,
+    this.precomputed,
     FormatCapabilities? caps,
   })  : id = 'compress-${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}',
         _caps = caps ?? FormatCapabilities.detect();
@@ -39,6 +41,15 @@ class ImageCompressTask extends MediaTask {
   final List<String> assetIds;
   final DefaultFormat format;
   final int quality;
+
+  /// The compress screen already encoded ONE image (the active preview) with
+  /// these exact settings. We reuse those bytes for [precomputedId] instead of
+  /// re-encoding — saving a second (slow, for AVIF) pass and a re-export of the
+  /// original. The bytes are byte-for-byte what this task would produce, so the
+  /// chosen format + metadata + time are already baked in. The screen only
+  /// passes these when its settings signature still matches, so they can't drift.
+  final String? precomputedId;
+  final EncodedImage? precomputed;
 
   /// Keep the photo's info — camera, EXIF and GPS location — on the new copy.
   final bool keepMetadata;
@@ -84,33 +95,52 @@ class ImageCompressTask extends MediaTask {
       yield TaskProgress(progress: done / total, phase: '$done/$total');
 
       final entity = await AssetEntity.fromId(assetId);
-      final src = await entity?.originBytes;
       if (_cancelled) return;
-      if (entity == null || src == null) {
+      if (entity == null) {
         done++;
         continue;
       }
 
-      final hasAlpha = await ImageProbe.hasAlpha(src);
-      final target = ImageFormatPolicy.resolve(
-        choice: format,
-        hasAlpha: hasAlpha,
-        caps: _caps,
-      );
+      // Reuse the preview's finished encode for the active image; otherwise
+      // load + probe + encode. The reuse path skips `originBytes` entirely, so
+      // it neither re-exports the original nor runs a second encode.
+      EncodedImage? encoded;
+      if (precomputed != null && assetId == precomputedId) {
+        encoded = precomputed;
+      } else {
+        final src = await entity.originBytes;
+        if (_cancelled) return;
+        if (src != null) {
+          final hasAlpha = await ImageProbe.hasAlpha(src);
+          final target = ImageFormatPolicy.resolve(
+            choice: format,
+            hasAlpha: hasAlpha,
+            caps: _caps,
+          );
+          if (_cancelled) return;
+          try {
+            encoded = await ImageEncoder.encode(
+              source: src,
+              target: target.format,
+              quality: quality,
+              hasAlpha: hasAlpha,
+              keepMetadata: keepMetadata,
+              keepOriginalTime: keepOriginalTime,
+              bitDepth: bitDepth,
+            );
+          } catch (_) {
+            encoded = null;
+          }
+        }
+      }
       if (_cancelled) return;
+      if (encoded == null) {
+        done++;
+        if (done % _cacheClearEvery == 0) await PhotoManager.clearFileCache();
+        continue;
+      }
 
       try {
-        final encoded = await ImageEncoder.encode(
-          source: src,
-          target: target.format,
-          quality: quality,
-          hasAlpha: hasAlpha,
-          keepMetadata: keepMetadata,
-          keepOriginalTime: keepOriginalTime,
-          bitDepth: bitDepth,
-        );
-        if (_cancelled) return;
-
         final asset = await GallerySaver.saveImage(
           encoded.bytes,
           filename: await outputFilename(entity, encoded.extension),

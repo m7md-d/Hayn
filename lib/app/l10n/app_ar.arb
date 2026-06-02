@@ -254,6 +254,12 @@
   "deleteDone": "تم الحذف",
   "duplicateDone": "تم الاستنساخ",
   "actionFailed": "حدث خطأ ما",
+  "shareLimitTitle": "شارك عددًا أقل دفعة واحدة",
+  "shareLimitMessage": "حدّدت {count} عنصرًا، لكن يمكن مشاركة {cap} فقط في المرة. أشارك أول {cap}؟",
+  "@shareLimitMessage": { "placeholders": { "count": { "type": "int" }, "cap": { "type": "int" } } },
+  "shareLimitConfirm": "شارك {cap}",
+  "@shareLimitConfirm": { "placeholders": { "cap": { "type": "int" } } },
+  "sharePreparing": "جارٍ التحضير للمشاركة…",
 
   "compressTitle": "ضغط",
   "compressMode": "وضع الضغط",

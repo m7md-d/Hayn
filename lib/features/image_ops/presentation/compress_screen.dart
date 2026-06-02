@@ -85,6 +85,10 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   NativeImageInfo? _info; // real bit depth / alpha / HDR of the source
   int _bitDepth = 0; // target: 0 = match source (preserves HDR), 8 = SDR
   EncodedImage? _encoded;
+  // Settings signature the live `_encoded` was produced with. The save reuses
+  // those bytes only when this still matches the current settings, so it can
+  // never write a stale encode (e.g. after the user nudged a slider).
+  String? _encodedSig;
   double _encodeMs = 0; // active image's real encode time (anchors the ETA)
   bool _encoding = false;
   int _encodeSeq = 0;
@@ -93,6 +97,18 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   @override
   void initState() {
     super.initState();
+    // Seed from the user's saved defaults so this screen AGREES with the
+    // selection chip (which projects savings from the same defaults). If either
+    // the format or the quality was customised away from the app defaults, open
+    // straight into Advanced — that way the chosen settings actually apply and
+    // are visible, instead of Auto silently overriding them with format=auto/q80.
+    final prefFormat = ref.read(defaultFormatProvider);
+    final prefQuality = ref.read(defaultQualityProvider);
+    _format = prefFormat;
+    _quality = qualityIntFor(prefQuality).toDouble();
+    final customised = prefFormat != DefaultFormat.auto ||
+        prefQuality != DefaultQuality.balanced;
+    _mode = customised ? _Mode.advanced : _Mode.auto;
     _loadActive();
     if (!_isSingle) _loadOriginalBytes();
   }
@@ -177,6 +193,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
         _encoded = result;
         _encodeMs = sw.elapsedMicroseconds / 1000.0;
         _encoding = false;
+        _encodedSig = _sig(q, _isSingle ? _bitDepth : 0);
       });
       if (!_isSingle) _runEstimate(); // refine the batch estimate with the anchor
     } catch (_) {
@@ -311,10 +328,26 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
     _loadActive();
   }
 
+  /// Signature of the settings an encode was produced with — used to decide
+  /// whether the cached preview encode is still valid to reuse on save.
+  String _sig(int q, int bitDepth) =>
+      '${_ids[_activeAssetIndex]}|${_format.name}|$q|$_keepMetadata|$_keepOriginalTime|$bitDepth';
+
   void _apply() {
     HapticFeedback.lightImpact();
     final l = AppLocalizations.of(context);
     final q = _mode == _Mode.auto ? 80 : _quality.round();
+    final bitDepth = _isSingle ? _bitDepth : 0;
+    // Hand the engine the active image's already-finished encode when it still
+    // matches the current settings exactly — the task writes those bytes as-is
+    // (metadata + time + format already baked in) instead of encoding it again.
+    // For a single image that means the save is instant; for a batch it spares
+    // the previewed image a second pass. A pending/changed encode → null, so we
+    // never save stale bytes.
+    final canReuse = !_encoding &&
+        _encoded != null &&
+        _encodedSig == _sig(q, bitDepth);
+    final activeId = _ids[_activeAssetIndex];
     // Enqueue the real engine — it encodes each id + saves a new gallery asset,
     // surfacing in the floating Tasks badge with progress/cancel.
     unawaited(
@@ -325,7 +358,9 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
               quality: q,
               keepMetadata: _keepMetadata,
               keepOriginalTime: _keepOriginalTime,
-              bitDepth: _isSingle ? _bitDepth : 0,
+              bitDepth: bitDepth,
+              precomputedId: canReuse ? activeId : null,
+              precomputed: canReuse ? _encoded : null,
             ),
           ),
     );

@@ -273,6 +273,55 @@ abstract final class CompressEstimator {
     );
   }
 
+  /// Calibrate the prior with a SINGLE real anchor — the active preview image
+  /// the compress screen already encoded. One sample is weak evidence for a
+  /// heterogeneous batch, so its correction is applied with SHRINKAGE keyed to
+  /// how similar each item is to the anchor: ~full within the anchor's own
+  /// content stratum, damped for nearby content, weak for far content. This
+  /// keeps the batch total from lurching when the user switches WHICH image is
+  /// previewed — a blind single-factor rescale would scale the whole batch by
+  /// that one image's ratio (the bias the user hit) — while still pulling the
+  /// estimate toward this batch + codec + device. Pure → unit-testable.
+  static SizeEstimate calibrateWithAnchor(
+    List<EstimateItem> items,
+    DefaultFormat target,
+    int quality,
+    BppSample anchor,
+  ) {
+    final base = prior(items, target, quality);
+    if (anchor.predicted <= 0 || anchor.actual <= 0) return base;
+    final ratio = (anchor.actual / anchor.predicted).clamp(0.2, 5.0);
+
+    final aFamily = anchor.item.family;
+    final aTier = _bppTier(anchor.item.sourceBpp);
+    double weightFor(EstimateItem it) {
+      final sameFamily = it.family == aFamily;
+      final tierDist = (_bppTier(it.sourceBpp) - aTier).abs();
+      if (sameFamily && tierDist == 0) return 0.9; // same content → trust it
+      if (sameFamily && tierDist == 1) return 0.6;
+      if (tierDist == 0) return 0.5; // same detail, different source codec
+      if (tierDist == 1) return 0.35;
+      return 0.22; // far from the anchor → stay near the prior
+    }
+
+    var expected = 0.0;
+    for (final it in items) {
+      final predicted = predictItemBytes(it, target, quality);
+      final alpha = 1 + (ratio - 1) * weightFor(it);
+      expected += predicted * alpha;
+    }
+    final exp = expected.round();
+    // One measurement → a moderate band: tighter than the blind prior (±45%),
+    // looser than a many-sample calibration.
+    const half = 0.22;
+    return SizeEstimate(
+      low: (exp * (1 - half)).round(),
+      expected: exp,
+      high: (exp * (1 + half)).round(),
+      confidence: 0.55,
+    );
+  }
+
   /// Choose WHICH items to sample, covering content strata first so a
   /// heterogeneous batch (heavy RAW + tiny) is always represented, capped at
   /// [maxSamples]. When the batch is no bigger than the cap, every item is

@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/capabilities/format_capabilities.dart';
 import '../../../data/index/index_providers.dart';
 import '../../settings/providers/preferences_providers.dart';
 import '../domain/compress_estimator.dart';
@@ -55,6 +56,12 @@ class CompressEstimateController {
       );
     }
 
+    // Model the codec that will actually run: resolve `auto` to the concrete
+    // target (so the prior matches the selection chip, which resolves too).
+    final caps = ref.read(formatCapabilitiesProvider);
+    final codec =
+        target == DefaultFormat.auto ? DefaultFormat.resolveAuto(caps) : target;
+
     final items = [
       for (final f in facts)
         EstimateItem(
@@ -73,15 +80,18 @@ class CompressEstimateController {
         anchor = BppSample(
           item: anchorItem,
           predicted:
-              CompressEstimator.predictItemBytes(anchorItem, target, quality),
+              CompressEstimator.predictItemBytes(anchorItem, codec, quality),
           actual: anchorRealBytes,
         );
       }
     }
 
+    // A single anchor (the previewed image) is de-biased: it strongly corrects
+    // content like itself, weakly the rest — so the total doesn't swing as the
+    // user flips between preview images.
     final size = anchor != null
-        ? CompressEstimator.calibrate(items, target, quality, [anchor])
-        : CompressEstimator.prior(items, target, quality);
+        ? CompressEstimator.calibrateWithAnchor(items, codec, quality, anchor)
+        : CompressEstimator.prior(items, codec, quality);
 
     double? eta;
     if (anchorMs != null && anchorMs > 0 && anchorItem != null) {

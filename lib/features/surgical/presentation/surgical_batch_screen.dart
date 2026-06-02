@@ -64,10 +64,22 @@ class _SurgicalBatchScreenState
 
   Future<BatchSavingsEstimate> _estimateFromIndex(
       DefaultFormat format, int quality) async {
-    // Facts (size + dimensions) from the index cover every selected id, and
-    // the estimate models output from dimensions × format — no asset.file.
-    final facts =
-        await ref.read(mediaIndexDatabaseProvider).factsFor(widget.assetIds);
+    // Mime-aware facts from the index cover every selected id (no asset.file),
+    // classified like the compress screen so the models agree. [format] is the
+    // already-resolved concrete codec.
+    final rows = await ref
+        .read(mediaIndexDatabaseProvider)
+        .estimateFactsFor(widget.assetIds);
+    final facts = [
+      for (final r in rows)
+        BatchSavingsEstimator.factsFrom(
+          sizeBytes: r.sizeBytes,
+          width: r.width,
+          height: r.height,
+          mimeType: r.mimeType,
+          title: r.title,
+        ),
+    ];
     return BatchSavingsEstimator.estimate(
         facts: facts, format: format, quality: quality);
   }

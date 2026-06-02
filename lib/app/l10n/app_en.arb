@@ -254,6 +254,12 @@
   "deleteDone": "Deleted",
   "duplicateDone": "Duplicated",
   "actionFailed": "Something went wrong",
+  "shareLimitTitle": "Share fewer at once",
+  "shareLimitMessage": "You selected {count} items, but only {cap} can be shared at a time. Share the first {cap}?",
+  "@shareLimitMessage": { "placeholders": { "count": { "type": "int" }, "cap": { "type": "int" } } },
+  "shareLimitConfirm": "Share {cap}",
+  "@shareLimitConfirm": { "placeholders": { "cap": { "type": "int" } } },
+  "sharePreparing": "Preparing to share…",
 
   "compressTitle": "Compress",
   "compressMode": "Compression",

@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hayn/core/batch/batch_savings_estimator.dart';
+import 'package:hayn/features/image_ops/domain/compress_estimator.dart';
 import 'package:hayn/features/settings/providers/preferences_providers.dart';
 
 void main() {
@@ -67,7 +68,14 @@ void main() {
     test('models output from dimensions and reports real savings', () {
       // A 12 MP photo at 5 MB → AVIF is far denser, so it clearly shrinks.
       final r = BatchSavingsEstimator.estimate(
-        facts: const [(sizeBytes: 5000000, width: 4000, height: 3000)],
+        facts: const [
+          (
+            sizeBytes: 5000000,
+            width: 4000,
+            height: 3000,
+            family: SourceFamily.jpeg
+          )
+        ],
         format: DefaultFormat.avif,
         quality: 80,
       );
@@ -80,7 +88,14 @@ void main() {
 
     test('never grows a file: output is capped at the original size', () {
       final r = BatchSavingsEstimator.estimate(
-        facts: const [(sizeBytes: 1000, width: 4000, height: 3000)],
+        facts: const [
+          (
+            sizeBytes: 1000,
+            width: 4000,
+            height: 3000,
+            family: SourceFamily.jpeg
+          )
+        ],
         format: DefaultFormat.jpeg,
         quality: 100,
       );
@@ -89,7 +104,9 @@ void main() {
     });
 
     test('AVIF estimates fewer output bytes than JPEG for the same image', () {
-      const facts = [(sizeBytes: 8000000, width: 4000, height: 3000)];
+      const facts = [
+        (sizeBytes: 8000000, width: 4000, height: 3000, family: SourceFamily.jpeg)
+      ];
       final avif = BatchSavingsEstimator.estimate(
           facts: facts, format: DefaultFormat.avif, quality: 80);
       final jpeg = BatchSavingsEstimator.estimate(

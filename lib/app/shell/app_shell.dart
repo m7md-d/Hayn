@@ -117,11 +117,27 @@ class _AppShellState extends ConsumerState<AppShell> {
     ref.read(libraryProvider.notifier).clearSelection();
   }
 
-  /// Share the selection via the OS sheet. Capped — exporting thousands of
-  /// originals is infeasible — so we share the first [_shareCap].
+  /// Share the selection via the OS sheet. Sharing exports each original to a
+  /// temp file — fine for a handful, but hundreds is infeasible and would hang
+  /// the sheet. Over the cap we ASK first and trim to the first [shareCap], so
+  /// the user knows exactly what gets shared instead of a silent subset.
   Future<void> _shareSelection(
       BuildContext context, List<String> ids, AppLocalizations l) async {
     const shareCap = 12;
+    if (ids.length > shareCap) {
+      final ok = await showHaynConfirm(
+        context: context,
+        title: l.shareLimitTitle,
+        message: l.shareLimitMessage(ids.length, shareCap),
+        confirmLabel: l.shareLimitConfirm(shareCap),
+        cancelLabel: l.commonCancel,
+        icon: Icons.ios_share_rounded,
+      );
+      if (!ok || !context.mounted) return;
+    }
+    // Resolving originFile exports the files (a beat of work); show a hint so
+    // the wait before the OS sheet never reads as a freeze.
+    HaynSnack.info(context, l.sharePreparing);
     final take = ids.take(shareCap).toList();
     final paths = <String>[];
     for (final id in take) {
