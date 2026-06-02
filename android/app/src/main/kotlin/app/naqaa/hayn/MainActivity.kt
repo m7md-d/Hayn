@@ -1,5 +1,6 @@
 package app.naqaa.hayn
 
+import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
@@ -12,6 +13,7 @@ class MainActivity : FlutterActivity() {
 
     private val avifExecutor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val surgical by lazy { SurgicalMediaStore(this) }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -50,6 +52,36 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        // Surgical replace: overwrite the original bytes in place via MediaStore
+        // (same _ID/bucket → album/tags/order kept, space freed). The Dart
+        // service calls this only after verify + byte-for-byte backup.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SURGICAL_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "overwrite" -> {
+                        val id = (call.argument<Any>("id"))?.toString()?.toLongOrNull()
+                        val bytes = call.argument<ByteArray>("bytes")
+                        if (id == null || bytes == null) {
+                            result.success("failed")
+                        } else {
+                            surgical.overwrite(
+                                id,
+                                bytes,
+                                call.argument<String>("mime"),
+                                call.argument<String>("name"),
+                                result,
+                            )
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (surgical.onActivityResult(requestCode, resultCode)) return
+        super.onActivityResult(requestCode, resultCode, data)
     }
 
     /**
@@ -92,5 +124,6 @@ class MainActivity : FlutterActivity() {
     private companion object {
         const val SIZE_CHANNEL = "hayn/media_size"
         const val AVIF_CHANNEL = "hayn/avif"
+        const val SURGICAL_CHANNEL = "hayn/surgical"
     }
 }
