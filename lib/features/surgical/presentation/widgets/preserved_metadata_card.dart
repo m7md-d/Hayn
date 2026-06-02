@@ -10,8 +10,16 @@ import '../../../../app/theme/design_tokens.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 
 class PreservedMetadataCard extends StatelessWidget {
-  const PreservedMetadataCard({required this.asset, super.key});
+  const PreservedMetadataCard({
+    required this.asset,
+    this.inPlace = false,
+    super.key,
+  });
   final AssetEntity asset;
+
+  /// True for the in-place (Android) path: the asset keeps its identity, so its
+  /// albums, folder and tags survive too — surface that as a preserved item.
+  final bool inPlace;
 
   @override
   Widget build(BuildContext context) {
@@ -28,6 +36,7 @@ class PreservedMetadataCard extends StatelessWidget {
           asset.longitude != 0)
         l.surgicalPreservedGps,
       l.surgicalPreservedAllMeta,
+      if (inPlace) l.surgicalPreservedAlbumsTags,
       l.surgicalPreservedOrder,
     ];
 

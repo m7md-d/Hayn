@@ -837,11 +837,25 @@ class AppLocalizationsEn extends AppLocalizations {
   String get surgicalPreservedOrder => 'Library order';
 
   @override
+  String get surgicalPreservedAlbumsTags => 'Albums, folder & tags';
+
+  @override
   String get surgicalIosBadge => 'Delete & create';
 
   @override
   String get surgicalIosHint =>
       'May appear in \"Recently Added\" — timeline order preserved.';
+
+  @override
+  String get surgicalAndroidBadge => 'In place';
+
+  @override
+  String get surgicalAndroidHint =>
+      'Stays in place — same album, folder, tags and order are kept, and the space is freed.';
+
+  @override
+  String get surgicalPreviewOnly =>
+      'Preview ready — replacement turns on in the next update.';
 
   @override
   String surgicalReversible(int days) {

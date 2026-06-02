@@ -845,11 +845,25 @@ class AppLocalizationsAr extends AppLocalizations {
   String get surgicalPreservedOrder => 'ترتيب المكتبة';
 
   @override
+  String get surgicalPreservedAlbumsTags => 'الألبومات والمجلّد والوسوم';
+
+  @override
   String get surgicalIosBadge => 'حذف وإنشاء';
 
   @override
   String get surgicalIosHint =>
       'قد تظهر في «المضافة حديثًا» — الترتيب الزمني محفوظ.';
+
+  @override
+  String get surgicalAndroidBadge => 'في المكان';
+
+  @override
+  String get surgicalAndroidHint =>
+      'تبقى في مكانها — نفس الألبوم والمجلّد والوسوم والترتيب، وتُحرَّر المساحة.';
+
+  @override
+  String get surgicalPreviewOnly =>
+      'المعاينة جاهزة — الاستبدال يُفعّل في التحديث القادم.';
 
   @override
   String surgicalReversible(int days) {

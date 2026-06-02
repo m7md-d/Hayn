@@ -52,13 +52,75 @@ class MediaAssets extends Table {
 /// Which column a [MediaIndexDatabase.page] query sorts by.
 enum AssetSortColumn { createdDate, sizeBytes }
 
-@DriftDatabase(tables: [MediaAssets])
+// ─────────────────────────────────────────────────────────────────────────────
+// TrashEntries — the Surgical-Replace trash AND crash-safe journal in one table.
+//
+// Every surgical replacement writes a row BEFORE touching the original (state =
+// pending) alongside a byte-for-byte backup file. After the original is deleted
+// the row flips to committed and becomes a restorable trash item until its
+// retention window lapses. On startup any leftover `pending` row means a crash
+// mid-transaction → it is rolled back (original was never deleted) or promoted
+// (original already gone). See [docs/features/F2-surgical-replace.md].
+// ─────────────────────────────────────────────────────────────────────────────
+
+class TrashEntries extends Table {
+  /// Internal trash-entry id (timestamp + random; NOT a device asset id).
+  TextColumn get id => text()();
+
+  /// The device asset id that was (or is being) replaced.
+  TextColumn get originalAssetId => text()();
+
+  TextColumn get filename => text().withDefault(const Constant(''))();
+
+  /// Original capture + modified dates (epoch ms). 0 = unknown.
+  IntColumn get createdDateMs => integer().withDefault(const Constant(0))();
+  IntColumn get modifiedDateMs => integer().withDefault(const Constant(0))();
+
+  RealColumn get latitude => real().nullable()();
+  RealColumn get longitude => real().nullable()();
+  BoolColumn get isFavorite => boolean().withDefault(const Constant(false))();
+
+  /// JSON array of user-album localIds the original belonged to (for restore).
+  TextColumn get userAlbumIds => text().withDefault(const Constant('[]'))();
+
+  /// True when the original sat in a smart album we can't re-create (screenshot
+  /// / selfie / …) — for display only.
+  BoolColumn get wasInSmartAlbum =>
+      boolean().withDefault(const Constant(false))();
+
+  TextColumn get mimeType => text().nullable()();
+
+  /// AssetType.index — 1 image, 2 video.
+  IntColumn get assetType => integer().withDefault(const Constant(1))();
+  IntColumn get width => integer().withDefault(const Constant(0))();
+  IntColumn get height => integer().withDefault(const Constant(0))();
+
+  IntColumn get originalBytes => integer().withDefault(const Constant(0))();
+  IntColumn get newBytes => integer().withDefault(const Constant(0))();
+
+  /// Absolute path to the backed-up original bytes (app-private trash dir).
+  TextColumn get backupPath => text().withDefault(const Constant(''))();
+
+  /// The replacement asset's id; null until it's created / after rollback.
+  TextColumn get newAssetId => text().nullable()();
+
+  /// Journal state — 0 pending (original NOT yet deleted), 1 committed.
+  IntColumn get state => integer().withDefault(const Constant(0))();
+
+  /// When the original was deleted (epoch ms) — drives the retention countdown.
+  IntColumn get deletedAtMs => integer().withDefault(const Constant(0))();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+@DriftDatabase(tables: [MediaAssets, TrashEntries])
 class MediaIndexDatabase extends _$MediaIndexDatabase {
   /// Pass an in-memory executor in tests; production opens the file lazily.
   MediaIndexDatabase([QueryExecutor? executor]) : super(executor ?? _open());
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -72,6 +134,13 @@ class MediaIndexDatabase extends _$MediaIndexDatabase {
               'CREATE INDEX IF NOT EXISTS idx_assets_size ON media_assets (size_bytes)');
           await customStatement(
               'CREATE INDEX IF NOT EXISTS idx_assets_type ON media_assets (type)');
+        },
+        onUpgrade: (m, from, to) async {
+          // v2 introduced the surgical trash/journal table. Existing installs
+          // (the media index) just gain the new table; assets are untouched.
+          if (from < 2) {
+            await m.createTable(trashEntries);
+          }
         },
       );
 

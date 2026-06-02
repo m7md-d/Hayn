@@ -1586,6 +1586,12 @@ abstract class AppLocalizations {
   /// **'Library order'**
   String get surgicalPreservedOrder;
 
+  /// No description provided for @surgicalPreservedAlbumsTags.
+  ///
+  /// In en, this message translates to:
+  /// **'Albums, folder & tags'**
+  String get surgicalPreservedAlbumsTags;
+
   /// No description provided for @surgicalIosBadge.
   ///
   /// In en, this message translates to:
@@ -1597,6 +1603,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'May appear in \"Recently Added\" — timeline order preserved.'**
   String get surgicalIosHint;
+
+  /// No description provided for @surgicalAndroidBadge.
+  ///
+  /// In en, this message translates to:
+  /// **'In place'**
+  String get surgicalAndroidBadge;
+
+  /// No description provided for @surgicalAndroidHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Stays in place — same album, folder, tags and order are kept, and the space is freed.'**
+  String get surgicalAndroidHint;
+
+  /// No description provided for @surgicalPreviewOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'Preview ready — replacement turns on in the next update.'**
+  String get surgicalPreviewOnly;
 
   /// No description provided for @surgicalReversible.
   ///
