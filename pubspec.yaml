@@ -26,8 +26,8 @@ dependencies:
   # Media library
   photo_manager: ^3.3.0
 
-  # Typography
-  google_fonts: ^6.1.0
+  # Typography: fonts are bundled (see flutter: fonts below). No google_fonts —
+  # it fetches over the network, which the offline-only rule (§2) forbids.
 
   # External URLs (GitHub repo link opens in system browser)
   url_launcher: ^6.3.1
@@ -53,3 +53,17 @@ flutter:
   generate: true
   # Localisation is gen-l10n from lib/app/l10n (see l10n.yaml) — not runtime
   # assets. The bundled ONNX model under assets/ lands with the audio phase.
+
+  # Fonts are BUNDLED (IBM Plex Sans Arabic, OFL) — the app is offline-only
+  # (CLAUDE.md §2), so it must never fetch fonts at runtime. See assets/fonts/.
+  fonts:
+    - family: IBMPlexSansArabic
+      fonts:
+        - asset: assets/fonts/IBMPlexSansArabic-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/IBMPlexSansArabic-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/IBMPlexSansArabic-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/IBMPlexSansArabic-Bold.ttf
+          weight: 700

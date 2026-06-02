@@ -1,9 +1,12 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'app_theme_extension.dart';
 import 'design_tokens.dart';
+
+/// Bundled font family (assets/fonts, declared in pubspec). The app is
+/// offline-only (CLAUDE.md §2), so fonts ship in-app — never fetched at runtime.
+const String kFontFamily = 'IBMPlexSansArabic';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // App-wide ThemeData factories. Two themes only (light/dark), built from the
@@ -173,7 +176,8 @@ abstract final class AppTheme {
         height: 64,
         labelTextStyle: WidgetStateTextStyle.resolveWith((states) {
           final on = states.contains(WidgetState.selected);
-          return GoogleFonts.ibmPlexSansArabic(
+          return TextStyle(
+            fontFamily: kFontFamily,
             fontSize: 10,
             fontWeight: on ? FontWeight.w600 : FontWeight.w400,
             color: on ? ext.accent : ext.text3,
@@ -354,7 +358,8 @@ abstract final class AppTheme {
   // ───────────────────────────────────────────────────────────────────────────
   static TextTheme _textTheme(Color text, Color secondary) {
     TextStyle style(double size, double height, FontWeight weight, {Color? color}) {
-      return GoogleFonts.ibmPlexSansArabic(
+      return TextStyle(
+        fontFamily: kFontFamily,
         fontSize: size,
         height: height / size,
         fontWeight: weight,
