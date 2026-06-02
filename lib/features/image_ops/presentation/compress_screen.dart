@@ -98,17 +98,14 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   void initState() {
     super.initState();
     // Seed from the user's saved defaults so this screen AGREES with the
-    // selection chip (which projects savings from the same defaults). If either
-    // the format or the quality was customised away from the app defaults, open
-    // straight into Advanced — that way the chosen settings actually apply and
-    // are visible, instead of Auto silently overriding them with format=auto/q80.
-    final prefFormat = ref.read(defaultFormatProvider);
-    final prefQuality = ref.read(defaultQualityProvider);
-    _format = prefFormat;
-    _quality = qualityIntFor(prefQuality).toDouble();
-    final customised = prefFormat != DefaultFormat.auto ||
-        prefQuality != DefaultQuality.balanced;
-    _mode = customised ? _Mode.advanced : _Mode.auto;
+    // selection chip (which projects savings from the same defaults) AND so Auto
+    // mode actually USES those defaults — quality included — instead of a
+    // hard-coded format=auto/q80.
+    _format = ref.read(defaultFormatProvider);
+    _quality = qualityIntFor(ref.read(defaultQualityProvider)).toDouble();
+    // Always open in Auto — it simply honours the saved defaults (format +
+    // quality). We never force the user into Advanced; that's opt-in for tweaks.
+    _mode = _Mode.auto;
     _loadActive();
     if (!_isSingle) _loadOriginalBytes();
   }
@@ -172,7 +169,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
       hasAlpha: _hasAlpha,
       caps: caps,
     );
-    final q = _mode == _Mode.auto ? 80 : _quality.round();
+    final q = _quality.round();
     final seq = ++_encodeSeq;
     setState(() => _encoding = true);
     if (!_isSingle) _scheduleEstimate(); // show prior + spinner while encoding
@@ -214,7 +211,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   Future<void> _runEstimate() async {
     if (_isSingle) return;
     final ctrl = CompressEstimateController(ref);
-    final q = _mode == _Mode.auto ? 80 : _quality.round();
+    final q = _quality.round();
     // Anchor on the active image once its real encode is in.
     final anchored = _encoded != null && !_encoding;
     final res = await ctrl.estimate(
@@ -336,7 +333,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   void _apply() {
     HapticFeedback.lightImpact();
     final l = AppLocalizations.of(context);
-    final q = _mode == _Mode.auto ? 80 : _quality.round();
+    final q = _quality.round();
     final bitDepth = _isSingle ? _bitDepth : 0;
     // Hand the engine the active image's already-finished encode when it still
     // matches the current settings exactly — the task writes those bytes as-is

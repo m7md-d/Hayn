@@ -563,7 +563,10 @@ class _AudioPanel extends StatelessWidget {
                 description: l.toolSeparateDesc,
                 onTap: () {
                   HapticFeedback.selectionClick();
-                  context.push('/audio-separate/$assetId');
+                  // iOS asset ids contain '/', which would split into extra path
+                  // segments and miss the ':id' route — encode it like every
+                  // other nav does (go_router decodes it back).
+                  context.push('/audio-separate/${Uri.encodeComponent(assetId)}');
                 },
               ),
             ],
