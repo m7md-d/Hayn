@@ -43,3 +43,9 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // Read EXIF orientation so the hardware AVIF encoder bakes upright pixels
+    // (BitmapFactory ignores orientation). androidx works on all minSdk levels.
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
+}

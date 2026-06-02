@@ -1,11 +1,17 @@
 package app.naqaa.hayn
 
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity() {
+
+    private val avifExecutor = Executors.newSingleThreadExecutor()
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -16,6 +22,30 @@ class MainActivity : FlutterActivity() {
                     "getSizes" -> {
                         val ids = call.argument<List<String>>("ids").orEmpty()
                         result.success(querySizes(ids))
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        // Hardware AVIF (MediaCodec AV1). Encoding blocks, so run it off the
+        // platform thread and post the result back. Any failure returns null →
+        // Dart falls back to the software encoder, so output can't regress.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, AVIF_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "isAvailable" -> result.success(AvifHwEncoder.isAvailable())
+                    "encode" -> {
+                        val bytes = call.argument<ByteArray>("bytes")
+                        val quality = call.argument<Int>("quality") ?: 80
+                        if (bytes == null) {
+                            result.success(null)
+                        } else {
+                            avifExecutor.execute {
+                                val out = runCatching { AvifHwEncoder.encode(bytes, quality) }
+                                    .getOrNull()
+                                mainHandler.post { result.success(out) }
+                            }
+                        }
                     }
                     else -> result.notImplemented()
                 }
@@ -61,5 +91,6 @@ class MainActivity : FlutterActivity() {
 
     private companion object {
         const val SIZE_CHANNEL = "hayn/media_size"
+        const val AVIF_CHANNEL = "hayn/avif"
     }
 }

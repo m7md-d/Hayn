@@ -4,6 +4,7 @@ import 'package:flutter_avif/flutter_avif.dart' as avif;
 import 'package:flutter_image_compress/flutter_image_compress.dart' as fic;
 
 import '../../settings/providers/preferences_providers.dart';
+import 'native_avif_encoder.dart';
 import 'native_image_encoder.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -113,6 +114,16 @@ abstract final class ImageEncoder {
   }) async {
     try {
       if (format == DefaultFormat.avif) {
+        // Hardware AV1 (Android MediaCodec) → real .avif, royalty-free + fast,
+        // instead of software libaom. Stage A doesn't embed in-file metadata
+        // yet, so we only take the hardware path when the user isn't keeping
+        // metadata; otherwise the software path below preserves it. Returns
+        // null off-iOS-capable / on any issue → software fallback (no regress).
+        if (!keepMetadata) {
+          final hw =
+              await NativeAvifEncoder.encode(source: source, quality: quality);
+          if (hw != null && hw.isNotEmpty) return hw;
+        }
         // Lower quantizer = higher quality. Map 0–100 → ~[55..12].
         final maxQ = (63 - quality * 0.5).round().clamp(12, 55);
         final minQ = (maxQ - 12).clamp(0, maxQ);
