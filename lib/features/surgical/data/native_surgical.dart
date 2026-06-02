@@ -39,4 +39,21 @@ abstract final class NativeSurgical {
       return SurgicalOverwriteStatus.failed;
     }
   }
+
+  /// Decode just the pixel dimensions of [bytes] (handles HEIF/AVIF/WebP/JPEG
+  /// via the platform decoders) so the verify gate can prove the candidate
+  /// isn't corrupt. Returns (0, 0) when it can't be decoded / no handler.
+  static Future<(int width, int height)> probeBounds(Uint8List bytes) async {
+    try {
+      final wh = await _channel.invokeMethod<List<Object?>>('probeBounds', {
+        'bytes': bytes,
+      });
+      if (wh == null || wh.length < 2) return (0, 0);
+      final w = (wh[0] as num?)?.toInt() ?? 0;
+      final h = (wh[1] as num?)?.toInt() ?? 0;
+      return (w, h);
+    } catch (_) {
+      return (0, 0);
+    }
+  }
 }

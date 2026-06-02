@@ -858,6 +858,21 @@ class AppLocalizationsEn extends AppLocalizations {
       'Preview ready — replacement turns on in the next update.';
 
   @override
+  String get surgicalReplacing => 'Replacing…';
+
+  @override
+  String surgicalReplacedSaved(String size) {
+    return 'Replaced · saved $size';
+  }
+
+  @override
+  String get surgicalCancelled => 'Replacement cancelled — original untouched';
+
+  @override
+  String get surgicalVerifyFailed =>
+      'Couldn\'t verify the new image — original kept';
+
+  @override
   String surgicalReversible(int days) {
     String _temp0 = intl.Intl.pluralLogic(
       days,

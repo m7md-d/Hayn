@@ -1,14 +1,16 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../data/index/media_index_database.dart';
+import '../../surgical/data/surgical_replace_service.dart';
+import '../data/trash_repository.dart';
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Trash — assets removed via the surgical-replace flow. Stays restorable for
-// a configurable retention window (see settings). The model is local-only;
-// nothing leaves the device.
-//
-// Real persistence (drift / isar) lives in the implementation phase. The
-// notifier exposes the methods the UI needs so screens can be built and
-// reviewed without the storage layer.
+// Trash — originals replaced via Surgical Replace, restorable for the retention
+// window (see settings). Local-only; nothing leaves the device. Backed by the
+// drift TrashEntries table (= the crash-safe journal): committed rows are the
+// trash list; restore rewrites the byte-for-byte backup over the asset.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class TrashItem {
@@ -39,19 +41,51 @@ enum TrashAssetType { image, video }
 
 class TrashNotifier extends Notifier<List<TrashItem>> {
   @override
-  List<TrashItem> build() => const [];
-
-  Future<void> restore(String id) async {
-    state = [for (final item in state) if (item.id != id) item];
+  List<TrashItem> build() {
+    unawaited(_load());
+    return const [];
   }
 
+  Future<void> _load() async {
+    final entries = await ref.read(trashRepositoryProvider).listCommitted();
+    state = [for (final e in entries) _toItem(e)];
+  }
+
+  /// Rewrite the byte-for-byte backup over the asset, then drop the entry.
+  Future<void> restore(String id) async {
+    final entry = await ref.read(trashRepositoryProvider).byId(id);
+    if (entry != null) {
+      await ref.read(surgicalReplaceServiceProvider).restore(entry);
+    }
+    await _load();
+  }
+
+  /// Purge the entry + its backup file permanently (the asset stays as-is).
   Future<void> deleteForever(String id) async {
-    state = [for (final item in state) if (item.id != id) item];
+    await ref.read(trashRepositoryProvider).drop(id);
+    await _load();
   }
 
   Future<void> emptyAll() async {
-    state = const [];
+    final repo = ref.read(trashRepositoryProvider);
+    for (final e in await repo.listCommitted()) {
+      await repo.drop(e.id);
+    }
+    await _load();
   }
+
+  static TrashItem _toItem(TrashEntry e) => TrashItem(
+        id: e.id,
+        filename: e.filename.isEmpty ? 'IMG' : e.filename,
+        deletedAt: DateTime.fromMillisecondsSinceEpoch(
+          e.deletedAtMs == 0
+              ? DateTime.now().millisecondsSinceEpoch
+              : e.deletedAtMs,
+        ),
+        originalBytes: e.originalBytes,
+        assetType:
+            e.assetType == 2 ? TrashAssetType.video : TrashAssetType.image,
+      );
 }
 
 final trashProvider =

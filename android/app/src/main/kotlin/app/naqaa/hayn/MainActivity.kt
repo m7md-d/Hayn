@@ -74,6 +74,27 @@ class MainActivity : FlutterActivity() {
                             )
                         }
                     }
+                    // Decode just the bounds of candidate bytes (Android decoders
+                    // handle HEIF/AVIF/WebP/JPEG) so the verify gate can prove the
+                    // file isn't corrupt. Returns [w, h], or [0, 0] if undecodable.
+                    "probeBounds" -> {
+                        val bytes = call.argument<ByteArray>("bytes")
+                        if (bytes == null) {
+                            result.success(listOf(0, 0))
+                        } else {
+                            avifExecutor.execute {
+                                val wh = runCatching {
+                                    val opts = android.graphics.BitmapFactory.Options().apply {
+                                        inJustDecodeBounds = true
+                                    }
+                                    android.graphics.BitmapFactory
+                                        .decodeByteArray(bytes, 0, bytes.size, opts)
+                                    listOf(opts.outWidth.coerceAtLeast(0), opts.outHeight.coerceAtLeast(0))
+                                }.getOrDefault(listOf(0, 0))
+                                mainHandler.post { result.success(wh) }
+                            }
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }

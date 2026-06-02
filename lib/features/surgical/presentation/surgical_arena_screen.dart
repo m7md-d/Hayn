@@ -10,12 +10,14 @@ import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
 import '../../../app/theme/motion.dart';
 import '../../../core/capabilities/format_capabilities.dart';
+import '../../../data/index/index_providers.dart';
 import '../../../shared/widgets/widgets.dart';
 import '../../image_ops/data/image_encoder.dart';
 import '../../image_ops/data/image_probe.dart';
 import '../../image_ops/domain/image_format_policy.dart';
 import '../../library/presentation/providers/asset_entity_cache.dart';
 import '../../settings/providers/preferences_providers.dart';
+import '../data/surgical_replace_service.dart';
 import 'widgets/preserved_metadata_card.dart';
 import 'widgets/surgical_stats_row.dart';
 
@@ -71,6 +73,9 @@ class _SurgicalArenaScreenState extends ConsumerState<SurgicalArenaScreen> {
   bool _encoding = false;
   int _encodeSeq = 0;
   Timer? _debounce;
+
+  /// True while the safe transaction is running (button shows progress).
+  bool _replacing = false;
 
   /// True while the comparison viewer has 2+ fingers (or scale > 1). The
   /// list freezes its physics so a pinch on the preview never accidentally
@@ -167,11 +172,67 @@ class _SurgicalArenaScreenState extends ConsumerState<SurgicalArenaScreen> {
     _scheduleEncode();
   }
 
-  void _confirm() {
-    // Stage 1: the destructive engine lands next. Be honest — never a fake
-    // "done". The preview above is the REAL compressed result.
-    HapticFeedback.selectionClick();
-    HaynSnack.info(context, AppLocalizations.of(context).surgicalPreviewOnly);
+  Future<void> _confirm() async {
+    final l = AppLocalizations.of(context);
+    // iOS path (delete + create) isn't wired yet — be honest, never fake a done.
+    if (!Platform.isAndroid) {
+      HapticFeedback.selectionClick();
+      HaynSnack.info(context, l.surgicalPreviewOnly);
+      return;
+    }
+    final enc = _encoded;
+    if (enc == null || _encoding || _replacing) return;
+
+    final ok = await showHaynDestructiveConfirm(
+      context: context,
+      title: l.surgicalConfirmTitle,
+      message: l.surgicalConfirmMessage,
+      confirmLabel: l.surgicalConfirm,
+      cancelLabel: l.commonCancel,
+      icon: Icons.healing_rounded,
+      reassurance: l.surgicalReversible(ref.read(trashRetentionProvider)),
+    );
+    if (!ok || !mounted) return;
+
+    setState(() => _replacing = true);
+    HapticFeedback.lightImpact();
+    final outcome = await ref
+        .read(surgicalReplaceServiceProvider)
+        .replace(assetId: widget.assetId, candidate: enc);
+    if (!mounted) return;
+    setState(() => _replacing = false);
+
+    switch (outcome.status) {
+      case SurgicalStatus.success:
+        // Same asset id, new bytes in place — refresh the index size + evict
+        // the cached entity/thumbnail so the gallery reflects the new file.
+        await ref
+            .read(mediaIndexDatabaseProvider)
+            .setSize(widget.assetId, enc.bytes.length);
+        AssetEntityCache.evict(widget.assetId);
+        await PhotoManager.clearFileCache();
+        if (!mounted) return;
+        HapticFeedback.mediumImpact();
+        HaynSnack.success(context, l.surgicalReplacedSaved(_fmtBytes(outcome.savedBytes)));
+        Navigator.of(context).pop();
+      case SurgicalStatus.cancelled:
+        HaynSnack.info(context, l.surgicalCancelled);
+      case SurgicalStatus.verifyFailed:
+        HaynSnack.warning(context, l.surgicalVerifyFailed);
+      case SurgicalStatus.unsupported:
+        HaynSnack.info(context, l.surgicalPreviewOnly);
+      case SurgicalStatus.failed:
+        HaynSnack.warning(context, l.actionFailed);
+    }
+  }
+
+  static String _fmtBytes(int b) {
+    if (b < 1024) return '$b B';
+    if (b < 1024 * 1024) return '${(b / 1024).toStringAsFixed(1)} KB';
+    if (b < 1024 * 1024 * 1024) {
+      return '${(b / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    return '${(b / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
 
   Widget _afterWidget() {
@@ -375,9 +436,10 @@ class _SurgicalArenaScreenState extends ConsumerState<SurgicalArenaScreen> {
 
           // ── Confirm (Stage 1: honest preview-only notice) ──────────────
           HaynDestructiveButton(
-            label: l.surgicalConfirm,
+            label: _replacing ? l.surgicalReplacing : l.surgicalConfirm,
             icon: Icons.healing_rounded,
-            onPressed: _confirm,
+            isLoading: _replacing,
+            onPressed: _replacing ? null : _confirm,
             size: HaynButtonSize.large,
           ),
           const SizedBox(height: AppSpacing.s3),

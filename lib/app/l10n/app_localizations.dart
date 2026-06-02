@@ -1622,6 +1622,30 @@ abstract class AppLocalizations {
   /// **'Preview ready — replacement turns on in the next update.'**
   String get surgicalPreviewOnly;
 
+  /// No description provided for @surgicalReplacing.
+  ///
+  /// In en, this message translates to:
+  /// **'Replacing…'**
+  String get surgicalReplacing;
+
+  /// No description provided for @surgicalReplacedSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Replaced · saved {size}'**
+  String surgicalReplacedSaved(String size);
+
+  /// No description provided for @surgicalCancelled.
+  ///
+  /// In en, this message translates to:
+  /// **'Replacement cancelled — original untouched'**
+  String get surgicalCancelled;
+
+  /// No description provided for @surgicalVerifyFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t verify the new image — original kept'**
+  String get surgicalVerifyFailed;
+
   /// No description provided for @surgicalReversible.
   ///
   /// In en, this message translates to:

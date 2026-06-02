@@ -866,6 +866,21 @@ class AppLocalizationsAr extends AppLocalizations {
       'المعاينة جاهزة — الاستبدال يُفعّل في التحديث القادم.';
 
   @override
+  String get surgicalReplacing => 'جارٍ الاستبدال…';
+
+  @override
+  String surgicalReplacedSaved(String size) {
+    return 'تم الاستبدال · وُفِّر $size';
+  }
+
+  @override
+  String get surgicalCancelled => 'أُلغِي الاستبدال — الأصل لم يُمَس';
+
+  @override
+  String get surgicalVerifyFailed =>
+      'تعذّر التحقّق من الصورة الجديدة — أبقينا الأصل';
+
+  @override
   String surgicalReversible(int days) {
     String _temp0 = intl.Intl.pluralLogic(
       days,
