@@ -28,11 +28,6 @@ class ToolsScreen extends ConsumerWidget {
       title: l.toolCompressMedia,
       desc: l.toolCompressMediaDesc,
     );
-    final surgical = _Tool(
-      icon: Icons.healing_rounded,
-      title: l.toolSurgicalReplace,
-      desc: l.toolSurgicalDesc,
-    );
     final extract = _Tool(
       icon: Icons.image_aspect_ratio_rounded,
       title: l.toolExtractFrames,
@@ -118,13 +113,6 @@ class ToolsScreen extends ConsumerWidget {
                 _GridRow(pair: pair, onTap: () => _showComingSoon(context)),
                 const SizedBox(height: AppSpacing.s3),
               ],
-
-              // Hero #3 — Surgical replace (the heavyweight, at the bottom)
-              _HeroCard(
-                tool: surgical,
-                tone: _HeroTone.danger,
-                onTap: () => _showComingSoon(context),
-              ),
             ]),
           ),
         ],

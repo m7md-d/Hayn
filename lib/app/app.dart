@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../features/settings/providers/preferences_providers.dart';
-import '../features/surgical/data/surgical_replace_service.dart';
 import '../features/trash/data/trash_repository.dart';
 import 'l10n/app_localizations.dart';
 import 'providers/locale_provider.dart';
@@ -25,12 +24,9 @@ class _HaynAppState extends ConsumerState<HaynApp> {
   @override
   void initState() {
     super.initState();
-    // Surgical-replace crash recovery + trash retention sweep, once at launch.
-    // A leftover `pending` journal row means a replacement was interrupted —
-    // recovery keeps its byte-for-byte backup as a restorable trash item.
+    // Trash retention sweep, once at launch — drop backups past the window.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      unawaited(ref.read(surgicalReplaceServiceProvider).recoverPending());
       unawaited(ref
           .read(trashRepositoryProvider)
           .purgeExpired(ref.read(trashRetentionProvider)));

@@ -1,16 +1,16 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../data/index/media_index_database.dart';
-import '../../surgical/data/surgical_replace_service.dart';
+import '../../image_ops/data/gallery_saver.dart';
 import '../data/trash_repository.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Trash — originals replaced via Surgical Replace, restorable for the retention
-// window (see settings). Local-only; nothing leaves the device. Backed by the
-// drift TrashEntries table (= the crash-safe journal): committed rows are the
-// trash list; restore rewrites the byte-for-byte backup over the asset.
+// Trash — originals kept restorable for a retention window. Local-only; nothing
+// leaves the device. Backed by the drift TrashEntries table + byte-for-byte
+// backup files (TrashRepository). Reusable infrastructure: the upcoming compress
+// option "delete the original after compressing" moves originals here, and
+// restore re-creates them in the gallery from the backup.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class TrashItem {
@@ -19,7 +19,10 @@ class TrashItem {
     required this.filename,
     required this.deletedAt,
     required this.originalBytes,
-    this.thumbnail,
+    required this.backupPath,
+    this.width = 0,
+    this.height = 0,
+    this.mimeType,
     this.assetType = TrashAssetType.image,
   });
 
@@ -27,7 +30,12 @@ class TrashItem {
   final String filename;
   final DateTime deletedAt;
   final int originalBytes;
-  final Uint8List? thumbnail;
+
+  /// Absolute path to the backed-up bytes — drives the thumbnail + preview.
+  final String backupPath;
+  final int width;
+  final int height;
+  final String? mimeType;
   final TrashAssetType assetType;
 
   /// Days remaining until permanent deletion at the given retention setting.
@@ -51,16 +59,39 @@ class TrashNotifier extends Notifier<List<TrashItem>> {
     state = [for (final e in entries) _toItem(e)];
   }
 
-  /// Rewrite the byte-for-byte backup over the asset, then drop the entry.
-  Future<void> restore(String id) async {
-    final entry = await ref.read(trashRepositoryProvider).byId(id);
-    if (entry != null) {
-      await ref.read(surgicalReplaceServiceProvider).restore(entry);
+  /// Re-create the trashed original in the gallery from its byte-for-byte
+  /// backup (the un-delete for the future compress "delete original" option),
+  /// then drop the entry. Returns false if the backup was gone or the save was
+  /// refused (the entry stays so it isn't lost).
+  Future<bool> restore(String id) async {
+    final repo = ref.read(trashRepositoryProvider);
+    final entry = await repo.byId(id);
+    if (entry == null) {
+      await _load();
+      return false;
+    }
+    final bytes = await repo.readBackup(entry.backupPath);
+    var ok = false;
+    if (bytes != null) {
+      final asset = await GallerySaver.saveImage(
+        bytes,
+        filename: entry.filename.isEmpty ? 'restored' : entry.filename,
+        creationDate: entry.createdDateMs > 0
+            ? DateTime.fromMillisecondsSinceEpoch(entry.createdDateMs)
+            : null,
+        latitude: entry.latitude,
+        longitude: entry.longitude,
+      );
+      if (asset != null) {
+        await repo.drop(id);
+        ok = true;
+      }
     }
     await _load();
+    return ok;
   }
 
-  /// Purge the entry + its backup file permanently (the asset stays as-is).
+  /// Purge the entry + its backup file permanently.
   Future<void> deleteForever(String id) async {
     await ref.read(trashRepositoryProvider).drop(id);
     await _load();
@@ -83,6 +114,10 @@ class TrashNotifier extends Notifier<List<TrashItem>> {
               : e.deletedAtMs,
         ),
         originalBytes: e.originalBytes,
+        backupPath: e.backupPath,
+        width: e.width,
+        height: e.height,
+        mimeType: e.mimeType,
         assetType:
             e.assetType == 2 ? TrashAssetType.video : TrashAssetType.image,
       );

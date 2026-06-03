@@ -266,11 +266,6 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
     context.push('/crop/$_curIdPath');
   }
 
-  void _surgical() {
-    HapticFeedback.lightImpact();
-    context.push('/surgical/$_curIdPath');
-  }
-
   void _videoEdit() {
     HapticFeedback.lightImpact();
     context.push('/video-edit/$_curIdPath');
@@ -452,7 +447,6 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
                           onCompress: _compress,
                           onCrop: _crop,
                           onStrip: _stripMetadata,
-                          onSurgical: _surgical,
                           // The bottom bar's "more" is for additional TOOLS
                           // (its own topic) — distinct from the app-bar dots
                           // which are asset actions (share/duplicate/delete).
@@ -1295,7 +1289,6 @@ class _DetailActionBar extends StatelessWidget {
     required this.onCompress,
     required this.onCrop,
     required this.onStrip,
-    required this.onSurgical,
     required this.onMore,
     this.onTrim,
     this.onCropVideo,
@@ -1309,7 +1302,6 @@ class _DetailActionBar extends StatelessWidget {
   final VoidCallback onCompress;
   final VoidCallback onCrop;
   final VoidCallback onStrip;
-  final VoidCallback onSurgical;
   final VoidCallback onMore;
   // Video-mode callbacks — each maps to a dedicated screen.
   final VoidCallback? onTrim;
@@ -1334,7 +1326,6 @@ class _DetailActionBar extends StatelessWidget {
             (Icons.compress_rounded, l.toolCompress, onCompress),
             (Icons.crop_rounded, l.toolCrop, onCrop),
             (Icons.auto_fix_high_rounded, l.toolStripMetadata, onStrip),
-            (Icons.healing_rounded, l.toolSurgicalReplace, onSurgical),
             (Icons.more_horiz_rounded, l.selectionMore, onMore),
           ];
 

@@ -31,7 +31,6 @@ class SelectionToolbar extends ConsumerWidget {
     required this.isVideo,
     required this.onCompress,
     required this.onStripMetadata,
-    required this.onSurgical,
     required this.onVideoEdit,
     required this.onTrim,
     required this.onRemoveAudio,
@@ -50,7 +49,6 @@ class SelectionToolbar extends ConsumerWidget {
 
   final VoidCallback onCompress;
   final VoidCallback onStripMetadata;
-  final VoidCallback onSurgical;
   final VoidCallback onVideoEdit;
   final VoidCallback onTrim;
   final VoidCallback onRemoveAudio;
@@ -146,15 +144,6 @@ class SelectionToolbar extends ConsumerWidget {
                             enabled: hasSelection,
                             batchSupported: true,
                             onTap: onStripMetadata,
-                          ),
-                        ),
-                        Expanded(
-                          child: _ToolbarAction(
-                            icon: Icons.healing_rounded,
-                            label: l.selectionSurgical,
-                            enabled: hasSelection,
-                            batchSupported: true,
-                            onTap: onSurgical,
                           ),
                         ),
                         Expanded(

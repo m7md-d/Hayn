@@ -212,18 +212,6 @@ class _AppShellState extends ConsumerState<AppShell> {
                     ref.read(libraryProvider.notifier).clearSelection();
                   }
                 },
-                onSurgical: () {
-                  HapticFeedback.lightImpact();
-                  final ids = libraryState.selectedIds.toList();
-                  if (ids.isEmpty) return;
-                  // Single → per-item arena. Batch → dedicated queue screen.
-                  // Encode: iOS ids contain '/' and would break the path.
-                  if (ids.length == 1) {
-                    context.push('/surgical/${Uri.encodeComponent(ids.first)}');
-                  } else {
-                    context.push('/surgical/batch', extra: ids);
-                  }
-                },
                 onMore: () =>
                     _selectionMore(context, libraryState.selectedIds.toList(), l),
               )

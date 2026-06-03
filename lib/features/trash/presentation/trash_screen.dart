@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,8 +11,9 @@ import '../../settings/providers/preferences_providers.dart';
 import '../providers/trash_provider.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TrashScreen — items removed via Surgical Replace. Expire after the
-// configured retention window. Fully localised.
+// TrashScreen — restorable originals. Expire after the configured retention
+// window. Each row shows a real thumbnail + specs (dimensions · size · format)
+// from the byte-for-byte backup, and tapping opens a zoomable preview.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class TrashScreen extends ConsumerWidget {
@@ -145,24 +148,26 @@ class _TrashRow extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Container(
-            width: 56,
-            height: 56,
-            decoration: BoxDecoration(
-              color: hc.surfaceSunken,
-              borderRadius: BorderRadius.circular(AppRadius.sm),
+          GestureDetector(
+            onTap: () => _preview(context),
+            child: Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                color: hc.surfaceSunken,
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: _backupExists
+                  ? Image.file(
+                      File(item.backupPath),
+                      fit: BoxFit.cover,
+                      gaplessPlayback: true,
+                      cacheWidth: 112,
+                      errorBuilder: (_, __, ___) => _fallbackIcon(hc),
+                    )
+                  : _fallbackIcon(hc),
             ),
-            clipBehavior: Clip.antiAlias,
-            child: item.thumbnail != null
-                ? Image.memory(item.thumbnail!,
-                    fit: BoxFit.cover, gaplessPlayback: true)
-                : Icon(
-                    item.assetType == TrashAssetType.video
-                        ? Icons.movie_outlined
-                        : Icons.photo_outlined,
-                    color: hc.text3,
-                    size: 22,
-                  ),
           ),
           const SizedBox(width: AppSpacing.s3),
           Expanded(
@@ -172,6 +177,14 @@ class _TrashRow extends StatelessWidget {
                 Text(
                   item.filename,
                   style: theme.textTheme.bodyLarge,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                // Specs: dimensions · size · format — straight from the entry.
+                Text(
+                  _specs(),
+                  style: theme.textTheme.labelSmall?.copyWith(color: hc.text2),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -211,5 +224,85 @@ class _TrashRow extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  bool get _backupExists =>
+      item.backupPath.isNotEmpty && File(item.backupPath).existsSync();
+
+  Widget _fallbackIcon(HaynColors hc) => Icon(
+        item.assetType == TrashAssetType.video
+            ? Icons.movie_outlined
+            : Icons.photo_outlined,
+        color: hc.text3,
+        size: 22,
+      );
+
+  /// "4000×3000 · 2.4 MB · HEIC" — from the stored entry, no decode needed.
+  String _specs() {
+    final parts = <String>[];
+    if (item.width > 0 && item.height > 0) {
+      parts.add('${item.width}×${item.height}');
+    }
+    if (item.originalBytes > 0) parts.add(_fmtBytes(item.originalBytes));
+    final fmt = _formatLabel(item.mimeType);
+    if (fmt != null) parts.add(fmt);
+    return parts.join(' · ');
+  }
+
+  /// Zoomable full preview of the backed-up original.
+  void _preview(BuildContext context) {
+    if (!_backupExists) return;
+    HapticFeedback.selectionClick();
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.92),
+      builder: (ctx) => GestureDetector(
+        onTap: () => Navigator.of(ctx).pop(),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: InteractiveViewer(
+                minScale: 1,
+                maxScale: 8,
+                child: Center(
+                  child: Image.file(File(item.backupPath), fit: BoxFit.contain),
+                ),
+              ),
+            ),
+            PositionedDirectional(
+              top: 0,
+              end: 0,
+              child: SafeArea(
+                child: IconButton(
+                  icon: const Icon(Icons.close_rounded, color: Colors.white),
+                  onPressed: () => Navigator.of(ctx).pop(),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static String? _formatLabel(String? mime) {
+    if (mime == null || mime.isEmpty) return null;
+    final m = mime.toLowerCase();
+    if (m.contains('hei')) return 'HEIC';
+    if (m.contains('avif')) return 'AVIF';
+    if (m.contains('webp')) return 'WebP';
+    if (m.contains('png')) return 'PNG';
+    if (m.contains('jpeg') || m.contains('jpg')) return 'JPEG';
+    final slash = m.indexOf('/');
+    return slash >= 0 ? m.substring(slash + 1).toUpperCase() : null;
+  }
+
+  static String _fmtBytes(int b) {
+    if (b < 1024) return '$b B';
+    if (b < 1024 * 1024) return '${(b / 1024).toStringAsFixed(1)} KB';
+    if (b < 1024 * 1024 * 1024) {
+      return '${(b / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    return '${(b / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
 }

@@ -12,8 +12,6 @@ import '../../features/audio/presentation/separate_audio_screen.dart';
 import '../../features/image_ops/presentation/compress_screen.dart';
 import '../../features/image_ops/presentation/crop_screen.dart';
 import '../../features/library/presentation/asset_detail_screen.dart';
-import '../../features/surgical/presentation/surgical_arena_screen.dart';
-import '../../features/surgical/presentation/surgical_batch_screen.dart';
 import '../../features/video_ops/presentation/crop_video_screen.dart';
 import '../../features/video_ops/presentation/remove_audio_screen.dart';
 import '../../features/video_ops/presentation/trim_video_screen.dart';
@@ -94,28 +92,6 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         pageBuilder: (ctx, state) => MaterialPage(
           fullscreenDialog: true,
           child: CropScreen(assetId: state.pathParameters['id']!),
-        ),
-      ),
-      // /surgical/batch must come BEFORE /surgical/:id so the literal
-      // "batch" path doesn't get captured as an id parameter.
-      GoRoute(
-        path: '/surgical/batch',
-        pageBuilder: (ctx, state) {
-          final ids =
-              (state.extra as List?)?.cast<String>() ?? const <String>[];
-          return MaterialPage(
-            fullscreenDialog: true,
-            child: SurgicalBatchScreen(assetIds: ids),
-          );
-        },
-      ),
-      GoRoute(
-        path: '/surgical/:id',
-        pageBuilder: (ctx, state) => MaterialPage(
-          fullscreenDialog: true,
-          child: SurgicalArenaScreen(
-            assetId: state.pathParameters['id']!,
-          ),
         ),
       ),
       GoRoute(
