@@ -13,6 +13,11 @@ flutter_rust_bridge = "=2.12.0"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 # Stage 3b: lossy/lossless WebP via libwebp (C) — no good pure-Rust lossy encoder.
 webp = "0.3"
+# Stage 3c: AVIF encode via ravif (rav1e + avif-serialize) — PURE RUST, no C.
+# asm off keeps the cross-compile trivial; enable later (nasm) for speed. The
+# faster SVT-AV1 + dav1d decode (C) path can slot in behind the same interface.
+ravif = { version = "0.11", default-features = false }
+rgb = "0.8"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }

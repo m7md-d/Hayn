@@ -12,6 +12,7 @@ pub enum CodecFormat {
     Png,
     Webp,
     WebpLossless,
+    Avif,
 }
 
 /// Decode → optional downscale (long edge ≤ `max_edge`; 0 = keep original size)
@@ -35,6 +36,7 @@ pub fn transcode(
             quality: 100,
             lossless: true,
         },
+        CodecFormat::Avif => codec::Target::Avif { quality: q },
     };
     let edge = if max_edge == 0 { None } else { Some(max_edge) };
     codec::transcode(&bytes, target, edge).map_err(|e| e.to_string())

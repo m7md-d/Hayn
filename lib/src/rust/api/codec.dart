@@ -22,4 +22,4 @@ Future<Uint8List> transcode({
 );
 
 /// Target encode format for [`transcode`].
-enum CodecFormat { jpeg, png, webp, webpLossless }
+enum CodecFormat { jpeg, png, webp, webpLossless, avif }

@@ -30,6 +30,8 @@ pub enum Target {
     Png,
     /// WebP — lossy at the given quality (1..=100), or lossless.
     Webp { quality: u8, lossless: bool },
+    /// AVIF at the given quality (1..=100), software (rav1e).
+    Avif { quality: u8 },
 }
 
 /// Decode any supported container to RGBA, optionally downscaling so the long
@@ -60,6 +62,14 @@ pub fn decode(bytes: &[u8], max_edge: Option<u32>) -> Result<Decoded> {
         };
         return finish(dynimg, max_edge);
     }
+    // AVIF/HEIF decode (AV1/HEVC) isn't bound yet — encode-only for now; the
+    // app keeps its existing decoders. dav1d/HW decode land in a later stage.
+    if matches!(
+        crate::engine::format::detect(bytes),
+        crate::engine::format::ImageFormat::Avif | crate::engine::format::ImageFormat::Heic
+    ) {
+        return Err(DarkError::Malformed("avif/heif decode not supported yet"));
+    }
     let img = image::load_from_memory(bytes).map_err(|_| DarkError::Malformed("decode failed"))?;
     finish(img, max_edge)
 }
@@ -81,36 +91,54 @@ fn finish(mut img: DynamicImage, max_edge: Option<u32>) -> Result<Decoded> {
 
 /// Encode a decoded image to `target`.
 pub fn encode(img: &Decoded, target: Target) -> Result<Vec<u8>> {
-    let buf = image::RgbaImage::from_raw(img.width, img.height, img.rgba.clone())
-        .ok_or(DarkError::Malformed("rgba buffer size mismatch"))?;
-    let mut out = Cursor::new(Vec::new());
     match target {
-        Target::Png => DynamicImage::ImageRgba8(buf)
-            .write_to(&mut out, ImgFmt::Png)
-            .map_err(|_| DarkError::Malformed("png encode failed"))?,
-        Target::Jpeg(q) => {
-            let rgb = DynamicImage::ImageRgba8(buf).to_rgb8();
-            JpegEncoder::new_with_quality(&mut out, q.clamp(1, 100))
-                .write_image(
-                    rgb.as_raw(),
-                    rgb.width(),
-                    rgb.height(),
-                    ExtendedColorType::Rgb8,
-                )
-                .map_err(|_| DarkError::Malformed("jpeg encode failed"))?;
+        Target::Avif { quality } => {
+            use rgb::FromSlice;
+            let res = ravif::Encoder::new()
+                .with_quality(quality.clamp(1, 100) as f32)
+                .with_speed(8)
+                .encode_rgba(ravif::Img::new(
+                    img.rgba.as_rgba(),
+                    img.width as usize,
+                    img.height as usize,
+                ))
+                .map_err(|_| DarkError::Malformed("avif encode failed"))?;
+            Ok(res.avif_file)
         }
         Target::Webp { quality, lossless } => {
             // libwebp owns its output buffer; copy it out into a Vec.
-            let enc = webp::Encoder::from_rgba(buf.as_raw(), img.width, img.height);
+            let enc = webp::Encoder::from_rgba(&img.rgba, img.width, img.height);
             let mem = if lossless {
                 enc.encode_lossless()
             } else {
                 enc.encode(quality.clamp(1, 100) as f32)
             };
-            return Ok(mem.to_vec());
+            Ok(mem.to_vec())
+        }
+        Target::Png | Target::Jpeg(_) => {
+            let buf = image::RgbaImage::from_raw(img.width, img.height, img.rgba.clone())
+                .ok_or(DarkError::Malformed("rgba buffer size mismatch"))?;
+            let dynimg = DynamicImage::ImageRgba8(buf);
+            let mut out = Cursor::new(Vec::new());
+            match target {
+                Target::Jpeg(q) => {
+                    let rgb = dynimg.to_rgb8();
+                    JpegEncoder::new_with_quality(&mut out, q.clamp(1, 100))
+                        .write_image(
+                            rgb.as_raw(),
+                            rgb.width(),
+                            rgb.height(),
+                            ExtendedColorType::Rgb8,
+                        )
+                        .map_err(|_| DarkError::Malformed("jpeg encode failed"))?;
+                }
+                _ => dynimg
+                    .write_to(&mut out, ImgFmt::Png)
+                    .map_err(|_| DarkError::Malformed("png encode failed"))?,
+            }
+            Ok(out.into_inner())
         }
     }
-    Ok(out.into_inner())
 }
 
 /// Decode → (optional resize) → encode to `target`.
@@ -204,6 +232,18 @@ mod tests {
         );
         let d = decode(&wp, None).unwrap();
         assert_eq!((d.width, d.height), (16, 16));
+    }
+
+    #[test]
+    fn encodes_valid_avif() {
+        let png = solid_png(16, 16, [60, 120, 180, 255]);
+        let d = decode(&png, None).unwrap();
+        let avif = encode(&d, Target::Avif { quality: 70 }).unwrap();
+        assert_eq!(
+            crate::engine::format::detect(&avif),
+            crate::engine::format::ImageFormat::Avif
+        );
+        assert!(avif.len() > 32, "produced a real AVIF container");
     }
 
     #[test]
