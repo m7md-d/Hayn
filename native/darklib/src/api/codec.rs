@@ -10,6 +10,8 @@ use crate::engine::codec;
 pub enum CodecFormat {
     Jpeg,
     Png,
+    Webp,
+    WebpLossless,
 }
 
 /// Decode → optional downscale (long edge ≤ `max_edge`; 0 = keep original size)
@@ -21,9 +23,18 @@ pub fn transcode(
     quality: u32,
     max_edge: u32,
 ) -> Result<Vec<u8>, String> {
+    let q = quality.clamp(1, 100) as u8;
     let target = match format {
-        CodecFormat::Jpeg => codec::Target::Jpeg(quality.clamp(1, 100) as u8),
+        CodecFormat::Jpeg => codec::Target::Jpeg(q),
         CodecFormat::Png => codec::Target::Png,
+        CodecFormat::Webp => codec::Target::Webp {
+            quality: q,
+            lossless: false,
+        },
+        CodecFormat::WebpLossless => codec::Target::Webp {
+            quality: 100,
+            lossless: true,
+        },
     };
     let edge = if max_edge == 0 { None } else { Some(max_edge) };
     codec::transcode(&bytes, target, edge).map_err(|e| e.to_string())

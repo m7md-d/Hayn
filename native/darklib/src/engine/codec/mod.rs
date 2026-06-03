@@ -28,14 +28,44 @@ pub enum Target {
     Jpeg(u8),
     /// PNG (lossless).
     Png,
+    /// WebP — lossy at the given quality (1..=100), or lossless.
+    Webp { quality: u8, lossless: bool },
 }
 
 /// Decode any supported container to RGBA, optionally downscaling so the long
 /// edge is at most `max_edge` (for previews). The rule against downscaling the
 /// SAVED output lives at the call site — this is a primitive.
 pub fn decode(bytes: &[u8], max_edge: Option<u32>) -> Result<Decoded> {
-    let mut img =
-        image::load_from_memory(bytes).map_err(|_| DarkError::Malformed("decode failed"))?;
+    // WebP isn't enabled in the `image` crate (lossy encode needs libwebp
+    // anyway), so route WebP through libwebp.
+    if crate::engine::format::detect(bytes) == crate::engine::format::ImageFormat::Webp {
+        let img = webp::Decoder::new(bytes)
+            .decode()
+            .ok_or(DarkError::Malformed("webp decode failed"))?;
+        // libwebp decodes opaque images as RGB (3 ch) and images with alpha as
+        // RGBA (4 ch) — handle both, then let `finish` flatten to RGBA.
+        let (w, h) = (img.width(), img.height());
+        let data = img.to_vec();
+        let px = (w as usize) * (h as usize);
+        let dynimg = if px > 0 && data.len() == px * 4 {
+            DynamicImage::ImageRgba8(
+                image::RgbaImage::from_raw(w, h, data).ok_or(DarkError::Malformed("webp rgba"))?,
+            )
+        } else if px > 0 && data.len() == px * 3 {
+            DynamicImage::ImageRgb8(
+                image::RgbImage::from_raw(w, h, data).ok_or(DarkError::Malformed("webp rgb"))?,
+            )
+        } else {
+            return Err(DarkError::Malformed("webp unexpected layout"));
+        };
+        return finish(dynimg, max_edge);
+    }
+    let img = image::load_from_memory(bytes).map_err(|_| DarkError::Malformed("decode failed"))?;
+    finish(img, max_edge)
+}
+
+/// Apply the optional preview downscale and flatten to RGBA.
+fn finish(mut img: DynamicImage, max_edge: Option<u32>) -> Result<Decoded> {
     if let Some(m) = max_edge {
         if m > 0 && img.width().max(img.height()) > m {
             img = img.resize(m, m, image::imageops::FilterType::Lanczos3);
@@ -68,6 +98,16 @@ pub fn encode(img: &Decoded, target: Target) -> Result<Vec<u8>> {
                     ExtendedColorType::Rgb8,
                 )
                 .map_err(|_| DarkError::Malformed("jpeg encode failed"))?;
+        }
+        Target::Webp { quality, lossless } => {
+            // libwebp owns its output buffer; copy it out into a Vec.
+            let enc = webp::Encoder::from_rgba(buf.as_raw(), img.width, img.height);
+            let mem = if lossless {
+                enc.encode_lossless()
+            } else {
+                enc.encode(quality.clamp(1, 100) as f32)
+            };
+            return Ok(mem.to_vec());
         }
     }
     Ok(out.into_inner())
@@ -123,6 +163,47 @@ mod tests {
         let d = decode(&png, Some(20)).unwrap();
         assert!(d.width.max(d.height) <= 20);
         assert!(d.width > 0 && d.height > 0);
+    }
+
+    #[test]
+    fn webp_lossless_roundtrip_preserves_pixels() {
+        let png = solid_png(12, 9, [40, 80, 120, 255]);
+        let d = decode(&png, None).unwrap();
+        let wp = encode(
+            &d,
+            Target::Webp {
+                quality: 100,
+                lossless: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            crate::engine::format::detect(&wp),
+            crate::engine::format::ImageFormat::Webp
+        );
+        let back = decode(&wp, None).unwrap();
+        assert_eq!((back.width, back.height), (12, 9));
+        assert_eq!(back.rgba, d.rgba); // lossless WebP preserves pixels
+    }
+
+    #[test]
+    fn webp_lossy_transcode_decodes_back() {
+        let png = solid_png(16, 16, [200, 30, 90, 255]);
+        let wp = transcode(
+            &png,
+            Target::Webp {
+                quality: 80,
+                lossless: false,
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            crate::engine::format::detect(&wp),
+            crate::engine::format::ImageFormat::Webp
+        );
+        let d = decode(&wp, None).unwrap();
+        assert_eq!((d.width, d.height), (16, 16));
     }
 
     #[test]

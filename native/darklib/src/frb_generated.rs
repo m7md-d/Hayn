@@ -363,6 +363,8 @@ impl SseDecode for crate::api::codec::CodecFormat {
         return match inner {
             0 => crate::api::codec::CodecFormat::Jpeg,
             1 => crate::api::codec::CodecFormat::Png,
+            2 => crate::api::codec::CodecFormat::Webp,
+            3 => crate::api::codec::CodecFormat::WebpLossless,
             _ => unreachable!("Invalid variant for CodecFormat: {}", inner),
         };
     }
@@ -520,6 +522,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::codec::CodecFormat {
         match self {
             Self::Jpeg => 0.into_dart(),
             Self::Png => 1.into_dart(),
+            Self::Webp => 2.into_dart(),
+            Self::WebpLossless => 3.into_dart(),
             _ => unreachable!(),
         }
     }
@@ -638,6 +642,8 @@ impl SseEncode for crate::api::codec::CodecFormat {
             match self {
                 crate::api::codec::CodecFormat::Jpeg => 0,
                 crate::api::codec::CodecFormat::Png => 1,
+                crate::api::codec::CodecFormat::Webp => 2,
+                crate::api::codec::CodecFormat::WebpLossless => 3,
                 _ => {
                     unimplemented!("");
                 }
