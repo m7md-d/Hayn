@@ -6,6 +6,7 @@
 // Static analysis wrongly picks the IO variant, thus ignore this
 // ignore_for_file: argument_type_not_assignable
 
+import 'api/codec.dart';
 import 'api/metadata.dart';
 import 'api/simple.dart';
 import 'dart:async';
@@ -27,6 +28,9 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
 
   @protected
   bool dco_decode_bool(dynamic raw);
+
+  @protected
+  CodecFormat dco_decode_codec_format(dynamic raw);
 
   @protected
   FormatInfo dco_decode_format_info(dynamic raw);
@@ -65,6 +69,9 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
+  CodecFormat sse_decode_codec_format(SseDeserializer deserializer);
+
+  @protected
   FormatInfo sse_decode_format_info(SseDeserializer deserializer);
 
   @protected
@@ -99,6 +106,9 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
 
   @protected
   void sse_encode_bool(bool self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_codec_format(CodecFormat self, SseSerializer serializer);
 
   @protected
   void sse_encode_format_info(FormatInfo self, SseSerializer serializer);

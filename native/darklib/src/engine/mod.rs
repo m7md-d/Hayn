@@ -5,6 +5,7 @@
 //! a thin wrapper that converts to/from FRB-friendly types. See
 //! `docs/10-DARKLIB.md`.
 
+pub mod codec;
 pub mod error;
 pub mod format;
 pub mod metadata;

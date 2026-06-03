@@ -3,6 +3,7 @@
 
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
+import 'api/codec.dart';
 import 'api/metadata.dart';
 import 'api/simple.dart';
 import 'dart:async';
@@ -68,7 +69,7 @@ class DarkLib extends BaseEntrypoint<DarkLibApi, DarkLibApiImpl, DarkLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -406133938;
+  int get rustContentHash => -1444342824;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -99,6 +100,13 @@ abstract class DarkLibApi extends BaseApi {
   Future<Uint8List> crateApiMetadataStripMetadata({
     required List<int> bytes,
     required bool stripIcc,
+  });
+
+  Future<Uint8List> crateApiCodecTranscode({
+    required List<int> bytes,
+    required CodecFormat format,
+    required int quality,
+    required int maxEdge,
   });
 }
 
@@ -314,6 +322,44 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
         argNames: ["bytes", "stripIcc"],
       );
 
+  @override
+  Future<Uint8List> crateApiCodecTranscode({
+    required List<int> bytes,
+    required CodecFormat format,
+    required int quality,
+    required int maxEdge,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(bytes, serializer);
+          sse_encode_codec_format(format, serializer);
+          sse_encode_u_32(quality, serializer);
+          sse_encode_u_32(maxEdge, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 9,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiCodecTranscodeConstMeta,
+        argValues: [bytes, format, quality, maxEdge],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiCodecTranscodeConstMeta => const TaskConstMeta(
+    debugName: "transcode",
+    argNames: ["bytes", "format", "quality", "maxEdge"],
+  );
+
   @protected
   String dco_decode_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -324,6 +370,12 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   bool dco_decode_bool(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as bool;
+  }
+
+  @protected
+  CodecFormat dco_decode_codec_format(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return CodecFormat.values[raw as int];
   }
 
   @protected
@@ -420,6 +472,13 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   bool sse_decode_bool(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint8() != 0;
+  }
+
+  @protected
+  CodecFormat sse_decode_codec_format(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return CodecFormat.values[inner];
   }
 
   @protected
@@ -526,6 +585,12 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   void sse_encode_bool(bool self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint8(self ? 1 : 0);
+  }
+
+  @protected
+  void sse_encode_codec_format(CodecFormat self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected
