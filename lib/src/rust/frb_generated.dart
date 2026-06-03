@@ -69,7 +69,7 @@ class DarkLib extends BaseEntrypoint<DarkLibApi, DarkLibApiImpl, DarkLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -1444342824;
+  int get rustContentHash => 840597680;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -103,6 +103,13 @@ abstract class DarkLibApi extends BaseApi {
   });
 
   Future<Uint8List> crateApiCodecTranscode({
+    required List<int> bytes,
+    required CodecFormat format,
+    required int quality,
+    required int maxEdge,
+  });
+
+  Future<Uint8List> crateApiCodecTranscodeKeepMetadata({
     required List<int> bytes,
     required CodecFormat format,
     required int quality,
@@ -359,6 +366,45 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
     debugName: "transcode",
     argNames: ["bytes", "format", "quality", "maxEdge"],
   );
+
+  @override
+  Future<Uint8List> crateApiCodecTranscodeKeepMetadata({
+    required List<int> bytes,
+    required CodecFormat format,
+    required int quality,
+    required int maxEdge,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(bytes, serializer);
+          sse_encode_codec_format(format, serializer);
+          sse_encode_u_32(quality, serializer);
+          sse_encode_u_32(maxEdge, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 10,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiCodecTranscodeKeepMetadataConstMeta,
+        argValues: [bytes, format, quality, maxEdge],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiCodecTranscodeKeepMetadataConstMeta =>
+      const TaskConstMeta(
+        debugName: "transcode_keep_metadata",
+        argNames: ["bytes", "format", "quality", "maxEdge"],
+      );
 
   @protected
   String dco_decode_String(dynamic raw) {

@@ -118,6 +118,66 @@ pub fn summarize(tiff: &[u8]) -> Option<ExifSummary> {
     Some(s)
 }
 
+/// Return a copy of `tiff` with the Orientation tag forced to 1 (call after
+/// baking orientation into the pixels — single source of truth). No Orientation
+/// tag → returned unchanged (absence means upright). Bounds-safe; never panics.
+pub fn with_orientation_1(tiff: &[u8]) -> Vec<u8> {
+    let mut out = tiff.to_vec();
+    if out.len() < 8 {
+        return out;
+    }
+    let le = match &out[0..2] {
+        b"II" => true,
+        b"MM" => false,
+        _ => return out,
+    };
+    let r16 = |b: &[u8], o: usize| -> Option<u16> {
+        b.get(o..o + 2).map(|s| {
+            if le {
+                u16::from_le_bytes([s[0], s[1]])
+            } else {
+                u16::from_be_bytes([s[0], s[1]])
+            }
+        })
+    };
+    let r32 = |b: &[u8], o: usize| -> Option<u32> {
+        b.get(o..o + 4).map(|s| {
+            if le {
+                u32::from_le_bytes([s[0], s[1], s[2], s[3]])
+            } else {
+                u32::from_be_bytes([s[0], s[1], s[2], s[3]])
+            }
+        })
+    };
+    if r16(&out, 2) != Some(0x002A) {
+        return out;
+    }
+    let ifd0 = match r32(&out, 4) {
+        Some(v) => v as usize,
+        None => return out,
+    };
+    let count = match r16(&out, ifd0) {
+        Some(c) => c as usize,
+        None => return out,
+    };
+    let mut p = ifd0 + 2;
+    for _ in 0..count {
+        if p + 12 > out.len() {
+            break;
+        }
+        if r16(&out, p) == Some(0x0112) {
+            let one: [u8; 2] = if le { [1, 0] } else { [0, 1] };
+            out[p + 8] = one[0];
+            out[p + 9] = one[1];
+            out[p + 10] = 0;
+            out[p + 11] = 0;
+            break;
+        }
+        p += 12;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

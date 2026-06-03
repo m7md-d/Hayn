@@ -6,15 +6,32 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-/// Decode → optional downscale (long edge ≤ `max_edge`; 0 = keep original size)
-/// → encode to `format` at `quality` (1..=100; ignored for PNG). Throws on a
-/// container the codec layer can't handle yet.
+// These functions are ignored because they are not marked as `pub`: `target_of`
+
+/// Decode → optional downscale → encode at `quality` (1..=100; PNG ignores it).
+/// Metadata is NOT carried — use [`transcode_keep_metadata`] for that. Throws on
+/// a container the codec layer can't handle yet.
 Future<Uint8List> transcode({
   required List<int> bytes,
   required CodecFormat format,
   required int quality,
   required int maxEdge,
 }) => DarkLib.instance.api.crateApiCodecTranscode(
+  bytes: bytes,
+  format: format,
+  quality: quality,
+  maxEdge: maxEdge,
+);
+
+/// Like [`transcode`], but carries the source's EXIF/XMP/ICC into the output
+/// where supported (orientation normalised — the pixels are baked upright on
+/// decode). Formats without an injector yet return the bytes without metadata.
+Future<Uint8List> transcodeKeepMetadata({
+  required List<int> bytes,
+  required CodecFormat format,
+  required int quality,
+  required int maxEdge,
+}) => DarkLib.instance.api.crateApiCodecTranscodeKeepMetadata(
   bytes: bytes,
   format: format,
   quality: quality,
