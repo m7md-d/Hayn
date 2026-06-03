@@ -91,16 +91,38 @@ class SurgicalMediaStore(private val activity: Activity) {
     private fun writeAndUpdate(id: Long, bytes: ByteArray, mime: String?, name: String?) {
         val resolver = activity.applicationContext.contentResolver
         val uri = uriFor(id)
-        // "wt" truncates first, so the file becomes exactly the new bytes.
+        val scoped = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+
+        // Phase 1 — HIDE + retype/rename atomically while pending. Doing the
+        // rename/MIME change BEFORE writing (and while IS_PENDING) is what stops
+        // the gallery from ever seeing a mismatched file (e.g. AVIF bytes in a
+        // ".jpg" entry), which is what made Samsung mark the original corrupt and
+        // index the change as a NEW, duplicate image. Same _ID throughout.
+        if (scoped) {
+            val v1 = ContentValues().apply {
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+                if (!mime.isNullOrEmpty()) put(MediaStore.MediaColumns.MIME_TYPE, mime)
+                if (!name.isNullOrEmpty()) put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+            }
+            resolver.update(uri, v1, null, null)
+        }
+
+        // Phase 2 — overwrite the bytes ("wt" truncates first).
         resolver.openOutputStream(uri, "wt")?.use { it.write(bytes) }
             ?: throw IllegalStateException("no output stream")
-        // Refresh modified time; update MIME + name only when the format changed.
-        val values = ContentValues().apply {
+
+        // Phase 3 — PUBLISH: clear pending + refresh modified time (on legacy
+        // storage there's no pending flag, so apply name/MIME here instead).
+        val v2 = ContentValues().apply {
             put(MediaStore.MediaColumns.DATE_MODIFIED, System.currentTimeMillis() / 1000)
-            if (!mime.isNullOrEmpty()) put(MediaStore.MediaColumns.MIME_TYPE, mime)
-            if (!name.isNullOrEmpty()) put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+            if (scoped) {
+                put(MediaStore.MediaColumns.IS_PENDING, 0)
+            } else {
+                if (!mime.isNullOrEmpty()) put(MediaStore.MediaColumns.MIME_TYPE, mime)
+                if (!name.isNullOrEmpty()) put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+            }
         }
-        resolver.update(uri, values, null, null)
+        resolver.update(uri, v2, null, null)
     }
 
     private fun consentIntentSender(id: Long, sec: SecurityException): IntentSender? {
