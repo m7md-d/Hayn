@@ -1,0 +1,7 @@
+# flutter_rust_bridge codegen config for the DarkLib native core.
+# Regenerate after changing the Rust public API (crate::api):
+#   source "$HOME/.cargo/env" && flutter_rust_bridge_codegen generate
+rust_input: crate::api
+rust_root: native/darklib/
+dart_output: lib/src/rust
+dart_entrypoint_class_name: DarkLib
