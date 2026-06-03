@@ -33,6 +33,10 @@ Future<Uint8List> stripMetadata({
   stripIcc: stripIcc,
 );
 
+/// Summarise the metadata present in an image. Cheap container scan → sync.
+MetadataSummary readMetadataSummary({required List<int> bytes}) =>
+    DarkLib.instance.api.crateApiMetadataReadMetadataSummary(bytes: bytes);
+
 /// What a container can carry + whether DarkLib can strip it losslessly today
 /// (`can_strip` drives UI capability gating without a second call).
 class FormatInfo {
@@ -76,4 +80,55 @@ class FormatInfo {
           supportsIptc == other.supportsIptc &&
           hdrCapable == other.hdrCapable &&
           canStrip == other.canStrip;
+}
+
+/// What metadata an image carries — for the "what will be removed" preview.
+/// Works cross-platform (incl. HEIC/AVIF), unlike `package:exif` on Android.
+class MetadataSummary {
+  final bool hasExif;
+  final bool hasXmp;
+  final bool hasIcc;
+  final bool hasGps;
+  final bool hasDate;
+  final bool hasCamera;
+
+  /// EXIF orientation (1..=8; 1 = upright).
+  final int orientation;
+  final int tagCount;
+
+  const MetadataSummary({
+    required this.hasExif,
+    required this.hasXmp,
+    required this.hasIcc,
+    required this.hasGps,
+    required this.hasDate,
+    required this.hasCamera,
+    required this.orientation,
+    required this.tagCount,
+  });
+
+  @override
+  int get hashCode =>
+      hasExif.hashCode ^
+      hasXmp.hashCode ^
+      hasIcc.hashCode ^
+      hasGps.hashCode ^
+      hasDate.hashCode ^
+      hasCamera.hashCode ^
+      orientation.hashCode ^
+      tagCount.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is MetadataSummary &&
+          runtimeType == other.runtimeType &&
+          hasExif == other.hasExif &&
+          hasXmp == other.hasXmp &&
+          hasIcc == other.hasIcc &&
+          hasGps == other.hasGps &&
+          hasDate == other.hasDate &&
+          hasCamera == other.hasCamera &&
+          orientation == other.orientation &&
+          tagCount == other.tagCount;
 }

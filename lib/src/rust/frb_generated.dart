@@ -68,7 +68,7 @@ class DarkLib extends BaseEntrypoint<DarkLibApi, DarkLibApiImpl, DarkLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -91640212;
+  int get rustContentHash => -406133938;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -91,6 +91,10 @@ abstract class DarkLibApi extends BaseApi {
   String crateApiSimpleGreet({required String name});
 
   Future<void> crateApiSimpleInitApp();
+
+  MetadataSummary crateApiMetadataReadMetadataSummary({
+    required List<int> bytes,
+  });
 
   Future<Uint8List> crateApiMetadataStripMetadata({
     required List<int> bytes,
@@ -248,6 +252,34 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
       const TaskConstMeta(debugName: "init_app", argNames: []);
 
   @override
+  MetadataSummary crateApiMetadataReadMetadataSummary({
+    required List<int> bytes,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(bytes, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 7)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_metadata_summary,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiMetadataReadMetadataSummaryConstMeta,
+        argValues: [bytes],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiMetadataReadMetadataSummaryConstMeta =>
+      const TaskConstMeta(
+        debugName: "read_metadata_summary",
+        argNames: ["bytes"],
+      );
+
+  @override
   Future<Uint8List> crateApiMetadataStripMetadata({
     required List<int> bytes,
     required bool stripIcc,
@@ -261,7 +293,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 7,
+            funcId: 8,
             port: port_,
           );
         },
@@ -333,6 +365,36 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as Uint8List;
+  }
+
+  @protected
+  MetadataSummary dco_decode_metadata_summary(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 8)
+      throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
+    return MetadataSummary(
+      hasExif: dco_decode_bool(arr[0]),
+      hasXmp: dco_decode_bool(arr[1]),
+      hasIcc: dco_decode_bool(arr[2]),
+      hasGps: dco_decode_bool(arr[3]),
+      hasDate: dco_decode_bool(arr[4]),
+      hasCamera: dco_decode_bool(arr[5]),
+      orientation: dco_decode_u_16(arr[6]),
+      tagCount: dco_decode_u_32(arr[7]),
+    );
+  }
+
+  @protected
+  int dco_decode_u_16(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as int;
+  }
+
+  @protected
+  int dco_decode_u_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as int;
   }
 
   @protected
@@ -409,6 +471,41 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   }
 
   @protected
+  MetadataSummary sse_decode_metadata_summary(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_hasExif = sse_decode_bool(deserializer);
+    var var_hasXmp = sse_decode_bool(deserializer);
+    var var_hasIcc = sse_decode_bool(deserializer);
+    var var_hasGps = sse_decode_bool(deserializer);
+    var var_hasDate = sse_decode_bool(deserializer);
+    var var_hasCamera = sse_decode_bool(deserializer);
+    var var_orientation = sse_decode_u_16(deserializer);
+    var var_tagCount = sse_decode_u_32(deserializer);
+    return MetadataSummary(
+      hasExif: var_hasExif,
+      hasXmp: var_hasXmp,
+      hasIcc: var_hasIcc,
+      hasGps: var_hasGps,
+      hasDate: var_hasDate,
+      hasCamera: var_hasCamera,
+      orientation: var_orientation,
+      tagCount: var_tagCount,
+    );
+  }
+
+  @protected
+  int sse_decode_u_16(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getUint16();
+  }
+
+  @protected
+  int sse_decode_u_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getUint32();
+  }
+
+  @protected
   int sse_decode_u_8(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint8();
@@ -475,6 +572,34 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.length, serializer);
     serializer.buffer.putUint8List(self);
+  }
+
+  @protected
+  void sse_encode_metadata_summary(
+    MetadataSummary self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_bool(self.hasExif, serializer);
+    sse_encode_bool(self.hasXmp, serializer);
+    sse_encode_bool(self.hasIcc, serializer);
+    sse_encode_bool(self.hasGps, serializer);
+    sse_encode_bool(self.hasDate, serializer);
+    sse_encode_bool(self.hasCamera, serializer);
+    sse_encode_u_16(self.orientation, serializer);
+    sse_encode_u_32(self.tagCount, serializer);
+  }
+
+  @protected
+  void sse_encode_u_16(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putUint16(self);
+  }
+
+  @protected
+  void sse_encode_u_32(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putUint32(self);
   }
 
   @protected

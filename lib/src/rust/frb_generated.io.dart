@@ -42,6 +42,15 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
   @protected
+  MetadataSummary dco_decode_metadata_summary(dynamic raw);
+
+  @protected
+  int dco_decode_u_16(dynamic raw);
+
+  @protected
+  int dco_decode_u_32(dynamic raw);
+
+  @protected
   int dco_decode_u_8(dynamic raw);
 
   @protected
@@ -67,6 +76,15 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
 
   @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
+
+  @protected
+  MetadataSummary sse_decode_metadata_summary(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_u_16(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_u_32(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_8(SseDeserializer deserializer);
@@ -97,6 +115,18 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
     Uint8List self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_metadata_summary(
+    MetadataSummary self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_u_16(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_u_32(int self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_8(int self, SseSerializer serializer);

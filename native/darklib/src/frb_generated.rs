@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -91640212;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -406133938;
 
 // Section: executor
 
@@ -232,6 +232,37 @@ fn wire__crate__api__simple__init_app_impl(
         },
     )
 }
+fn wire__crate__api__metadata__read_metadata_summary_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "read_metadata_summary",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_bytes = <Vec<u8>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok =
+                    Result::<_, ()>::Ok(crate::api::metadata::read_metadata_summary(api_bytes))?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__metadata__strip_metadata_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -344,6 +375,44 @@ impl SseDecode for Vec<u8> {
     }
 }
 
+impl SseDecode for crate::api::metadata::MetadataSummary {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_hasExif = <bool>::sse_decode(deserializer);
+        let mut var_hasXmp = <bool>::sse_decode(deserializer);
+        let mut var_hasIcc = <bool>::sse_decode(deserializer);
+        let mut var_hasGps = <bool>::sse_decode(deserializer);
+        let mut var_hasDate = <bool>::sse_decode(deserializer);
+        let mut var_hasCamera = <bool>::sse_decode(deserializer);
+        let mut var_orientation = <u16>::sse_decode(deserializer);
+        let mut var_tagCount = <u32>::sse_decode(deserializer);
+        return crate::api::metadata::MetadataSummary {
+            has_exif: var_hasExif,
+            has_xmp: var_hasXmp,
+            has_icc: var_hasIcc,
+            has_gps: var_hasGps,
+            has_date: var_hasDate,
+            has_camera: var_hasCamera,
+            orientation: var_orientation,
+            tag_count: var_tagCount,
+        };
+    }
+}
+
+impl SseDecode for u16 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        deserializer.cursor.read_u16::<NativeEndian>().unwrap()
+    }
+}
+
+impl SseDecode for u32 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        deserializer.cursor.read_u32::<NativeEndian>().unwrap()
+    }
+}
+
 impl SseDecode for u8 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -366,7 +435,7 @@ fn pde_ffi_dispatcher_primary_impl(
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
         6 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
-        7 => wire__crate__api__metadata__strip_metadata_impl(port, ptr, rust_vec_len, data_len),
+        8 => wire__crate__api__metadata__strip_metadata_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -384,6 +453,7 @@ fn pde_ffi_dispatcher_sync_impl(
         3 => wire__crate__api__metadata__describe_format_impl(ptr, rust_vec_len, data_len),
         4 => wire__crate__api__metadata__detect_format_impl(ptr, rust_vec_len, data_len),
         5 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
+        7 => wire__crate__api__metadata__read_metadata_summary_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -441,6 +511,33 @@ impl flutter_rust_bridge::IntoIntoDart<crate::engine::format::ImageFormat>
     for crate::engine::format::ImageFormat
 {
     fn into_into_dart(self) -> crate::engine::format::ImageFormat {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::metadata::MetadataSummary {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.has_exif.into_into_dart().into_dart(),
+            self.has_xmp.into_into_dart().into_dart(),
+            self.has_icc.into_into_dart().into_dart(),
+            self.has_gps.into_into_dart().into_dart(),
+            self.has_date.into_into_dart().into_dart(),
+            self.has_camera.into_into_dart().into_dart(),
+            self.orientation.into_into_dart().into_dart(),
+            self.tag_count.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::metadata::MetadataSummary
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::metadata::MetadataSummary>
+    for crate::api::metadata::MetadataSummary
+{
+    fn into_into_dart(self) -> crate::api::metadata::MetadataSummary {
         self
     }
 }
@@ -509,6 +606,34 @@ impl SseEncode for Vec<u8> {
         for item in self {
             <u8>::sse_encode(item, serializer);
         }
+    }
+}
+
+impl SseEncode for crate::api::metadata::MetadataSummary {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.has_exif, serializer);
+        <bool>::sse_encode(self.has_xmp, serializer);
+        <bool>::sse_encode(self.has_icc, serializer);
+        <bool>::sse_encode(self.has_gps, serializer);
+        <bool>::sse_encode(self.has_date, serializer);
+        <bool>::sse_encode(self.has_camera, serializer);
+        <u16>::sse_encode(self.orientation, serializer);
+        <u32>::sse_encode(self.tag_count, serializer);
+    }
+}
+
+impl SseEncode for u16 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        serializer.cursor.write_u16::<NativeEndian>(self).unwrap();
+    }
+}
+
+impl SseEncode for u32 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        serializer.cursor.write_u32::<NativeEndian>(self).unwrap();
     }
 }
 

@@ -28,6 +28,52 @@ pub fn strip(b: &[u8], _policy: StripPolicy) -> Result<Vec<u8>> {
     strip_inner(b).ok_or(DarkError::UnsupportedFormat)
 }
 
+/// Raw EXIF (TIFF block) + XMP packet extracted from an ISOBMFF image.
+type ExifXmp = (Option<Vec<u8>>, Option<Vec<u8>>);
+
+/// Extract the raw EXIF (TIFF block) and XMP packet, if present. Reuses the box
+/// parser; best-effort and bounds-safe (returns `(None, None)` on anything it
+/// can't read).
+pub fn extract_exif_xmp(b: &[u8]) -> ExifXmp {
+    extract_inner(b).unwrap_or((None, None))
+}
+
+fn extract_inner(b: &[u8]) -> Option<ExifXmp> {
+    let top = boxes_in(b, 0, b.len())?;
+    let meta = *top.iter().find(|x| x.typ == *b"meta")?;
+    let mc = boxes_in(b, meta.body + 4, meta.end)?;
+    let iinf = *mc.iter().find(|x| x.typ == *b"iinf")?;
+    let iloc_box = *mc.iter().find(|x| x.typ == *b"iloc")?;
+    let (_v, items) = parse_iinf(b, iinf)?;
+    let loc = parse_iloc(b, iloc_box)?;
+
+    let mut exif = None;
+    let mut xmp = None;
+    for (it, _) in &items {
+        let Some(l) = loc.items.iter().find(|x| x.id == it.id) else {
+            continue;
+        };
+        if it.typ == *b"Exif" {
+            if let Some(data) = read_item(b, l) {
+                // data = u32 exif_tiff_header_offset + the TIFF block.
+                if data.len() >= 4 {
+                    let off = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
+                    if let Some(start) = 4usize.checked_add(off) {
+                        if start <= data.len() {
+                            exif = Some(data[start..].to_vec());
+                        }
+                    }
+                }
+            }
+        } else if is_xmp(it) {
+            if let Some(data) = read_item(b, l) {
+                xmp = Some(data);
+            }
+        }
+    }
+    Some((exif, xmp))
+}
+
 // ── big-endian readers ──────────────────────────────────────────────────────
 
 fn be_u16(b: &[u8], o: usize) -> Option<u16> {

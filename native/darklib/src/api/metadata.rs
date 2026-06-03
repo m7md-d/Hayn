@@ -76,3 +76,34 @@ pub fn strip_metadata(bytes: Vec<u8>, strip_icc: bool) -> Result<Vec<u8>, String
     };
     em::strip(&bytes, policy).map_err(|e| e.to_string())
 }
+
+/// What metadata an image carries — for the "what will be removed" preview.
+/// Works cross-platform (incl. HEIC/AVIF), unlike `package:exif` on Android.
+pub struct MetadataSummary {
+    pub has_exif: bool,
+    pub has_xmp: bool,
+    pub has_icc: bool,
+    pub has_gps: bool,
+    pub has_date: bool,
+    pub has_camera: bool,
+    /// EXIF orientation (1..=8; 1 = upright).
+    pub orientation: u16,
+    pub tag_count: u32,
+}
+
+/// Summarise the metadata present in an image. Cheap container scan → sync.
+#[flutter_rust_bridge::frb(sync)]
+pub fn read_metadata_summary(bytes: Vec<u8>) -> MetadataSummary {
+    let c = em::extract(&bytes);
+    let ex = c.exif.as_deref().and_then(em::exif::summarize);
+    MetadataSummary {
+        has_exif: c.exif.is_some(),
+        has_xmp: c.xmp.is_some(),
+        has_icc: c.icc.is_some(),
+        has_gps: ex.map(|e| e.has_gps).unwrap_or(false),
+        has_date: ex.map(|e| e.has_date).unwrap_or(false),
+        has_camera: ex.map(|e| e.has_camera).unwrap_or(false),
+        orientation: c.orientation,
+        tag_count: ex.map(|e| e.tag_count).unwrap_or(0),
+    }
+}

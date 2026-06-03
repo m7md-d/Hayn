@@ -6,13 +6,30 @@
 //! Each format keeps its own surgery in a submodule; this module only sniffs
 //! the container and dispatches.
 
+pub mod exif;
+mod extract;
 pub mod isobmff;
 pub mod jpeg;
 pub mod png;
 pub mod webp;
 
+pub use extract::extract;
+
 use crate::engine::error::{DarkError, Result};
 use crate::engine::format::{detect, ImageFormat};
+
+/// Canonical metadata model: the raw EXIF (TIFF block), XMP, ICC and IPTC blobs
+/// kept VERBATIM (no parse→reserialize, so MakerNotes / private boxes survive)
+/// plus the unified orientation derived from EXIF (1 = upright). Produced by
+/// [`extract`]; consumed by the summary today and by transplant/inject later.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Canonical {
+    pub exif: Option<Vec<u8>>,
+    pub xmp: Option<Vec<u8>>,
+    pub icc: Option<Vec<u8>>,
+    pub iptc: Option<Vec<u8>>,
+    pub orientation: u16,
+}
 
 /// What to do with the ICC colour profile when stripping. Removing it blind
 /// changes the rendered colours, so the default keeps it.
