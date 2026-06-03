@@ -38,6 +38,11 @@ pub enum Target {
 /// edge is at most `max_edge` (for previews). The rule against downscaling the
 /// SAVED output lives at the call site — this is a primitive.
 pub fn decode(bytes: &[u8], max_edge: Option<u32>) -> Result<Decoded> {
+    // Unified orientation: bake the source's EXIF orientation into the pixels so
+    // every re-encode is upright (the encoders write no orientation tag),
+    // preventing the classic flip. Single source of truth — never applied twice.
+    let orientation = crate::engine::metadata::extract(bytes).orientation;
+
     // WebP isn't enabled in the `image` crate (lossy encode needs libwebp
     // anyway), so route WebP through libwebp.
     if crate::engine::format::detect(bytes) == crate::engine::format::ImageFormat::Webp {
@@ -60,7 +65,7 @@ pub fn decode(bytes: &[u8], max_edge: Option<u32>) -> Result<Decoded> {
         } else {
             return Err(DarkError::Malformed("webp unexpected layout"));
         };
-        return finish(dynimg, max_edge);
+        return finish(dynimg, orientation, max_edge);
     }
     // AVIF/HEIF decode (AV1/HEVC) isn't bound yet — encode-only for now; the
     // app keeps its existing decoders. dav1d/HW decode land in a later stage.
@@ -71,11 +76,14 @@ pub fn decode(bytes: &[u8], max_edge: Option<u32>) -> Result<Decoded> {
         return Err(DarkError::Malformed("avif/heif decode not supported yet"));
     }
     let img = image::load_from_memory(bytes).map_err(|_| DarkError::Malformed("decode failed"))?;
-    finish(img, max_edge)
+    finish(img, orientation, max_edge)
 }
 
-/// Apply the optional preview downscale and flatten to RGBA.
-fn finish(mut img: DynamicImage, max_edge: Option<u32>) -> Result<Decoded> {
+/// Bake EXIF orientation, apply the optional preview downscale, flatten to RGBA.
+fn finish(mut img: DynamicImage, orientation: u16, max_edge: Option<u32>) -> Result<Decoded> {
+    if let Some(o) = image::metadata::Orientation::from_exif(orientation as u8) {
+        img.apply_orientation(o);
+    }
     if let Some(m) = max_edge {
         if m > 0 && img.width().max(img.height()) > m {
             img = img.resize(m, m, image::imageops::FilterType::Lanczos3);
@@ -244,6 +252,53 @@ mod tests {
             crate::engine::format::ImageFormat::Avif
         );
         assert!(avif.len() > 32, "produced a real AVIF container");
+    }
+
+    fn crc32(data: &[u8]) -> u32 {
+        let mut crc = 0xFFFF_FFFFu32;
+        for &b in data {
+            crc ^= b as u32;
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 {
+                    (crc >> 1) ^ 0xEDB8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        !crc
+    }
+
+    /// Insert an `eXIf` chunk (a minimal little-endian TIFF carrying just the
+    /// Orientation tag) into a freshly-encoded PNG, before its trailing IEND.
+    fn png_with_orientation(base_png: &[u8], orientation: u8) -> Vec<u8> {
+        let mut tiff = b"II\x2a\x00\x08\x00\x00\x00".to_vec();
+        tiff.extend_from_slice(&1u16.to_le_bytes()); // 1 entry
+        tiff.extend_from_slice(&0x0112u16.to_le_bytes()); // Orientation
+        tiff.extend_from_slice(&3u16.to_le_bytes()); // SHORT
+        tiff.extend_from_slice(&1u32.to_le_bytes()); // count
+        tiff.extend_from_slice(&(orientation as u32).to_le_bytes()); // value (in field)
+        tiff.extend_from_slice(&0u32.to_le_bytes()); // next IFD = 0
+
+        let mut typed = b"eXIf".to_vec();
+        typed.extend_from_slice(&tiff);
+        let mut chunk = (tiff.len() as u32).to_be_bytes().to_vec();
+        chunk.extend_from_slice(&typed);
+        chunk.extend_from_slice(&crc32(&typed).to_be_bytes());
+
+        let cut = base_png.len() - 12; // IEND is the final 12 bytes
+        let mut out = base_png[..cut].to_vec();
+        out.extend_from_slice(&chunk);
+        out.extend_from_slice(&base_png[cut..]);
+        out
+    }
+
+    #[test]
+    fn decode_bakes_png_exif_orientation() {
+        // 2x1, orientation 6 (rotate 90° CW) → decoded upright as 1x2.
+        let png = png_with_orientation(&solid_png(2, 1, [255, 0, 0, 255]), 6);
+        let d = decode(&png, None).unwrap();
+        assert_eq!((d.width, d.height), (1, 2));
     }
 
     #[test]
