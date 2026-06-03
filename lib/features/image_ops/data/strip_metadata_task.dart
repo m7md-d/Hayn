@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:photo_manager/photo_manager.dart';
 
+import '../../../core/darklib/darklib.dart';
 import '../../../core/isolates/media_task.dart';
 import '../../../core/isolates/task_progress.dart';
 import 'gallery_saver.dart';
@@ -63,18 +64,27 @@ class StripMetadataTask extends MediaTask {
         continue;
       }
 
-      // Lossless ONLY (never re-encode/inflate). Pure-Dart handles JPEG/PNG/
-      // WebP; a null result is a container we can't edit in Dart (HEIC/AVIF) —
-      // try the NATIVE lossless strip (iOS ImageIO) before giving up.
-      var bytes = <int>[];
+      // Lossless ONLY (never re-encode/inflate). DarkLib (Rust) is tried first:
+      // it strips JPEG/PNG/WebP AND — the win for Android — AVIF/HEIF, on every
+      // platform. If it's unavailable or bails on an odd container, we fall back
+      // to the legacy pure-Dart stripper (JPEG/PNG/WebP) and then the iOS-only
+      // native ImageIO strip (HEIC/AVIF). A container nobody can edit losslessly
+      // is reported as unsupported — never re-encoded.
+      List<int> bytes = const [];
       String ext = 'jpg';
-      final dart = MetadataStripper.strip(src);
-      if (dart != null) {
-        bytes = dart.bytes;
-        ext = dart.ext;
+      final fmt = ImageProbe.sniff(src);
+
+      final dl = await DarkLibCore.stripMetadata(src);
+      if (_cancelled) return;
+      if (dl != null) {
+        bytes = dl;
+        ext = _extFor(fmt);
       } else {
-        final fmt = ImageProbe.sniff(src);
-        if (fmt == SniffedFormat.heic || fmt == SniffedFormat.avif) {
+        final dart = MetadataStripper.strip(src);
+        if (dart != null) {
+          bytes = dart.bytes;
+          ext = dart.ext;
+        } else if (fmt == SniffedFormat.heic || fmt == SniffedFormat.avif) {
           final native = await NativeImageStripper.strip(src);
           if (_cancelled) return;
           if (native != null) {
@@ -82,12 +92,12 @@ class StripMetadataTask extends MediaTask {
             ext = fmt == SniffedFormat.avif ? 'avif' : 'heic';
           }
         }
-        if (bytes.isEmpty) {
-          unsupported++;
-          done++;
-          yield TaskProgress(progress: done / total, phase: '$done/$total');
-          continue;
-        }
+      }
+      if (bytes.isEmpty) {
+        unsupported++;
+        done++;
+        yield TaskProgress(progress: done / total, phase: '$done/$total');
+        continue;
       }
 
       try {
@@ -117,6 +127,17 @@ class StripMetadataTask extends MediaTask {
     }
     yield TaskProgress(progress: 1, phase: '$saved/$total');
   }
+
+  // Container is preserved by a lossless strip, so the output extension matches
+  // the source format.
+  static String _extFor(SniffedFormat f) => switch (f) {
+        SniffedFormat.jpeg => 'jpg',
+        SniffedFormat.png => 'png',
+        SniffedFormat.webp => 'webp',
+        SniffedFormat.heic => 'heic',
+        SniffedFormat.avif => 'avif',
+        _ => 'jpg',
+      };
 
   @override
   Future<void> cancel() async => _cancelled = true;
