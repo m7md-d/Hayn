@@ -81,6 +81,8 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   // which is exactly what the index-based estimate avoids).
   Uint8List? _originBytes;
   int _beforeSize = 0;
+  int _activeW = 0; // source dimensions (for the huge-image encode cap)
+  int _activeH = 0;
   bool _hasAlpha = false;
   NativeImageInfo? _info; // real bit depth / alpha / HDR of the source
   int _bitDepth = 0; // target: 0 = match source (preserves HDR), 8 = SDR
@@ -145,6 +147,8 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
       _previewBytes = thumb;
       _originBytes = origin;
       _beforeSize = origin?.length ?? 0;
+      _activeW = entity.width;
+      _activeH = entity.height;
       _hasAlpha = alpha;
       _info = info;
     });
@@ -175,6 +179,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
     if (!_isSingle) _scheduleEstimate(); // show prior + spinner while encoding
     try {
       final sw = Stopwatch()..start();
+      final cap = encodeCapFor(_activeW, _activeH); // huge-image guard
       final result = await ImageEncoder.encode(
         source: src,
         target: target.format,
@@ -183,6 +188,8 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
         keepMetadata: _keepMetadata,
         keepOriginalTime: _keepOriginalTime,
         bitDepth: _bitDepth,
+        maxWidth: cap.maxWidth,
+        maxHeight: cap.maxHeight,
       );
       sw.stop();
       if (!mounted || seq != _encodeSeq) return;
@@ -295,6 +302,9 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
         origin,
         fit: BoxFit.contain,
         gaplessPlayback: true,
+        // Bound the decode so a ~200 MP original can't OOM the preview; still
+        // far more detail than the on-screen size for zoom-comparison.
+        cacheWidth: 4096,
         errorBuilder: (_, __, ___) => _previewBytes != null
             ? Image.memory(_previewBytes!, fit: BoxFit.contain)
             : const SizedBox.shrink(),

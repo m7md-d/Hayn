@@ -30,6 +30,22 @@ import 'native_image_encoder.dart';
 // [_supportsKeepExif].
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Longest output edge we encode. Decoding a ~200 MP image at full size is
+/// ~800 MB of RGBA → an instant OOM, and it also exceeds hardware encoder limits.
+/// Sources whose long edge exceeds this are downscaled to fit (normal photos,
+/// incl. 48 MP at 8064 px, are untouched). Matches the native AVIF path's cap.
+const int kMaxEncodeLongEdge = 8192;
+
+/// The (maxWidth,maxHeight) cap for a source of [width]×[height], or (null,null)
+/// when it's already within [kMaxEncodeLongEdge].
+({int? maxWidth, int? maxHeight}) encodeCapFor(int width, int height) {
+  final longEdge = width > height ? width : height;
+  if (longEdge <= kMaxEncodeLongEdge || longEdge == 0) {
+    return (maxWidth: null, maxHeight: null);
+  }
+  return (maxWidth: kMaxEncodeLongEdge, maxHeight: kMaxEncodeLongEdge);
+}
+
 class EncodedImage {
   const EncodedImage(this.bytes, this.format);
 

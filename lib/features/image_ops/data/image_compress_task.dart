@@ -118,6 +118,8 @@ class ImageCompressTask extends MediaTask {
             caps: _caps,
           );
           if (_cancelled) return;
+          // Huge images (≈200 MP) would OOM the decode — cap the long edge.
+          final cap = encodeCapFor(entity.width, entity.height);
           try {
             encoded = await ImageEncoder.encode(
               source: src,
@@ -127,6 +129,8 @@ class ImageCompressTask extends MediaTask {
               keepMetadata: keepMetadata,
               keepOriginalTime: keepOriginalTime,
               bitDepth: bitDepth,
+              maxWidth: cap.maxWidth,
+              maxHeight: cap.maxHeight,
             );
           } catch (_) {
             encoded = null;

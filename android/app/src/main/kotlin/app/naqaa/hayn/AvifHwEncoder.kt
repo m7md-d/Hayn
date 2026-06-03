@@ -29,6 +29,19 @@ import java.nio.ByteBuffer
 object AvifHwEncoder {
     private const val AV1 = MediaFormat.MIMETYPE_VIDEO_AV1 // "video/av01"
 
+    /// Longest edge we'll encode — memory-bounded (a 200 MP decode would OOM) and
+    /// within typical hardware AV1 encoder dimension limits.
+    private const val MAX_EDGE = 8192
+
+    /// Largest power-of-two inSampleSize that keeps the long edge ≥ MAX_EDGE
+    /// (so the post-decode scale only trims a little). 1 for normal-size images.
+    private fun sampleSizeForMaxEdge(w: Int, h: Int): Int {
+        var s = 1
+        val longEdge = maxOf(w, h)
+        while (longEdge / (s * 2) >= MAX_EDGE) s *= 2
+        return s
+    }
+
     /** True when a HARDWARE-accelerated AV1 encoder exists on this device. */
     fun isAvailable(): Boolean = hardwareEncoderName() != null
 
@@ -53,10 +66,25 @@ object AvifHwEncoder {
         return try {
             val encoderName = hardwareEncoderName() ?: return null
 
-            // Decode + apply EXIF orientation so the AV1 frame is upright (the
-            // AVIF carries orientation in pixels here; no irot/imir needed).
-            var bmp = BitmapFactory.decodeByteArray(src, 0, src.size) ?: return null
+            // Memory-bounded decode: a 200 MP image is ~800 MB as RGBA and would
+            // OOM. Decode downsampled so the long edge is ≈ MAX_EDGE, which also
+            // keeps within hardware AV1 encoders' dimension limits. Normal photos
+            // (≤ MAX_EDGE) decode at full size (inSampleSize 1).
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(src, 0, src.size, bounds)
+            val opts = BitmapFactory.Options().apply {
+                inSampleSize = sampleSizeForMaxEdge(bounds.outWidth, bounds.outHeight)
+            }
+            var bmp = BitmapFactory.decodeByteArray(src, 0, src.size, opts) ?: return null
             bmp = applyOrientation(bmp, src)
+            // Sampling is power-of-two/coarse — hard-cap the long edge after it.
+            val longEdge = maxOf(bmp.width, bmp.height)
+            if (longEdge > MAX_EDGE) {
+                val s = MAX_EDGE.toFloat() / longEdge
+                bmp = Bitmap.createScaledBitmap(
+                    bmp, (bmp.width * s).toInt(), (bmp.height * s).toInt(), true,
+                )
+            }
 
             // AV1 wants even dimensions.
             val w = bmp.width and 1.inv()
