@@ -68,10 +68,24 @@ object AvifHwEncoder {
 
             val i420 = argbToI420(bmp, w, h)
             val coded = encodeAv1(encoderName, i420, w, h, quality) ?: return null
-            muxAvif(coded.configObus, coded.frameObus, w, h)
+            val avif = muxAvif(coded.configObus, coded.frameObus, w, h) ?: return null
+            // Self-validate: the muxed AVIF MUST decode back, else our hand-built
+            // container is wrong → return null so Dart falls back to software
+            // libaom. This makes the hardware path safe to use by default even
+            // while the muxer is still being proven on real files.
+            if (decodesOk(avif)) avif else null
         } catch (_: Throwable) {
             null
         }
+    }
+
+    /** True if the platform can decode these bytes back (bounds only). */
+    private fun decodesOk(bytes: ByteArray): Boolean = try {
+        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+        opts.outWidth > 0 && opts.outHeight > 0
+    } catch (_: Throwable) {
+        false
     }
 
     // ── MediaCodec AV1 ─────────────────────────────────────────────────────────

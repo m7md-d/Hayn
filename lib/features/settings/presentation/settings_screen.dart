@@ -9,6 +9,7 @@ import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
 import '../../../core/capabilities/format_capabilities.dart';
 import '../../../shared/widgets/widgets.dart';
+import '../../image_ops/data/native_avif_encoder.dart';
 import '../providers/preferences_providers.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -269,6 +270,8 @@ class SettingsScreen extends ConsumerWidget {
     AppLocalizations l,
   ) async {
     final caps = ref.read(formatCapabilitiesProvider);
+    final avifHardware =
+        caps.supportsAvifHardware || await NativeAvifEncoder.isAvailable();
     final options = <HaynPickerOption<DefaultFormat>>[
       HaynPickerOption(
           value: DefaultFormat.auto,
@@ -279,7 +282,7 @@ class SettingsScreen extends ConsumerWidget {
           value: DefaultFormat.avif,
           label: 'AVIF',
           description: l.formatAvifDesc,
-          warning: caps.supportsAvifHardware ? null : l.formatAvifSoftwareWarning),
+          warning: avifHardware ? null : l.formatAvifSoftwareWarning),
       if (caps.supportsHeic)
         HaynPickerOption(
             value: DefaultFormat.heic,
@@ -301,6 +304,7 @@ class SettingsScreen extends ConsumerWidget {
           description: l.formatJpegDesc),
     ];
 
+    if (!context.mounted) return;
     await showHaynPickerSheet<DefaultFormat>(
       context: context,
       title: l.settingsDefaultFormat,

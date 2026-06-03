@@ -4,6 +4,7 @@ import '../../app/l10n/app_localizations.dart';
 import '../../app/theme/app_theme_extension.dart';
 import '../../app/theme/design_tokens.dart';
 import '../../core/capabilities/format_capabilities.dart';
+import '../../features/image_ops/data/native_avif_encoder.dart';
 import '../../features/settings/providers/preferences_providers.dart';
 import 'controls.dart';
 import 'sheets.dart';
@@ -68,6 +69,11 @@ class HaynAdvancedSettingsCard extends ConsumerWidget {
   Future<void> _openFormatPicker(BuildContext context, WidgetRef ref) async {
     final l = AppLocalizations.of(context);
     final caps = ref.read(formatCapabilitiesProvider);
+    // Probe the REAL hardware AV1 encoder (cached) so capable devices don't see
+    // the stale "software/slower" warning. flutter_avif is software, but the
+    // native MediaCodec path makes AVIF hardware-accelerated where available.
+    final avifHardware =
+        caps.supportsAvifHardware || await NativeAvifEncoder.isAvailable();
     final options = <HaynPickerOption<DefaultFormat>>[
       HaynPickerOption(
           value: DefaultFormat.auto,
@@ -78,8 +84,7 @@ class HaynAdvancedSettingsCard extends ConsumerWidget {
           value: DefaultFormat.avif,
           label: 'AVIF',
           description: l.formatAvifDesc,
-          warning:
-              caps.supportsAvifHardware ? null : l.formatAvifSoftwareWarning),
+          warning: avifHardware ? null : l.formatAvifSoftwareWarning),
       if (caps.supportsHeic)
         HaynPickerOption(
             value: DefaultFormat.heic,
@@ -105,6 +110,7 @@ class HaynAdvancedSettingsCard extends ConsumerWidget {
           description: l.formatPngDesc),
     ];
 
+    if (!context.mounted) return;
     await showHaynPickerSheet<DefaultFormat>(
       context: context,
       title: l.compressFormat,
