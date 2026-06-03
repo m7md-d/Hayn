@@ -6,6 +6,7 @@
 //! Each format keeps its own surgery in a submodule; this module only sniffs
 //! the container and dispatches.
 
+pub mod isobmff;
 pub mod jpeg;
 pub mod png;
 pub mod webp;
@@ -63,6 +64,8 @@ pub fn strip(bytes: &[u8], policy: StripPolicy) -> Result<Vec<u8>> {
         ImageFormat::Jpeg => jpeg::strip(bytes, policy),
         ImageFormat::Png => png::strip(bytes, policy),
         ImageFormat::Webp => webp::strip(bytes, policy),
+        // AVIF/HEIF share the ISOBMFF container — EXIF/XMP item surgery.
+        ImageFormat::Avif | ImageFormat::Heic => isobmff::strip(bytes, policy),
         _ => Err(DarkError::UnsupportedFormat),
     }
 }

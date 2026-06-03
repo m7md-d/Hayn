@@ -51,8 +51,14 @@ pub fn can_strip_lossless(bytes: Vec<u8>) -> bool {
 }
 
 fn can_strip_format(f: ImageFormat) -> bool {
-    // AVIF/HEIF land in Stage 1b.
-    matches!(f, ImageFormat::Jpeg | ImageFormat::Png | ImageFormat::Webp)
+    matches!(
+        f,
+        ImageFormat::Jpeg
+            | ImageFormat::Png
+            | ImageFormat::Webp
+            | ImageFormat::Avif
+            | ImageFormat::Heic
+    )
 }
 
 /// Strip metadata losslessly (no re-encode). `strip_icc` also removes the ICC
