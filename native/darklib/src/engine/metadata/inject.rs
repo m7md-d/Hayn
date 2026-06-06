@@ -86,10 +86,24 @@ fn inject_png(png: &[u8], meta: &Canonical) -> Vec<u8> {
             png_chunk(&mut out, b"iTXt", &p);
         }
     }
-    // ICC for PNG (iCCP) needs zlib compression for cross-format profiles — done
-    // in a later pass; EXIF/XMP (the privacy-relevant set) carry now.
+    if let Some(icc) = &meta.icc {
+        png_chunk(&mut out, b"iCCP", &build_iccp(icc)); // before PLTE/IDAT
+    }
     out.extend_from_slice(&png[ihdr_end..]);
     out
+}
+
+/// Build a PNG `iCCP` chunk body from a raw ICC profile: a short profile name, a
+/// null terminator, compression method 0 (zlib), then the zlib-compressed
+/// profile (the inverse of `extract`'s `decode_iccp`).
+fn build_iccp(icc: &[u8]) -> Vec<u8> {
+    let compressed = miniz_oxide::deflate::compress_to_vec_zlib(icc, 6);
+    let mut data = Vec::with_capacity(compressed.len() + 5);
+    data.extend_from_slice(b"icc"); // profile name (1..=79 Latin-1)
+    data.push(0); // name terminator
+    data.push(0); // compression method: 0 = zlib/deflate
+    data.extend_from_slice(&compressed);
+    data
 }
 
 fn png_chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
@@ -456,5 +470,56 @@ mod tests {
             extract(&out).xmp.as_deref(),
             Some(b"<x:xmpmeta>p</x:xmpmeta>".as_slice())
         );
+    }
+
+    fn png_sig_ihdr() -> Vec<u8> {
+        let mut png = vec![137, 80, 78, 71, 13, 10, 26, 10];
+        super::png_chunk(&mut png, b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]);
+        png
+    }
+
+    #[test]
+    fn png_inject_carries_icc_compressed_roundtrip() {
+        let mut png = png_sig_ihdr();
+        super::png_chunk(&mut png, b"IEND", &[]);
+        let base_len = png.len();
+        // A compressible (repetitive) profile, so we can assert it was really
+        // zlib'd — short incompressible data would land in a deflate STORED
+        // block (raw bytes verbatim), which says nothing about compression.
+        let icc = vec![0xABu8; 4096];
+        let meta = Canonical {
+            icc: Some(icc.clone()),
+            ..Default::default()
+        };
+        let out = inject(&png, &meta);
+        assert!(contains(&out, b"iCCP"), "iCCP chunk written");
+        assert!(out.len() < base_len + icc.len(), "iCCP profile compressed");
+        // Round-trips: extract decompresses the iCCP back to the exact bytes.
+        assert_eq!(extract(&out).icc.as_deref(), Some(icc.as_slice()));
+    }
+
+    #[test]
+    fn icc_is_raw_in_canonical_so_png_carries_to_webp() {
+        // A PNG iCCP (compressed) must normalise to the RAW profile in Canonical,
+        // so injecting into a WebP (whose ICCP is uncompressed) lands it verbatim
+        // rather than re-wrapping a compressed blob.
+        let raw_icc = b"raw-icc-abcdefghij".to_vec();
+        let mut png = png_sig_ihdr();
+        super::png_chunk(&mut png, b"iCCP", &super::build_iccp(&raw_icc));
+        super::png_chunk(&mut png, b"IEND", &[]);
+
+        let meta = extract(&png);
+        assert_eq!(
+            meta.icc.as_deref(),
+            Some(raw_icc.as_slice()),
+            "normalised raw"
+        );
+
+        let webp_out = inject(&webp_vp8l(8, 8), &meta);
+        assert!(
+            contains(&webp_out, raw_icc.as_slice()),
+            "raw ICC in WebP ICCP"
+        );
+        assert_eq!(extract(&webp_out).icc.as_deref(), Some(raw_icc.as_slice()));
     }
 }

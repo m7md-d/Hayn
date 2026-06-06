@@ -110,8 +110,12 @@ fn png(b: &[u8]) -> Canonical {
         if kind == b"eXIf" {
             c.exif.get_or_insert_with(|| data.to_vec());
         } else if kind == b"iCCP" {
-            // Raw (keyword\0 method compressed-profile); kept verbatim.
-            c.icc.get_or_insert_with(|| data.to_vec());
+            // Decompress to the raw ICC so Canonical.icc is the uniform
+            // uncompressed profile across every container (JPEG/WebP store it
+            // raw; only PNG's iCCP is zlib-compressed).
+            if let Some(profile) = decode_iccp(data) {
+                c.icc.get_or_insert(profile);
+            }
         } else if kind == b"iTXt" && data.starts_with(b"XML:com.adobe.xmp\0".as_slice()) {
             c.xmp.get_or_insert_with(|| data.to_vec());
         }
@@ -152,6 +156,19 @@ fn webp(b: &[u8]) -> Canonical {
         i = chunk_end;
     }
     c
+}
+
+/// Decompress a PNG `iCCP` chunk to the raw ICC profile. Layout: profile name
+/// (1..=79 bytes, null-terminated) + compression method (1 byte, must be 0 =
+/// zlib) + the zlib-compressed profile. Returns `None` on a malformed or
+/// non-zlib chunk (best-effort — the profile is then simply absent).
+fn decode_iccp(data: &[u8]) -> Option<Vec<u8>> {
+    let nul = data.iter().position(|&b| b == 0)?;
+    if *data.get(nul + 1)? != 0 {
+        return None; // only compression method 0 (zlib) is defined
+    }
+    let compressed = data.get(nul + 2..)?;
+    miniz_oxide::inflate::decompress_to_vec_zlib(compressed).ok()
 }
 
 #[cfg(test)]

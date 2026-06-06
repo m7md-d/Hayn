@@ -18,6 +18,9 @@ webp = "0.3"
 # faster SVT-AV1 + dav1d decode (C) path can slot in behind the same interface.
 ravif = { version = "0.11", default-features = false }
 rgb = "0.8"
+# Stage 4b: zlib (de)compression for PNG iCCP profiles. Pure Rust, already in the
+# tree (image/png pulls it) — keeps Canonical.icc the uniform raw ICC profile.
+miniz_oxide = "0.8"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
