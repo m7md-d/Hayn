@@ -13,6 +13,7 @@ pub mod isobmff;
 pub mod jpeg;
 pub mod png;
 pub mod webp;
+mod xmp;
 
 pub use extract::extract;
 pub use inject::inject;

@@ -21,6 +21,10 @@ rgb = "0.8"
 # Stage 4b: zlib (de)compression for PNG iCCP profiles. Pure Rust, already in the
 # tree (image/png pulls it) — keeps Canonical.icc the uniform raw ICC profile.
 miniz_oxide = "0.8"
+# Stage 4c HDR: XMP property surgery — keep the gain-map (hdrgm/GContainer)
+# properties while dropping privacy ones, so an Ultra-HDR JPEG survives a strip.
+# Pure Rust, royalty-free (MIT).
+quick-xml = { version = "0.40", default-features = false }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
