@@ -354,4 +354,40 @@ mod tests {
         let d2 = decode(&out, None).unwrap();
         assert_eq!((d2.width, d2.height), (16, 16));
     }
+
+    /// End-to-end: a REAL ravif-encoded AVIF gains EXIF + XMP items (ISOBMFF
+    /// add-item) that extract cleanly, while staying a valid single-mdat AVIF.
+    #[test]
+    fn avif_inject_adds_exif_and_xmp_through_a_real_encode() {
+        use crate::engine::metadata::{extract, inject, Canonical};
+        let png = solid_png(16, 16, [30, 60, 90, 255]);
+        let d = decode(&png, None).unwrap();
+        let avif = encode(&d, Target::Avif { quality: 70 }).unwrap();
+        assert_eq!(
+            crate::engine::format::detect(&avif),
+            crate::engine::format::ImageFormat::Avif
+        );
+        let before = extract(&avif);
+        assert!(
+            before.exif.is_none() && before.xmp.is_none(),
+            "ravif emits no metadata"
+        );
+
+        let meta = Canonical {
+            exif: Some(tiff_orientation(6)),
+            xmp: Some(b"<x:xmpmeta>a</x:xmpmeta>".to_vec()),
+            ..Default::default()
+        };
+        let out = inject(&avif, &meta);
+        assert!(out.len() > avif.len(), "items added");
+        assert_eq!(
+            crate::engine::format::detect(&out),
+            crate::engine::format::ImageFormat::Avif
+        );
+
+        let back = extract(&out);
+        assert!(back.exif.is_some(), "EXIF item added to the AVIF");
+        assert_eq!(back.orientation, 1, "orientation normalised");
+        assert!(back.xmp.is_some(), "XMP item added to the AVIF");
+    }
 }

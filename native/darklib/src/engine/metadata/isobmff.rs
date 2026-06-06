@@ -794,6 +794,349 @@ fn rebuild_iloc_drop(b: &[u8], iloc: Bx, src: &Iloc, victims: &HashSet<u32>) -> 
     Some(wrap_box(b"iloc", &payload))
 }
 
+// ── inject: ADD EXIF / XMP items (the inverse of strip) ──────────────────────
+
+/// Add an `Exif` and/or XMP (`mime`, `application/rdf+xml`) item to an ISOBMFF
+/// still (AVIF/HEIF) so metadata survives a re-encode. `exif` is the raw TIFF
+/// block (the caller normalises orientation); `xmp` is the bare packet. This
+/// mirrors `strip_compact`'s rebuild: because `iloc` holds ABSOLUTE offsets, both
+/// `meta` (a larger `iinf`/`iloc`/`iref`) and `mdat` (the existing items copied,
+/// then the new payloads) are rebuilt with fresh offsets, then self-validated.
+/// Anything outside the supported subset (single `mdat`, method-0 items) returns
+/// the input unchanged — never a corrupt file.
+pub fn inject(b: &[u8], exif: Option<&[u8]>, xmp: Option<&[u8]>) -> Vec<u8> {
+    if exif.is_none() && xmp.is_none() {
+        return b.to_vec();
+    }
+    inject_inner(b, exif, xmp).unwrap_or_else(|| b.to_vec())
+}
+
+fn parse_pitm(b: &[u8], pitm: Bx) -> Option<u32> {
+    let p = pitm.body;
+    if *b.get(p)? == 0 {
+        be_u16(b, p + 4).map(u32::from)
+    } else {
+        be_u32(b, p + 4)
+    }
+}
+
+/// A version-2 `infe` (item info entry): u16 id, no protection, 4-byte type, an
+/// empty item name, and (for `mime`) a null-terminated content type.
+fn build_infe(id: u32, item_type: &[u8; 4], content_type: Option<&str>) -> Option<Vec<u8>> {
+    if id > 0xFFFF {
+        return None; // a version-2 infe stores the id as u16
+    }
+    let mut p = vec![2u8, 0, 0, 0]; // version 2 + flags
+    p.extend_from_slice(&(id as u16).to_be_bytes());
+    p.extend_from_slice(&0u16.to_be_bytes()); // item_protection_index
+    p.extend_from_slice(item_type);
+    p.push(0); // item_name = "" (null-terminated)
+    if let Some(ct) = content_type {
+        p.extend_from_slice(ct.as_bytes());
+        p.push(0);
+    }
+    Some(wrap_box(b"infe", &p))
+}
+
+/// `iinf` with the existing `infe` entries (verbatim) plus the new ones.
+fn build_iinf_add(
+    b: &[u8],
+    iinf: Bx,
+    items: &[(Item, Bx)],
+    new_infes: &[Vec<u8>],
+) -> Option<Vec<u8>> {
+    let p = iinf.body;
+    let mut payload = b.get(p..p + 4)?.to_vec(); // version + flags
+    let count = items.len() + new_infes.len();
+    if *b.get(p)? == 0 {
+        payload.extend_from_slice(&(count as u16).to_be_bytes());
+    } else {
+        payload.extend_from_slice(&(count as u32).to_be_bytes());
+    }
+    for (_, bx) in items {
+        payload.extend_from_slice(b.get(bx.start..bx.end)?);
+    }
+    for infe in new_infes {
+        payload.extend_from_slice(infe);
+    }
+    Some(wrap_box(b"iinf", &payload))
+}
+
+/// `iref` with the existing references (verbatim) plus a `cdsc` (content
+/// describes) for each new (from_item → primary) pair. Matches the existing
+/// box's id width, or version 0 (u16) when creating one from scratch.
+fn build_iref(b: &[u8], existing: Option<Bx>, new_refs: &[(u32, u32)]) -> Option<Vec<u8>> {
+    let version = match existing {
+        Some(ir) => *b.get(ir.body)?,
+        None => 0,
+    };
+    let id_bytes = if version == 0 { 2 } else { 4 };
+    if id_bytes == 2 && new_refs.iter().any(|&(f, t)| f > 0xFFFF || t > 0xFFFF) {
+        return None;
+    }
+    let mut children = Vec::new();
+    if let Some(ir) = existing {
+        for child in boxes_in(b, ir.body + 4, ir.end)? {
+            children.extend_from_slice(b.get(child.start..child.end)?);
+        }
+    }
+    for &(from, to) in new_refs {
+        let mut cbody = Vec::new();
+        write_id(&mut cbody, from, id_bytes);
+        cbody.extend_from_slice(&1u16.to_be_bytes()); // reference_count
+        write_id(&mut cbody, to, id_bytes);
+        children.extend_from_slice(&wrap_box(b"cdsc", &cbody));
+    }
+    let mut payload = vec![version, 0, 0, 0];
+    payload.extend_from_slice(&children);
+    Some(wrap_box(b"iref", &payload))
+}
+
+fn inject_inner(b: &[u8], exif: Option<&[u8]>, xmp: Option<&[u8]>) -> Option<Vec<u8>> {
+    let top = boxes_in(b, 0, b.len())?;
+    if top.iter().filter(|x| x.typ == *b"mdat").count() != 1 {
+        return None;
+    }
+    let meta = *top.iter().find(|x| x.typ == *b"meta")?;
+    let mdat = *top.iter().find(|x| x.typ == *b"mdat")?;
+    if meta.start > mdat.start {
+        return None; // we assume meta precedes mdat (offsets point into mdat)
+    }
+
+    let meta_children = boxes_in(b, meta.body + 4, meta.end)?;
+    let iinf = *meta_children.iter().find(|x| x.typ == *b"iinf")?;
+    let iloc_box = *meta_children.iter().find(|x| x.typ == *b"iloc")?;
+    let pitm = *meta_children.iter().find(|x| x.typ == *b"pitm")?;
+    let iref_box = meta_children.iter().find(|x| x.typ == *b"iref").copied();
+
+    let (_iinf_ver, items) = parse_iinf(b, iinf)?;
+    let loc = parse_iloc(b, iloc_box)?;
+    let primary = parse_pitm(b, pitm)?;
+
+    // Supported subset (mirror strip_compact): fixed-size method-0 offsets only.
+    if !matches!(loc.offset_size, 4 | 8) || !matches!(loc.length_size, 4 | 8) {
+        return None;
+    }
+    if loc.index_size != 0 {
+        return None;
+    }
+    if loc
+        .items
+        .iter()
+        .any(|it| it.method != 0 || it.data_ref != 0)
+    {
+        return None;
+    }
+
+    // Add only a kind not already present (a fresh encode has neither).
+    let has_exif = items.iter().any(|(it, _)| it.typ == *b"Exif");
+    let has_xmp = items.iter().any(|(it, _)| is_xmp(it));
+    let add_exif = exif.filter(|_| !has_exif);
+    let add_xmp = xmp.filter(|_| !has_xmp);
+    if add_exif.is_none() && add_xmp.is_none() {
+        return Some(b.to_vec()); // nothing to add
+    }
+
+    let mut next_id = loc.items.iter().map(|it| it.id).max().unwrap_or(0);
+    let mut new_infes: Vec<Vec<u8>> = Vec::new();
+    let mut new_payloads: Vec<(u32, Vec<u8>)> = Vec::new();
+    let mut new_refs: Vec<(u32, u32)> = Vec::new();
+
+    if let Some(tiff) = add_exif {
+        next_id += 1;
+        new_infes.push(build_infe(next_id, b"Exif", None)?);
+        let mut payload = vec![0u8, 0, 0, 0]; // exif_tiff_header_offset = 0
+        payload.extend_from_slice(tiff);
+        new_payloads.push((next_id, payload));
+        new_refs.push((next_id, primary));
+    }
+    if let Some(packet) = add_xmp {
+        next_id += 1;
+        new_infes.push(build_infe(next_id, b"mime", Some("application/rdf+xml"))?);
+        new_payloads.push((next_id, packet.to_vec()));
+        new_refs.push((next_id, primary));
+    }
+    if loc.version < 2 && next_id > 0xFFFF {
+        return None; // iloc v<2 stores ids as u16
+    }
+
+    let new_iinf = build_iinf_add(b, iinf, &items, &new_infes)?;
+    let new_iref = build_iref(b, iref_box, &new_refs)?;
+
+    // iloc length is offset-value-independent, so model `meta`'s new size with a
+    // placeholder carrying the full (existing + new) item set, then place data.
+    let placeholder: Vec<Loc> = loc
+        .items
+        .iter()
+        .map(|it| Loc {
+            id: it.id,
+            method: it.method,
+            data_ref: it.data_ref,
+            base_offset: 0,
+            extents: it
+                .extents
+                .iter()
+                .map(|e| Extent {
+                    offset: 0,
+                    length: e.length,
+                })
+                .collect(),
+            entry: (0, 0),
+        })
+        .chain(new_payloads.iter().map(|(id, payload)| Loc {
+            id: *id,
+            method: 0,
+            data_ref: 0,
+            base_offset: 0,
+            extents: vec![Extent {
+                offset: 0,
+                length: payload.len() as u64,
+            }],
+            entry: (0, 0),
+        }))
+        .collect();
+    let new_iloc_len = serialize_iloc(b, iloc_box, &loc, &placeholder)?.len();
+
+    let had_iref = iref_box.is_some();
+    let mut meta_children_len: usize = meta_children
+        .iter()
+        .map(|c| match &c.typ {
+            b"iinf" => new_iinf.len(),
+            b"iloc" => new_iloc_len,
+            b"iref" => new_iref.len(),
+            _ => c.end - c.start,
+        })
+        .sum();
+    if !had_iref {
+        meta_children_len += new_iref.len(); // appended below
+    }
+    let meta_new_size = 8 + 4 + meta_children_len; // header + ver/flags
+
+    // mdat payload start = bytes of everything before mdat in the OUTPUT + header.
+    let mut prefix = 0usize;
+    for x in &top {
+        if x.start >= mdat.start {
+            break;
+        }
+        prefix += if x.typ == *b"meta" {
+            meta_new_size
+        } else {
+            x.end - x.start
+        };
+    }
+    let mdat_payload_start = prefix + 8;
+
+    // New mdat: existing items copied with fresh offsets, then the new payloads.
+    let mut new_mdat = Vec::new();
+    let mut new_locs: Vec<Loc> = Vec::with_capacity(loc.items.len() + new_payloads.len());
+    for it in &loc.items {
+        let mut new_ext = Vec::with_capacity(it.extents.len());
+        for e in &it.extents {
+            let src_off = (it.base_offset + e.offset) as usize;
+            let src_end = src_off.checked_add(e.length as usize)?;
+            let data = b.get(src_off..src_end)?;
+            let new_off = mdat_payload_start + new_mdat.len();
+            new_mdat.extend_from_slice(data);
+            new_ext.push(Extent {
+                offset: new_off as u64,
+                length: e.length,
+            });
+        }
+        new_locs.push(Loc {
+            id: it.id,
+            method: 0,
+            data_ref: 0,
+            base_offset: 0,
+            extents: new_ext,
+            entry: (0, 0),
+        });
+    }
+    for (id, payload) in &new_payloads {
+        let new_off = mdat_payload_start + new_mdat.len();
+        new_mdat.extend_from_slice(payload);
+        new_locs.push(Loc {
+            id: *id,
+            method: 0,
+            data_ref: 0,
+            base_offset: 0,
+            extents: vec![Extent {
+                offset: new_off as u64,
+                length: payload.len() as u64,
+            }],
+            entry: (0, 0),
+        });
+    }
+    let new_iloc = serialize_iloc(b, iloc_box, &loc, &new_locs)?;
+    if new_iloc.len() != new_iloc_len {
+        return None; // length model disagreed — refuse rather than risk offsets
+    }
+
+    // Reassemble meta (verbatim children except iinf/iloc/iref; append iref if new).
+    let mut meta_payload = Vec::with_capacity(4 + meta_children_len);
+    meta_payload.extend_from_slice(b.get(meta.body..meta.body + 4)?);
+    for c in &meta_children {
+        match &c.typ {
+            b"iinf" => meta_payload.extend_from_slice(&new_iinf),
+            b"iloc" => meta_payload.extend_from_slice(&new_iloc),
+            b"iref" => meta_payload.extend_from_slice(&new_iref),
+            _ => meta_payload.extend_from_slice(b.get(c.start..c.end)?),
+        }
+    }
+    if !had_iref {
+        meta_payload.extend_from_slice(&new_iref);
+    }
+    let meta_box = wrap_box(b"meta", &meta_payload);
+    if meta_box.len() != meta_new_size {
+        return None; // size model disagreed — refuse
+    }
+
+    // Assemble the file in source order, substituting meta + mdat.
+    let mut out = Vec::with_capacity(b.len() + new_mdat.len());
+    for x in &top {
+        if x.typ == *b"meta" {
+            out.extend_from_slice(&meta_box);
+        } else if x.typ == *b"mdat" {
+            out.extend_from_slice(&wrap_box(b"mdat", &new_mdat));
+        } else {
+            out.extend_from_slice(b.get(x.start..x.end)?);
+        }
+    }
+
+    validate_inject(b, &loc, &out, add_exif.is_some(), add_xmp.is_some())?;
+    Some(out)
+}
+
+/// Prove the add-item surgery was safe: every pre-existing item's bytes are
+/// byte-identical (the AV1/HEVC payload never moved logically), and the metadata
+/// we added re-extracts cleanly.
+fn validate_inject(
+    src: &[u8],
+    src_loc: &Iloc,
+    out: &[u8],
+    want_exif: bool,
+    want_xmp: bool,
+) -> Option<()> {
+    let top = boxes_in(out, 0, out.len())?;
+    let meta = *top.iter().find(|x| x.typ == *b"meta")?;
+    let mc = boxes_in(out, meta.body + 4, meta.end)?;
+    let iloc = *mc.iter().find(|x| x.typ == *b"iloc")?;
+    let out_loc = parse_iloc(out, iloc)?;
+    for src_item in &src_loc.items {
+        if src_item.method != 0 {
+            continue;
+        }
+        let out_item = out_loc.items.iter().find(|x| x.id == src_item.id)?;
+        if read_item(src, src_item)? != read_item(out, out_item)? {
+            return None; // a pre-existing item's bytes changed — refuse
+        }
+    }
+    let (exif, xmp) = extract_exif_xmp(out);
+    if (want_exif && exif.is_none()) || (want_xmp && xmp.is_none()) {
+        return None; // the metadata we added isn't readable back — refuse
+    }
+    Some(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -887,6 +1230,84 @@ mod tests {
 
     fn contains(hay: &[u8], needle: &[u8]) -> bool {
         hay.windows(needle.len()).any(|w| w == needle)
+    }
+
+    /// A minimal HEIF with ONLY the primary `av01` image item (id 1), no EXIF/XMP
+    /// and no `iref` — the shape a fresh encoder emits, and the input to `inject`.
+    fn sample_heif_image_only(av01: &[u8]) -> Vec<u8> {
+        let hdlr = fullbox(
+            b"hdlr",
+            0,
+            [0, 0, 0],
+            b"\0\0\0\0pict\0\0\0\0\0\0\0\0\0\0\0\0\0",
+        );
+        let pitm = fullbox(b"pitm", 0, [0, 0, 0], &1u16.to_be_bytes());
+        let mut iinf_body = 1u16.to_be_bytes().to_vec(); // count
+        iinf_body.extend_from_slice(&infe(1, b"av01"));
+        let iinf = fullbox(b"iinf", 0, [0, 0, 0], &iinf_body);
+        let build_iloc = |o1: u32| {
+            let mut body = vec![0x44, 0x00]; // offset_size=4, length_size=4
+            body.extend_from_slice(&1u16.to_be_bytes()); // item count
+            body.extend_from_slice(&1u16.to_be_bytes()); // id
+            body.extend_from_slice(&0u16.to_be_bytes()); // method 0 (v1)
+            body.extend_from_slice(&0u16.to_be_bytes()); // data_ref
+            body.extend_from_slice(&1u16.to_be_bytes()); // extent count
+            body.extend_from_slice(&o1.to_be_bytes());
+            body.extend_from_slice(&(av01.len() as u32).to_be_bytes());
+            fullbox(b"iloc", 1, [0, 0, 0], &body)
+        };
+        let assemble = |iloc: &[u8]| {
+            let mut mp = vec![0, 0, 0, 0];
+            mp.extend_from_slice(&hdlr);
+            mp.extend_from_slice(&pitm);
+            mp.extend_from_slice(&iinf);
+            mp.extend_from_slice(iloc);
+            let meta = wrap_box(b"meta", &mp);
+            let ftyp = wrap_box(b"ftyp", b"mif1\0\0\0\0mif1heic");
+            let mdat = wrap_box(b"mdat", av01);
+            [ftyp, meta, mdat].concat()
+        };
+        let probe = assemble(&build_iloc(0));
+        let base = probe.len() - av01.len();
+        assemble(&build_iloc(base as u32))
+    }
+
+    #[test]
+    fn inject_adds_exif_and_xmp_items_to_image_only_heif() {
+        let av01 = [0xC0u8, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5];
+        let file = sample_heif_image_only(&av01);
+        assert_eq!(extract_exif_xmp(&file), (None, None), "starts clean");
+
+        let tiff = b"II\x2a\x00\x08\x00\x00\x00".to_vec();
+        let xmp = b"<x:xmpmeta>hi</x:xmpmeta>".to_vec();
+        let out = inject(&file, Some(&tiff), Some(&xmp));
+
+        let (gx, gxmp) = extract_exif_xmp(&out);
+        assert_eq!(gx.as_deref(), Some(tiff.as_slice()), "EXIF carried");
+        assert_eq!(gxmp.as_deref(), Some(xmp.as_slice()), "XMP carried");
+        assert!(contains(&out, &av01), "image payload byte-identical");
+        assert!(out.len() > file.len(), "file grew");
+        // Still a single-mdat ISOBMFF with a cdsc link for the new items.
+        let top = boxes_in(&out, 0, out.len()).unwrap();
+        assert_eq!(top.iter().filter(|x| x.typ == *b"mdat").count(), 1);
+        assert!(contains(&out, b"cdsc"), "iref cdsc created");
+    }
+
+    #[test]
+    fn inject_noop_without_metadata() {
+        let file = sample_heif_image_only(&[1, 2, 3, 4, 5, 6]);
+        assert_eq!(inject(&file, None, None), file);
+    }
+
+    #[test]
+    fn inject_skips_a_kind_already_present() {
+        // sample_heif already has an Exif item → re-injecting EXIF is a no-op.
+        let av01 = [0x55u8; 6];
+        let mut exif = b"Exif\0\0".to_vec();
+        exif.extend_from_slice(b"II\x2a\x00\x08\x00\x00\x00");
+        let file = sample_heif(&av01, &exif);
+        let out = inject(&file, Some(b"II\x2a\x00\x08\x00\x00\x00"), None);
+        assert_eq!(out, file, "existing EXIF item not duplicated");
     }
 
     #[test]

@@ -4,9 +4,9 @@
 //!
 //! Orientation in the carried EXIF is normalised to 1: the pixels are baked
 //! upright on decode, so a non-1 tag would double-rotate (single source of
-//! truth — CLAUDE.md / docs/10-DARKLIB.md §5). JPEG, PNG and WebP today; AVIF
-//! (ISOBMFF add-item) comes next. Best-effort: a format without an injector yet
-//! returns the encoded bytes unchanged.
+//! truth — CLAUDE.md / docs/10-DARKLIB.md §5). JPEG, PNG, WebP and AVIF/HEIF are
+//! all covered. Best-effort: a format without an injector returns the encoded
+//! bytes unchanged.
 
 use super::{exif, Canonical};
 use crate::engine::format::{detect, ImageFormat};
@@ -19,8 +19,18 @@ pub fn inject(encoded: &[u8], meta: &Canonical) -> Vec<u8> {
         ImageFormat::Jpeg => inject_jpeg(encoded, meta),
         ImageFormat::Png => inject_png(encoded, meta),
         ImageFormat::Webp => inject_webp(encoded, meta),
+        ImageFormat::Avif | ImageFormat::Heic => inject_isobmff(encoded, meta),
         _ => encoded.to_vec(),
     }
+}
+
+/// AVIF / HEIF (ISOBMFF) add-item inject. Normalises the EXIF orientation and the
+/// XMP packet here, then hands the clean blobs to the container surgery (which
+/// rebuilds `meta` + `mdat` with fresh offsets and self-validates).
+fn inject_isobmff(b: &[u8], meta: &Canonical) -> Vec<u8> {
+    let exif = meta.exif.as_ref().map(|t| exif::with_orientation_1(t));
+    let xmp = meta.xmp.as_ref().map(|x| xmp_packet(x).to_vec());
+    super::isobmff::inject(b, exif.as_deref(), xmp.as_deref())
 }
 
 fn inject_jpeg(jpeg: &[u8], meta: &Canonical) -> Vec<u8> {
