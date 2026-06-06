@@ -26,11 +26,12 @@ pub fn inject(encoded: &[u8], meta: &Canonical) -> Vec<u8> {
 
 /// AVIF / HEIF (ISOBMFF) add-item inject. Normalises the EXIF orientation and the
 /// XMP packet here, then hands the clean blobs to the container surgery (which
-/// rebuilds `meta` + `mdat` with fresh offsets and self-validates).
+/// rebuilds `meta` + `mdat` with fresh offsets and self-validates). ICC is added
+/// as a `colr`/`prof` property — `Canonical.icc` is already the raw profile.
 fn inject_isobmff(b: &[u8], meta: &Canonical) -> Vec<u8> {
     let exif = meta.exif.as_ref().map(|t| exif::with_orientation_1(t));
     let xmp = meta.xmp.as_ref().map(|x| xmp_packet(x).to_vec());
-    super::isobmff::inject(b, exif.as_deref(), xmp.as_deref())
+    super::isobmff::inject(b, exif.as_deref(), xmp.as_deref(), meta.icc.as_deref())
 }
 
 fn inject_jpeg(jpeg: &[u8], meta: &Canonical) -> Vec<u8> {

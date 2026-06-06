@@ -390,4 +390,35 @@ mod tests {
         assert_eq!(back.orientation, 1, "orientation normalised");
         assert!(back.xmp.is_some(), "XMP item added to the AVIF");
     }
+
+    /// A REAL ravif AVIF (carrying nclx, no ICC) gains an embedded ICC profile
+    /// (colr/prof property + ipma association) that extracts back exactly.
+    #[test]
+    fn avif_inject_carries_icc_through_a_real_encode() {
+        use crate::engine::metadata::{extract, inject, Canonical};
+        let png = solid_png(16, 16, [70, 30, 120, 255]);
+        let d = decode(&png, None).unwrap();
+        let avif = encode(&d, Target::Avif { quality: 70 }).unwrap();
+        assert!(
+            extract(&avif).icc.is_none(),
+            "ravif emits nclx, no ICC profile"
+        );
+
+        let icc = b"fake-display-p3-profile-bytes-0123456789".to_vec();
+        let meta = Canonical {
+            icc: Some(icc.clone()),
+            ..Default::default()
+        };
+        let out = inject(&avif, &meta);
+        assert!(out.len() > avif.len(), "colr/prof property added");
+        assert_eq!(
+            crate::engine::format::detect(&out),
+            crate::engine::format::ImageFormat::Avif
+        );
+        assert_eq!(
+            extract(&out).icc.as_deref(),
+            Some(icc.as_slice()),
+            "ICC profile carried into the AVIF"
+        );
+    }
 }

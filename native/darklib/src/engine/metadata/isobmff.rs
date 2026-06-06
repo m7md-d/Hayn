@@ -822,19 +822,20 @@ fn rebuild_iloc_drop(b: &[u8], iloc: Bx, src: &Iloc, victims: &HashSet<u32>) -> 
 
 // ── inject: ADD EXIF / XMP items (the inverse of strip) ──────────────────────
 
-/// Add an `Exif` and/or XMP (`mime`, `application/rdf+xml`) item to an ISOBMFF
-/// still (AVIF/HEIF) so metadata survives a re-encode. `exif` is the raw TIFF
-/// block (the caller normalises orientation); `xmp` is the bare packet. This
-/// mirrors `strip_compact`'s rebuild: because `iloc` holds ABSOLUTE offsets, both
-/// `meta` (a larger `iinf`/`iloc`/`iref`) and `mdat` (the existing items copied,
-/// then the new payloads) are rebuilt with fresh offsets, then self-validated.
-/// Anything outside the supported subset (single `mdat`, method-0 items) returns
-/// the input unchanged — never a corrupt file.
-pub fn inject(b: &[u8], exif: Option<&[u8]>, xmp: Option<&[u8]>) -> Vec<u8> {
-    if exif.is_none() && xmp.is_none() {
+/// Add `Exif` / XMP items and/or an ICC profile to an ISOBMFF still (AVIF/HEIF)
+/// so metadata survives a re-encode. `exif` is the raw TIFF block (the caller
+/// normalises orientation), `xmp` the bare packet, `icc` a raw profile (added as
+/// a `colr`/`prof` property + an `ipma` association). This mirrors
+/// `strip_compact`'s rebuild: because `iloc` holds ABSOLUTE offsets, `meta` (a
+/// larger `iinf`/`iloc`/`iref`/`iprp`) and `mdat` (existing items copied, then
+/// the new payloads) are rebuilt with fresh offsets, then self-validated. Outside
+/// the supported subset (single `mdat`, method-0 items) the input is returned
+/// unchanged — never a corrupt file.
+pub fn inject(b: &[u8], exif: Option<&[u8]>, xmp: Option<&[u8]>, icc: Option<&[u8]>) -> Vec<u8> {
+    if exif.is_none() && xmp.is_none() && icc.is_none() {
         return b.to_vec();
     }
-    inject_inner(b, exif, xmp).unwrap_or_else(|| b.to_vec())
+    inject_inner(b, exif, xmp, icc).unwrap_or_else(|| b.to_vec())
 }
 
 fn parse_pitm(b: &[u8], pitm: Bx) -> Option<u32> {
@@ -918,7 +919,95 @@ fn build_iref(b: &[u8], existing: Option<Bx>, new_refs: &[(u32, u32)]) -> Option
     Some(wrap_box(b"iref", &payload))
 }
 
-fn inject_inner(b: &[u8], exif: Option<&[u8]>, xmp: Option<&[u8]>) -> Option<Vec<u8>> {
+/// `iprp` with an ICC `colr`/`prof` property appended to `ipco` and an `ipma`
+/// association linking it to the primary item. Existing properties keep their
+/// indices (the new one is appended). Single-`ipma` files only (the common case).
+fn build_iprp_add_icc(b: &[u8], iprp: Bx, primary: u32, icc: &[u8]) -> Option<Vec<u8>> {
+    let children = boxes_in(b, iprp.body, iprp.end)?;
+    let ipco = *children.iter().find(|x| x.typ == *b"ipco")?;
+    let (new_ipco, index) = build_ipco_add_colr(b, ipco, icc)?;
+    let mut payload = Vec::new();
+    for c in &children {
+        match &c.typ {
+            b"ipco" => payload.extend_from_slice(&new_ipco),
+            b"ipma" => payload.extend_from_slice(&build_ipma_add(b, *c, primary, index)?),
+            _ => payload.extend_from_slice(b.get(c.start..c.end)?),
+        }
+    }
+    Some(wrap_box(b"iprp", &payload))
+}
+
+/// Append a `colr`/`prof` (ICC) property to `ipco`; returns (new ipco, its
+/// 1-based property index).
+fn build_ipco_add_colr(b: &[u8], ipco: Bx, icc: &[u8]) -> Option<(Vec<u8>, u16)> {
+    let index = boxes_in(b, ipco.body, ipco.end)?.len() + 1;
+    if index > 0x7FFF {
+        return None; // beyond the widest ipma association index
+    }
+    let mut payload = b.get(ipco.body..ipco.end)?.to_vec(); // properties verbatim
+    let mut colr = b"prof".to_vec();
+    colr.extend_from_slice(icc);
+    payload.extend_from_slice(&wrap_box(b"colr", &colr));
+    Some((wrap_box(b"ipco", &payload), index as u16))
+}
+
+/// Append a non-essential association (`prop_index`) to `target`'s entry in
+/// `ipma`, copying every other entry verbatim. Bails if `target` has no entry.
+fn build_ipma_add(b: &[u8], ipma: Bx, target: u32, prop_index: u16) -> Option<Vec<u8>> {
+    let p = ipma.body;
+    let version = *b.get(p)?;
+    let wide = *b.get(p + 3)? & 1 == 1; // flags bit 0 → 15-bit indices (2 bytes)
+    let id_size = if version >= 1 { 4 } else { 2 };
+    if (!wide && prop_index > 0x7F) || (wide && prop_index > 0x7FFF) {
+        return None;
+    }
+    let mut q = p + 4;
+    let entry_count = be_u32(b, q)?;
+    q += 4;
+    let mut entries = Vec::new();
+    let mut found = false;
+    for _ in 0..entry_count {
+        let id = read_id(b, q, id_size)?;
+        entries.extend_from_slice(b.get(q..q + id_size)?);
+        q += id_size;
+        let assoc_count = *b.get(q)? as usize;
+        q += 1;
+        let bytes = assoc_count * if wide { 2 } else { 1 };
+        let assoc = b.get(q..q + bytes)?;
+        q += bytes;
+        if id == target {
+            if assoc_count >= 0xFF {
+                return None; // can't widen the u8 association count
+            }
+            found = true;
+            entries.push((assoc_count + 1) as u8);
+            entries.extend_from_slice(assoc);
+            // essential bit clear (descriptive property): high bit stays 0.
+            if wide {
+                entries.extend_from_slice(&(prop_index & 0x7FFF).to_be_bytes());
+            } else {
+                entries.push(prop_index as u8 & 0x7F);
+            }
+        } else {
+            entries.push(assoc_count as u8);
+            entries.extend_from_slice(assoc);
+        }
+    }
+    if !found {
+        return None;
+    }
+    let mut payload = b.get(p..p + 4)?.to_vec(); // version + flags
+    payload.extend_from_slice(&entry_count.to_be_bytes());
+    payload.extend_from_slice(&entries);
+    Some(wrap_box(b"ipma", &payload))
+}
+
+fn inject_inner(
+    b: &[u8],
+    exif: Option<&[u8]>,
+    xmp: Option<&[u8]>,
+    icc: Option<&[u8]>,
+) -> Option<Vec<u8>> {
     let top = boxes_in(b, 0, b.len())?;
     if top.iter().filter(|x| x.typ == *b"mdat").count() != 1 {
         return None;
@@ -934,6 +1023,7 @@ fn inject_inner(b: &[u8], exif: Option<&[u8]>, xmp: Option<&[u8]>) -> Option<Vec
     let iloc_box = *meta_children.iter().find(|x| x.typ == *b"iloc")?;
     let pitm = *meta_children.iter().find(|x| x.typ == *b"pitm")?;
     let iref_box = meta_children.iter().find(|x| x.typ == *b"iref").copied();
+    let iprp_box = meta_children.iter().find(|x| x.typ == *b"iprp").copied();
 
     let (_iinf_ver, items) = parse_iinf(b, iinf)?;
     let loc = parse_iloc(b, iloc_box)?;
@@ -954,12 +1044,13 @@ fn inject_inner(b: &[u8], exif: Option<&[u8]>, xmp: Option<&[u8]>) -> Option<Vec
         return None;
     }
 
-    // Add only a kind not already present (a fresh encode has neither).
+    // Add only a kind not already present (a fresh encode has none of them).
     let has_exif = items.iter().any(|(it, _)| it.typ == *b"Exif");
     let has_xmp = items.iter().any(|(it, _)| is_xmp(it));
     let add_exif = exif.filter(|_| !has_exif);
     let add_xmp = xmp.filter(|_| !has_xmp);
-    if add_exif.is_none() && add_xmp.is_none() {
+    let add_icc = icc.filter(|_| extract_icc(b).is_none());
+    if add_exif.is_none() && add_xmp.is_none() && add_icc.is_none() {
         return Some(b.to_vec()); // nothing to add
     }
 
@@ -987,7 +1078,18 @@ fn inject_inner(b: &[u8], exif: Option<&[u8]>, xmp: Option<&[u8]>) -> Option<Vec
     }
 
     let new_iinf = build_iinf_add(b, iinf, &items, &new_infes)?;
-    let new_iref = build_iref(b, iref_box, &new_refs)?;
+    let had_iref = iref_box.is_some();
+    // Only build an iref when there are references to write (an ICC-only inject
+    // adds no items, so it must not synthesise an empty iref).
+    let new_iref = if new_refs.is_empty() && !had_iref {
+        None
+    } else {
+        Some(build_iref(b, iref_box, &new_refs)?)
+    };
+    let new_iprp = match add_icc {
+        Some(profile) => Some(build_iprp_add_icc(b, iprp_box?, primary, profile)?),
+        None => None,
+    };
 
     // iloc length is offset-value-independent, so model `meta`'s new size with a
     // placeholder carrying the full (existing + new) item set, then place data.
@@ -1023,18 +1125,20 @@ fn inject_inner(b: &[u8], exif: Option<&[u8]>, xmp: Option<&[u8]>) -> Option<Vec
         .collect();
     let new_iloc_len = serialize_iloc(b, iloc_box, &loc, &placeholder)?.len();
 
-    let had_iref = iref_box.is_some();
     let mut meta_children_len: usize = meta_children
         .iter()
         .map(|c| match &c.typ {
             b"iinf" => new_iinf.len(),
             b"iloc" => new_iloc_len,
-            b"iref" => new_iref.len(),
+            b"iref" => new_iref.as_ref().map_or(c.end - c.start, |v| v.len()),
+            b"iprp" => new_iprp.as_ref().map_or(c.end - c.start, |v| v.len()),
             _ => c.end - c.start,
         })
         .sum();
     if !had_iref {
-        meta_children_len += new_iref.len(); // appended below
+        if let Some(ir) = &new_iref {
+            meta_children_len += ir.len(); // appended below
+        }
     }
     let meta_new_size = 8 + 4 + meta_children_len; // header + ver/flags
 
@@ -1104,12 +1208,22 @@ fn inject_inner(b: &[u8], exif: Option<&[u8]>, xmp: Option<&[u8]>) -> Option<Vec
         match &c.typ {
             b"iinf" => meta_payload.extend_from_slice(&new_iinf),
             b"iloc" => meta_payload.extend_from_slice(&new_iloc),
-            b"iref" => meta_payload.extend_from_slice(&new_iref),
+            b"iref" => {
+                if let Some(ir) = &new_iref {
+                    meta_payload.extend_from_slice(ir);
+                }
+            }
+            b"iprp" => match &new_iprp {
+                Some(ip) => meta_payload.extend_from_slice(ip),
+                None => meta_payload.extend_from_slice(b.get(c.start..c.end)?),
+            },
             _ => meta_payload.extend_from_slice(b.get(c.start..c.end)?),
         }
     }
     if !had_iref {
-        meta_payload.extend_from_slice(&new_iref);
+        if let Some(ir) = &new_iref {
+            meta_payload.extend_from_slice(ir);
+        }
     }
     let meta_box = wrap_box(b"meta", &meta_payload);
     if meta_box.len() != meta_new_size {
@@ -1128,7 +1242,14 @@ fn inject_inner(b: &[u8], exif: Option<&[u8]>, xmp: Option<&[u8]>) -> Option<Vec
         }
     }
 
-    validate_inject(b, &loc, &out, add_exif.is_some(), add_xmp.is_some())?;
+    validate_inject(
+        b,
+        &loc,
+        &out,
+        add_exif.is_some(),
+        add_xmp.is_some(),
+        add_icc.is_some(),
+    )?;
     Some(out)
 }
 
@@ -1141,6 +1262,7 @@ fn validate_inject(
     out: &[u8],
     want_exif: bool,
     want_xmp: bool,
+    want_icc: bool,
 ) -> Option<()> {
     let top = boxes_in(out, 0, out.len())?;
     let meta = *top.iter().find(|x| x.typ == *b"meta")?;
@@ -1159,6 +1281,9 @@ fn validate_inject(
     let (exif, xmp) = extract_exif_xmp(out);
     if (want_exif && exif.is_none()) || (want_xmp && xmp.is_none()) {
         return None; // the metadata we added isn't readable back — refuse
+    }
+    if want_icc && extract_icc(out).is_none() {
+        return None; // the ICC property we added isn't readable back — refuse
     }
     Some(())
 }
@@ -1306,7 +1431,7 @@ mod tests {
 
         let tiff = b"II\x2a\x00\x08\x00\x00\x00".to_vec();
         let xmp = b"<x:xmpmeta>hi</x:xmpmeta>".to_vec();
-        let out = inject(&file, Some(&tiff), Some(&xmp));
+        let out = inject(&file, Some(&tiff), Some(&xmp), None);
 
         let (gx, gxmp) = extract_exif_xmp(&out);
         assert_eq!(gx.as_deref(), Some(tiff.as_slice()), "EXIF carried");
@@ -1322,7 +1447,15 @@ mod tests {
     #[test]
     fn inject_noop_without_metadata() {
         let file = sample_heif_image_only(&[1, 2, 3, 4, 5, 6]);
-        assert_eq!(inject(&file, None, None), file);
+        assert_eq!(inject(&file, None, None, None), file);
+    }
+
+    #[test]
+    fn inject_icc_without_iprp_is_safe_noop() {
+        // The image-only sample has no `iprp` to host a colr property, so an
+        // ICC inject must return the input unchanged rather than corrupt it.
+        let file = sample_heif_image_only(&[9, 8, 7, 6]);
+        assert_eq!(inject(&file, None, None, Some(b"icc-bytes")), file);
     }
 
     #[test]
@@ -1332,7 +1465,7 @@ mod tests {
         let mut exif = b"Exif\0\0".to_vec();
         exif.extend_from_slice(b"II\x2a\x00\x08\x00\x00\x00");
         let file = sample_heif(&av01, &exif);
-        let out = inject(&file, Some(b"II\x2a\x00\x08\x00\x00\x00"), None);
+        let out = inject(&file, Some(b"II\x2a\x00\x08\x00\x00\x00"), None, None);
         assert_eq!(out, file, "existing EXIF item not duplicated");
     }
 
