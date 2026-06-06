@@ -778,7 +778,11 @@ fn strip_in_place(b: &[u8]) -> Option<Vec<u8>> {
 fn rebuild_iloc_drop(b: &[u8], iloc: Bx, src: &Iloc, victims: &HashSet<u32>) -> Option<Vec<u8>> {
     let p = iloc.body;
     let mut payload = b.get(p..p + 6)?.to_vec(); // ver/flags + the two size bytes
-    let kept: Vec<&Loc> = src.items.iter().filter(|it| !victims.contains(&it.id)).collect();
+    let kept: Vec<&Loc> = src
+        .items
+        .iter()
+        .filter(|it| !victims.contains(&it.id))
+        .collect();
     if src.version < 2 {
         payload.extend_from_slice(&(kept.len() as u16).to_be_bytes());
     } else {
