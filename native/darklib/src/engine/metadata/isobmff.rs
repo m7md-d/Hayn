@@ -121,6 +121,54 @@ pub fn extract_nclx(b: &[u8]) -> Option<(u16, u16)> {
     None
 }
 
+/// Whether this ISOBMFF still carries an HDR gain map — either an ISO 21496-1
+/// `tmap` (tone-map) derived item, or an auxiliary image whose `auxC` URN names
+/// a gain map (e.g. Apple's `…:hdrgainmap`). Read-only; the gain map is a
+/// first-class auxiliary asset that container ops must never silently drop.
+pub fn has_gainmap(b: &[u8]) -> bool {
+    gainmap_inner(b).unwrap_or(false)
+}
+
+fn gainmap_inner(b: &[u8]) -> Option<bool> {
+    let top = boxes_in(b, 0, b.len())?;
+    let meta = *top.iter().find(|x| x.typ == *b"meta")?;
+    let mc = boxes_in(b, meta.body + 4, meta.end)?;
+    // ISO 21496-1: the gain map is a `tmap` derived item.
+    if let Some(iinf) = mc.iter().find(|x| x.typ == *b"iinf") {
+        if let Some((_, items)) = parse_iinf(b, *iinf) {
+            if items.iter().any(|(it, _)| it.typ == *b"tmap") {
+                return Some(true);
+            }
+        }
+    }
+    // Apple/aux gain map: an `auxC` property whose URN names a gain map.
+    if let Some(iprp) = mc.iter().find(|x| x.typ == *b"iprp") {
+        if let Some(ipco) = boxes_in(b, iprp.body, iprp.end)?
+            .iter()
+            .find(|x| x.typ == *b"ipco")
+        {
+            for prop in boxes_in(b, ipco.body, ipco.end)? {
+                if prop.typ == *b"auxC" {
+                    // FullBox(4) then a null-terminated aux_type URN.
+                    let urn = b.get(prop.body + 4..prop.end)?;
+                    let end = urn.iter().position(|&c| c == 0).unwrap_or(urn.len());
+                    if contains_ascii_ci(&urn[..end], b"gainmap") {
+                        return Some(true);
+                    }
+                }
+            }
+        }
+    }
+    Some(false)
+}
+
+fn contains_ascii_ci(haystack: &[u8], needle: &[u8]) -> bool {
+    needle.len() <= haystack.len()
+        && haystack
+            .windows(needle.len())
+            .any(|w| w.eq_ignore_ascii_case(needle))
+}
+
 // ── big-endian readers ──────────────────────────────────────────────────────
 
 fn be_u16(b: &[u8], o: usize) -> Option<u16> {
@@ -1555,6 +1603,106 @@ mod tests {
         ]
         .concat();
         assert_eq!(extract_nclx(&f2), None);
+    }
+
+    #[test]
+    fn has_gainmap_detects_tmap_and_auxc() {
+        // ISO 21496-1: a `tmap` derived item.
+        let mut iinf_body = 2u16.to_be_bytes().to_vec();
+        iinf_body.extend_from_slice(&infe(1, b"av01"));
+        iinf_body.extend_from_slice(&infe(2, b"tmap"));
+        let mut mp = vec![0, 0, 0, 0];
+        mp.extend_from_slice(&fullbox(b"iinf", 0, [0, 0, 0], &iinf_body));
+        let tmap_file = [
+            wrap_box(b"ftyp", b"mif1\0\0\0\0mif1avif"),
+            wrap_box(b"meta", &mp),
+        ]
+        .concat();
+        assert!(has_gainmap(&tmap_file), "tmap item → gain map");
+
+        // Apple aux: an `auxC` URN naming a gain map.
+        let mut auxc = vec![0, 0, 0, 0]; // version + flags
+        auxc.extend_from_slice(b"urn:com:apple:photo:2020:aux:hdrgainmap\0");
+        let iprp = wrap_box(b"iprp", &wrap_box(b"ipco", &wrap_box(b"auxC", &auxc)));
+        let mut mp2 = vec![0, 0, 0, 0];
+        mp2.extend_from_slice(&iprp);
+        let aux_file = [
+            wrap_box(b"ftyp", b"mif1\0\0\0\0mif1heic"),
+            wrap_box(b"meta", &mp2),
+        ]
+        .concat();
+        assert!(has_gainmap(&aux_file), "auxC hdrgainmap URN → gain map");
+
+        // A plain image-only HEIF has no gain map.
+        assert!(!has_gainmap(&sample_heif_image_only(&[1, 2, 3, 4])));
+    }
+
+    /// A minimal HEIF with three method-0 items: primary `av01`, a `tmap` gain
+    /// map, and an `Exif` item — to prove a privacy strip keeps the gain map.
+    fn sample_heif_with_tmap(av01: &[u8], tmap: &[u8], exif: &[u8]) -> Vec<u8> {
+        let hdlr = fullbox(
+            b"hdlr",
+            0,
+            [0, 0, 0],
+            b"\0\0\0\0pict\0\0\0\0\0\0\0\0\0\0\0\0\0",
+        );
+        let pitm = fullbox(b"pitm", 0, [0, 0, 0], &1u16.to_be_bytes());
+        let mut iinf_body = 3u16.to_be_bytes().to_vec();
+        iinf_body.extend_from_slice(&infe(1, b"av01"));
+        iinf_body.extend_from_slice(&infe(2, b"tmap"));
+        iinf_body.extend_from_slice(&infe(3, b"Exif"));
+        let iinf = fullbox(b"iinf", 0, [0, 0, 0], &iinf_body);
+        let build_iloc = |o1: u32, o2: u32, o3: u32| {
+            let mut body = vec![0x44, 0x00];
+            body.extend_from_slice(&3u16.to_be_bytes());
+            for (id, off, len) in [
+                (1u16, o1, av01.len() as u32),
+                (2, o2, tmap.len() as u32),
+                (3, o3, exif.len() as u32),
+            ] {
+                body.extend_from_slice(&id.to_be_bytes());
+                body.extend_from_slice(&0u16.to_be_bytes()); // method 0 (v1)
+                body.extend_from_slice(&0u16.to_be_bytes());
+                body.extend_from_slice(&1u16.to_be_bytes());
+                body.extend_from_slice(&off.to_be_bytes());
+                body.extend_from_slice(&len.to_be_bytes());
+            }
+            fullbox(b"iloc", 1, [0, 0, 0], &body)
+        };
+        let assemble = |iloc: &[u8]| {
+            let mut mp = vec![0, 0, 0, 0];
+            mp.extend_from_slice(&hdlr);
+            mp.extend_from_slice(&pitm);
+            mp.extend_from_slice(&iinf);
+            mp.extend_from_slice(iloc);
+            let meta = wrap_box(b"meta", &mp);
+            let ftyp = wrap_box(b"ftyp", b"mif1\0\0\0\0mif1avif");
+            let mut md = av01.to_vec();
+            md.extend_from_slice(tmap);
+            md.extend_from_slice(exif);
+            [ftyp, meta, wrap_box(b"mdat", &md)].concat()
+        };
+        let base = assemble(&build_iloc(0, 0, 0)).len() - (av01.len() + tmap.len() + exif.len());
+        assemble(&build_iloc(
+            base as u32,
+            (base + av01.len()) as u32,
+            (base + av01.len() + tmap.len()) as u32,
+        ))
+    }
+
+    #[test]
+    fn strip_preserves_the_gain_map() {
+        let av01 = [0xA0u8, 0xA1, 0xA2, 0xA3];
+        let tmap = b"GAINMAP-PIXELS".to_vec();
+        let mut exif = b"Exif\0\0".to_vec();
+        exif.extend_from_slice(b"GPS-secret");
+        let file = sample_heif_with_tmap(&av01, &tmap, &exif);
+        assert!(has_gainmap(&file));
+
+        let out = strip(&file, StripPolicy::default()).unwrap();
+        assert!(!contains(&out, b"GPS-secret"), "EXIF stripped");
+        assert!(contains(&out, b"GAINMAP-PIXELS"), "gain-map payload kept");
+        assert!(has_gainmap(&out), "gain-map item survives the strip");
     }
 
     #[test]
