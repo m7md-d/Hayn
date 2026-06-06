@@ -305,4 +305,53 @@ mod tests {
     fn garbage_fails_cleanly() {
         assert!(decode(&[1, 2, 3, 4, 5, 6, 7, 8], None).is_err());
     }
+
+    fn tiff_orientation(o: u16) -> Vec<u8> {
+        let mut t = b"II\x2a\x00\x08\x00\x00\x00".to_vec();
+        t.extend_from_slice(&1u16.to_le_bytes());
+        t.extend_from_slice(&0x0112u16.to_le_bytes()); // Orientation
+        t.extend_from_slice(&3u16.to_le_bytes()); // SHORT
+        t.extend_from_slice(&1u32.to_le_bytes());
+        t.extend_from_slice(&(o as u32).to_le_bytes());
+        t.extend_from_slice(&0u32.to_le_bytes());
+        t
+    }
+
+    /// End-to-end: a REAL libwebp encode carries EXIF/XMP through the mux and the
+    /// muxed output is still a decodable WebP at the original size.
+    #[test]
+    fn webp_inject_carries_meta_through_a_real_encode() {
+        use crate::engine::metadata::{extract, inject, Canonical};
+        let png = solid_png(16, 16, [10, 150, 200, 255]);
+        let d = decode(&png, None).unwrap();
+        let wp = encode(
+            &d,
+            Target::Webp {
+                quality: 80,
+                lossless: false,
+            },
+        )
+        .unwrap();
+        assert!(extract(&wp).exif.is_none(), "fresh WebP has no metadata");
+
+        let meta = Canonical {
+            exif: Some(tiff_orientation(6)),
+            xmp: Some(b"<x:xmpmeta>w</x:xmpmeta>".to_vec()),
+            ..Default::default()
+        };
+        let out = inject(&wp, &meta);
+        assert_eq!(
+            crate::engine::format::detect(&out),
+            crate::engine::format::ImageFormat::Webp
+        );
+
+        let back = extract(&out);
+        assert!(back.exif.is_some(), "EXIF carried into a real WebP");
+        assert_eq!(back.orientation, 1, "orientation normalised");
+        assert!(back.xmp.is_some(), "XMP carried");
+
+        // Still a valid, decodable WebP at the same dimensions.
+        let d2 = decode(&out, None).unwrap();
+        assert_eq!((d2.width, d2.height), (16, 16));
+    }
 }
