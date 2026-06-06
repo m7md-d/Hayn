@@ -76,24 +76,28 @@ pub struct FormatDescriptor {
     pub supports_xmp: bool,
     pub supports_icc: bool,
     pub supports_iptc: bool,
+    pub supports_alpha: bool,
     /// Metadata can be added/removed via container surgery, with no re-encode.
     pub lossless_metadata_ops: bool,
-    /// The container can represent HDR (deep bit depth / gain map).
+    /// The container can represent HDR — deep bit depth OR a gain map. JPEG
+    /// counts (Ultra HDR: an 8-bit base + a gain map in MPF); WebP has no gain-map
+    /// standard, so it doesn't.
     pub hdr_capable: bool,
 }
 
 impl FormatDescriptor {
     pub fn of(format: ImageFormat) -> Self {
-        let (exif, xmp, icc, iptc, lossless, hdr) = match format {
-            ImageFormat::Jpeg => (true, true, true, true, true, false),
-            ImageFormat::Png => (true, true, true, false, true, false),
-            ImageFormat::Webp => (true, true, true, false, true, false),
-            ImageFormat::Avif => (true, true, true, false, true, true),
-            ImageFormat::Heic => (true, true, true, false, true, true),
-            ImageFormat::Tiff => (true, true, true, true, false, false),
-            ImageFormat::Gif => (false, true, false, false, false, false),
-            ImageFormat::Bmp => (false, false, false, false, false, false),
-            ImageFormat::Unknown => (false, false, false, false, false, false),
+        // (exif, xmp, icc, iptc, alpha, lossless_metadata_ops, hdr_capable)
+        let (exif, xmp, icc, iptc, alpha, lossless, hdr) = match format {
+            ImageFormat::Jpeg => (true, true, true, true, false, true, true),
+            ImageFormat::Png => (true, true, true, false, true, true, false),
+            ImageFormat::Webp => (true, true, true, false, true, true, false),
+            ImageFormat::Avif => (true, true, true, false, true, true, true),
+            ImageFormat::Heic => (true, true, true, false, true, true, true),
+            ImageFormat::Tiff => (true, true, true, true, true, false, false),
+            ImageFormat::Gif => (false, true, false, false, true, false, false),
+            ImageFormat::Bmp => (false, false, false, false, false, false, false),
+            ImageFormat::Unknown => (false, false, false, false, false, false, false),
         };
         Self {
             format,
@@ -101,9 +105,46 @@ impl FormatDescriptor {
             supports_xmp: xmp,
             supports_icc: icc,
             supports_iptc: iptc,
+            supports_alpha: alpha,
             lossless_metadata_ops: lossless,
             hdr_capable: hdr,
         }
+    }
+
+    /// What a `self → target` conversion would lose, at the FORMAT-capability
+    /// level (a coarse upper bound that drives a "you'll lose X" warning, not a
+    /// per-file check). Each flag is set when this format can carry something the
+    /// target cannot. Pair with [`crate::engine::metadata::extract`] to refine to
+    /// what a specific file actually contains.
+    pub fn loss_to(self, target: ImageFormat) -> ConversionLoss {
+        let t = Self::of(target);
+        ConversionLoss {
+            exif: self.supports_exif && !t.supports_exif,
+            xmp: self.supports_xmp && !t.supports_xmp,
+            icc: self.supports_icc && !t.supports_icc,
+            iptc: self.supports_iptc && !t.supports_iptc,
+            alpha: self.supports_alpha && !t.supports_alpha,
+            hdr: self.hdr_capable && !t.hdr_capable,
+        }
+    }
+}
+
+/// What a format conversion can lose (capability-level). All-false means the
+/// target can represent everything the source format could.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ConversionLoss {
+    pub exif: bool,
+    pub xmp: bool,
+    pub icc: bool,
+    pub iptc: bool,
+    pub alpha: bool,
+    pub hdr: bool,
+}
+
+impl ConversionLoss {
+    /// Whether anything at all would be lost.
+    pub fn any(self) -> bool {
+        self.exif || self.xmp || self.icc || self.iptc || self.alpha || self.hdr
     }
 }
 
@@ -147,8 +188,36 @@ mod tests {
     #[test]
     fn descriptor_flags_match_format() {
         assert!(FormatDescriptor::of(ImageFormat::Avif).hdr_capable);
-        assert!(!FormatDescriptor::of(ImageFormat::Jpeg).hdr_capable);
+        // JPEG is HDR-capable via an Ultra HDR gain map (8-bit base + MPF map).
+        assert!(FormatDescriptor::of(ImageFormat::Jpeg).hdr_capable);
+        assert!(!FormatDescriptor::of(ImageFormat::Webp).hdr_capable);
         assert!(FormatDescriptor::of(ImageFormat::Png).supports_icc);
+        assert!(FormatDescriptor::of(ImageFormat::Png).supports_alpha);
+        assert!(!FormatDescriptor::of(ImageFormat::Jpeg).supports_alpha);
         assert!(!FormatDescriptor::of(ImageFormat::Bmp).lossless_metadata_ops);
+    }
+
+    #[test]
+    fn conversion_loss_flags_what_target_cant_hold() {
+        // PNG → JPEG: PNG's alpha can't survive (JPEG is opaque); both carry the
+        // rest, so only alpha is lost.
+        let png_to_jpeg = FormatDescriptor::of(ImageFormat::Png).loss_to(ImageFormat::Jpeg);
+        assert!(png_to_jpeg.alpha);
+        assert!(!png_to_jpeg.exif && !png_to_jpeg.icc && !png_to_jpeg.xmp);
+        assert!(png_to_jpeg.any());
+
+        // AVIF → GIF: a lossy dump — HDR, ICC, EXIF, XMP all gone (GIF keeps only
+        // alpha + XMP).
+        let avif_to_gif = FormatDescriptor::of(ImageFormat::Avif).loss_to(ImageFormat::Gif);
+        assert!(avif_to_gif.hdr && avif_to_gif.icc && avif_to_gif.exif);
+
+        // HEIC → AVIF: both are full ISOBMFF — nothing lost.
+        assert!(!FormatDescriptor::of(ImageFormat::Heic)
+            .loss_to(ImageFormat::Avif)
+            .any());
+        // Same format → nothing lost.
+        assert!(!FormatDescriptor::of(ImageFormat::Jpeg)
+            .loss_to(ImageFormat::Jpeg)
+            .any());
     }
 }
