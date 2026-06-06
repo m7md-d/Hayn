@@ -154,29 +154,48 @@ void main() {
     });
   });
 
-  group('MetadataStripper.strip routing (lossless-only, never re-encode)', () {
+  group('MetadataStripper gates (lossless-only, never re-encode)', () {
     Uint8List pad(List<int> head) =>
         Uint8List.fromList([...head, ...List.filled(16, 0)]);
 
-    test('JPEG/PNG/WebP are strippable; HEIC/unknown are skipped (null)', () {
-      final jpeg = pad([0xFF, 0xD8, 0xFF]);
-      final png = pad([0x89, 0x50, 0x4E, 0x47, 13, 10, 26, 10]);
-      final webp = Uint8List.fromList(
-          [0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]);
-      final heic = Uint8List.fromList([
-        0, 0, 0, 0, //
-        0x66, 0x74, 0x79, 0x70, // 'ftyp'
-        0x68, 0x65, 0x69, 0x63, // 'heic'
-      ]);
+    final jpeg = pad([0xFF, 0xD8, 0xFF]);
+    final png = pad([0x89, 0x50, 0x4E, 0x47, 13, 10, 26, 10]);
+    final webp = Uint8List.fromList(
+        [0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]);
+    final heic = Uint8List.fromList([
+      0, 0, 0, 0, //
+      0x66, 0x74, 0x79, 0x70, // 'ftyp'
+      0x68, 0x65, 0x69, 0x63, // 'heic'
+    ]);
+    final avif = Uint8List.fromList([
+      0, 0, 0, 0, //
+      0x66, 0x74, 0x79, 0x70, // 'ftyp'
+      0x61, 0x76, 0x69, 0x66, // 'avif'
+    ]);
+    final unknown = pad([0x7A, 0x7A, 0x7A]);
 
+    test('canStrip admits every pipeline format incl. HEIC/AVIF (DarkLib)', () {
       expect(MetadataStripper.canStrip(jpeg), isTrue);
       expect(MetadataStripper.canStrip(png), isTrue);
       expect(MetadataStripper.canStrip(webp), isTrue);
-      expect(MetadataStripper.canStrip(heic), isFalse);
+      // HEIC/AVIF are stripped losslessly by DarkLib (ISOBMFF item surgery) —
+      // the entry-point gate must let them reach the task, not pre-reject them.
+      expect(MetadataStripper.canStrip(heic), isTrue);
+      expect(MetadataStripper.canStrip(avif), isTrue);
+      // No lossless editor anywhere → gated out, never re-encoded.
+      expect(MetadataStripper.canStrip(unknown), isFalse);
+    });
 
-      // HEIC must NOT re-encode — it returns null so the caller skips it.
+    test('pure-Dart strip() does JPEG/PNG/WebP; HEIC/AVIF/unknown → null', () {
+      // The synchronous Dart editor only handles JPEG/PNG/WebP. HEIC/AVIF
+      // return null here (the task routes them to DarkLib) and unknown is
+      // skipped — neither is ever re-encoded.
+      expect(MetadataStripper.strip(jpeg), isNotNull);
+      expect(MetadataStripper.strip(png), isNotNull);
+      expect(MetadataStripper.strip(webp), isNotNull);
       expect(MetadataStripper.strip(heic), isNull);
-      expect(MetadataStripper.strip(pad([0x7A, 0x7A, 0x7A])), isNull);
+      expect(MetadataStripper.strip(avif), isNull);
+      expect(MetadataStripper.strip(unknown), isNull);
     });
   });
 }

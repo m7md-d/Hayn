@@ -16,15 +16,16 @@ import 'image_probe.dart';
 //   • JPEG → drop APP1/APP13/APP14/COM segments, keep JFIF/ICC + scan verbatim.
 //   • PNG  → drop text/eXIf/tIME ancillary chunks, keep IHDR/IDAT/IEND + colour.
 //   • WebP → drop the EXIF/"XMP " RIFF chunks + clear their VP8X flag bits.
-// Formats with no safe pure-Dart container editor (HEIC/HEIF, AVIF, and the
-// rest) are reported as UNSUPPORTED via a null result — the caller skips them
-// rather than degrading the image. (Lossless HEIC stripping needs the native
-// metadata writer that the Surgical phase will bring.)
+// HEIC/HEIF and AVIF have no pure-Dart editor here (null result), but the strip
+// TASK strips them losslessly via DarkLib (ISOBMFF item surgery) before falling
+// back to this; only the genuinely unhandled formats (GIF/BMP/TIFF) end up
+// reported as UNSUPPORTED — the caller skips them rather than degrading.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Thrown by [StripMetadataTask] when nothing could be stripped because every
-/// input was in a format we can't strip losslessly yet (e.g. iPhone HEIC). The
-/// UI maps this to a helpful, localised hint instead of a raw error string.
+/// input was in a format with no lossless editor (GIF/BMP/TIFF), or a specific
+/// file DarkLib refused to edit safely. The UI maps this to a helpful, localised
+/// hint instead of a raw error string.
 class StripUnsupportedFormat implements Exception {
   const StripUnsupportedFormat();
 }
@@ -72,17 +73,19 @@ abstract final class MetadataReader {
 }
 
 abstract final class MetadataStripper {
-  /// Returns metadata-free bytes (+ the extension to save under, since the
-  /// format is preserved byte-compatibly), or NULL when the format has no
-  /// lossless pure-Dart stripper (HEIC/AVIF/etc) — the caller must skip it,
-  /// never re-encode. Pure + synchronous (all work is byte surgery).
-  /// Whether [bytes] is a format we can strip LOSSLESSLY (JPEG/PNG/WebP).
-  /// Cheap (magic-byte sniff only) — lets callers warn up front before
-  /// enqueuing a task that would otherwise skip the file.
+  /// Whether the strip PIPELINE can handle [bytes] losslessly. JPEG/PNG/WebP go
+  /// through the pure-Dart surgery below; HEIC/AVIF are now stripped losslessly
+  /// by DarkLib (ISOBMFF item surgery, all platforms) with the iOS native writer
+  /// as a fallback — so the entry-point gate must allow them. GIF/BMP/TIFF still
+  /// have no lossless editor. Cheap (magic-byte sniff only) — lets callers warn
+  /// up front before enqueuing. A specific file DarkLib can't safely edit is
+  /// still caught at run time (the task reports [StripUnsupportedFormat]).
   static bool canStrip(Uint8List bytes) => switch (ImageProbe.sniff(bytes)) {
         SniffedFormat.jpeg ||
         SniffedFormat.png ||
-        SniffedFormat.webp =>
+        SniffedFormat.webp ||
+        SniffedFormat.heic ||
+        SniffedFormat.avif =>
           true,
         _ => false,
       };

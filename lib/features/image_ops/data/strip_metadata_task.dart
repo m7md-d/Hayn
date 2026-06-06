@@ -1,6 +1,6 @@
 import 'dart:async';
+import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart';
 import 'package:photo_manager/photo_manager.dart';
 
 import '../../../core/darklib/darklib.dart';
@@ -14,8 +14,9 @@ import 'output_name.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // StripMetadataTask — saves a metadata-free copy of each selected image
-// (EXIF/GPS/camera/comments removed). JPEG/PNG are stripped losslessly; other
-// formats are re-encoded once at high quality (see MetadataStripper).
+// (EXIF/GPS/camera/comments removed). Strips are LOSSLESS-ONLY (never
+// re-encode): DarkLib handles JPEG/PNG/WebP and AVIF/HEIF; formats nobody can
+// edit losslessly (GIF/BMP/TIFF) are reported unsupported and skipped.
 //
 // Deliberately does NOT carry date/GPS to the new asset — removing them is the
 // whole point. The original is untouched.
@@ -76,11 +77,6 @@ class StripMetadataTask extends MediaTask {
 
       final dl = await DarkLibCore.stripMetadata(src);
       if (_cancelled) return;
-      if (kDebugMode) {
-        debugPrint(
-          '[Strip] fmt=$fmt in=${src.length} darklib=${dl == null ? 'null' : '${dl.length}B'}',
-        );
-      }
       if (dl != null) {
         bytes = dl;
         ext = _extFor(fmt);
@@ -99,7 +95,6 @@ class StripMetadataTask extends MediaTask {
         }
       }
       if (bytes.isEmpty) {
-        if (kDebugMode) debugPrint('[Strip] UNSUPPORTED fmt=$fmt');
         unsupported++;
         done++;
         yield TaskProgress(progress: done / total, phase: '$done/$total');
