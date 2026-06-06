@@ -6,6 +6,7 @@
 //! `docs/10-DARKLIB.md`.
 
 pub mod codec;
+pub mod color;
 pub mod error;
 pub mod format;
 pub mod metadata;

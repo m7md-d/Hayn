@@ -17,10 +17,16 @@ pub fn extract(b: &[u8]) -> Canonical {
         ImageFormat::Webp => webp(b),
         ImageFormat::Avif | ImageFormat::Heic => {
             let (exif, xmp) = isobmff::extract_exif_xmp(b);
+            // Prefer an embedded profile; otherwise synthesise one from the nclx
+            // code points so a profile-less P3 HEIC keeps its gamut on convert.
+            let icc = isobmff::extract_icc(b).or_else(|| {
+                isobmff::extract_nclx(b)
+                    .and_then(|(p, t)| crate::engine::color::synthesize_from_cicp(p, t))
+            });
             Canonical {
                 exif,
                 xmp,
-                icc: isobmff::extract_icc(b),
+                icc,
                 ..Default::default()
             }
         }
@@ -229,5 +235,32 @@ mod tests {
             c.exif.as_deref(),
             Some(b"MM\x00\x2a\x00\x00\x00\x08".as_slice())
         );
+    }
+
+    #[test]
+    fn avif_nclx_gets_a_synthesized_icc() {
+        fn boxx(t: &[u8; 4], body: &[u8]) -> Vec<u8> {
+            let mut v = ((8 + body.len()) as u32).to_be_bytes().to_vec();
+            v.extend_from_slice(t);
+            v.extend_from_slice(body);
+            v
+        }
+        let mut nclx = b"nclx".to_vec();
+        nclx.extend_from_slice(&12u16.to_be_bytes()); // Display P3 primaries
+        nclx.extend_from_slice(&13u16.to_be_bytes()); // sRGB transfer
+        nclx.extend_from_slice(&1u16.to_be_bytes()); // matrix
+        nclx.push(0x80);
+        let iprp = boxx(b"iprp", &boxx(b"ipco", &boxx(b"colr", &nclx)));
+        let mut meta_body = vec![0, 0, 0, 0];
+        meta_body.extend_from_slice(&iprp);
+        let file = [
+            boxx(b"ftyp", b"avif\0\0\0\0avif"),
+            boxx(b"meta", &meta_body),
+        ]
+        .concat();
+
+        // No embedded profile, but the nclx code points yield a synthesised ICC.
+        let icc = extract(&file).icc.expect("nclx → synthesised ICC");
+        assert_eq!(&icc[36..40], b"acsp", "a valid ICC profile");
     }
 }

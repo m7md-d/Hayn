@@ -100,6 +100,27 @@ pub fn extract_icc(b: &[u8]) -> Option<Vec<u8>> {
     None
 }
 
+/// Read the nclx colour code points (`colour_primaries`, `transfer_characteristics`)
+/// from a `colr`/`nclx` property, if present. Lets a profile-less AVIF/HEIF (e.g.
+/// iPhone's Display-P3 HEIC) be given a synthesised ICC on convert. `None` when
+/// there is no nclx `colr`.
+pub fn extract_nclx(b: &[u8]) -> Option<(u16, u16)> {
+    let top = boxes_in(b, 0, b.len())?;
+    let meta = *top.iter().find(|x| x.typ == *b"meta")?;
+    let mc = boxes_in(b, meta.body + 4, meta.end)?;
+    let iprp = *mc.iter().find(|x| x.typ == *b"iprp")?;
+    let ipco = *boxes_in(b, iprp.body, iprp.end)?
+        .iter()
+        .find(|x| x.typ == *b"ipco")?;
+    for prop in boxes_in(b, ipco.body, ipco.end)? {
+        if prop.typ == *b"colr" && b.get(prop.body..prop.body + 4)? == b"nclx" {
+            // nclx: colour_type(4) + primaries(2) + transfer(2) + matrix(2) + range(1)
+            return Some((be_u16(b, prop.body + 4)?, be_u16(b, prop.body + 6)?));
+        }
+    }
+    None
+}
+
 // ── big-endian readers ──────────────────────────────────────────────────────
 
 fn be_u16(b: &[u8], o: usize) -> Option<u16> {
@@ -1502,6 +1523,38 @@ mod tests {
         assert_eq!(extract_icc(&file), None);
         // No iprp at all → None (never panics).
         assert_eq!(extract_icc(&sample_heif_image_only(&[1, 2, 3, 4])), None);
+    }
+
+    #[test]
+    fn extract_nclx_reads_code_points() {
+        let mut nclx = b"nclx".to_vec();
+        nclx.extend_from_slice(&12u16.to_be_bytes()); // primaries: Display P3
+        nclx.extend_from_slice(&13u16.to_be_bytes()); // transfer: sRGB
+        nclx.extend_from_slice(&1u16.to_be_bytes()); // matrix
+        nclx.push(0x80); // full range
+        let ipco = wrap_box(b"ipco", &wrap_box(b"colr", &nclx));
+        let iprp = wrap_box(b"iprp", &ipco);
+        let mut mp = vec![0, 0, 0, 0];
+        mp.extend_from_slice(&iprp);
+        let file = [
+            wrap_box(b"ftyp", b"mif1\0\0\0\0mif1avif"),
+            wrap_box(b"meta", &mp),
+        ]
+        .concat();
+        assert_eq!(extract_nclx(&file), Some((12, 13)));
+        // A `prof` colr carries no nclx code points.
+        let prof = wrap_box(
+            b"iprp",
+            &wrap_box(b"ipco", &wrap_box(b"colr", b"profICCDATA")),
+        );
+        let mut mp2 = vec![0, 0, 0, 0];
+        mp2.extend_from_slice(&prof);
+        let f2 = [
+            wrap_box(b"ftyp", b"mif1\0\0\0\0mif1avif"),
+            wrap_box(b"meta", &mp2),
+        ]
+        .concat();
+        assert_eq!(extract_nclx(&f2), None);
     }
 
     #[test]
