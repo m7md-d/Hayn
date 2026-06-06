@@ -74,6 +74,32 @@ fn extract_inner(b: &[u8]) -> Option<ExifXmp> {
     Some((exif, xmp))
 }
 
+/// Extract an embedded ICC profile — the `colr` item property of type `prof`
+/// (or restricted `rICC`) inside `iprp`/`ipco`. Best-effort and bounds-safe.
+///
+/// nclx (coding-independent code points — the Display-P3 tag iPhone HEIC uses
+/// instead of an embedded profile) is intentionally NOT returned here: it isn't
+/// an ICC blob, and mapping it to one is a separate colour-management step.
+pub fn extract_icc(b: &[u8]) -> Option<Vec<u8>> {
+    let top = boxes_in(b, 0, b.len())?;
+    let meta = *top.iter().find(|x| x.typ == *b"meta")?;
+    let mc = boxes_in(b, meta.body + 4, meta.end)?;
+    let iprp = *mc.iter().find(|x| x.typ == *b"iprp")?;
+    let ipco = *boxes_in(b, iprp.body, iprp.end)?
+        .iter()
+        .find(|x| x.typ == *b"ipco")?;
+    for prop in boxes_in(b, ipco.body, ipco.end)? {
+        // `colr` is a plain box: colour_type(4) then, for prof/rICC, the profile.
+        if prop.typ == *b"colr" {
+            let ct = b.get(prop.body..prop.body + 4)?;
+            if ct == b"prof" || ct == b"rICC" {
+                return b.get(prop.body + 4..prop.end).map(<[u8]>::to_vec);
+            }
+        }
+    }
+    None
+}
+
 // ── big-endian readers ──────────────────────────────────────────────────────
 
 fn be_u16(b: &[u8], o: usize) -> Option<u16> {
@@ -1308,6 +1334,41 @@ mod tests {
         let file = sample_heif(&av01, &exif);
         let out = inject(&file, Some(b"II\x2a\x00\x08\x00\x00\x00"), None);
         assert_eq!(out, file, "existing EXIF item not duplicated");
+    }
+
+    #[test]
+    fn extract_icc_reads_colr_prof() {
+        let icc = b"icc-profile-bytes".to_vec();
+        let mut colr_body = b"prof".to_vec();
+        colr_body.extend_from_slice(&icc);
+        let ipco = wrap_box(b"ipco", &wrap_box(b"colr", &colr_body));
+        let iprp = wrap_box(b"iprp", &ipco);
+        let mut mp = vec![0, 0, 0, 0];
+        mp.extend_from_slice(&iprp);
+        let file = [
+            wrap_box(b"ftyp", b"mif1\0\0\0\0mif1avif"),
+            wrap_box(b"meta", &mp),
+        ]
+        .concat();
+        assert_eq!(extract_icc(&file).as_deref(), Some(icc.as_slice()));
+    }
+
+    #[test]
+    fn extract_icc_ignores_nclx_and_absent() {
+        // nclx carries code points, not a profile → None.
+        let nclx = wrap_box(b"colr", b"nclx\0\x01\0\x0d\0\x06\x80");
+        let ipco = wrap_box(b"ipco", &nclx);
+        let iprp = wrap_box(b"iprp", &ipco);
+        let mut mp = vec![0, 0, 0, 0];
+        mp.extend_from_slice(&iprp);
+        let file = [
+            wrap_box(b"ftyp", b"mif1\0\0\0\0mif1avif"),
+            wrap_box(b"meta", &mp),
+        ]
+        .concat();
+        assert_eq!(extract_icc(&file), None);
+        // No iprp at all → None (never panics).
+        assert_eq!(extract_icc(&sample_heif_image_only(&[1, 2, 3, 4])), None);
     }
 
     #[test]

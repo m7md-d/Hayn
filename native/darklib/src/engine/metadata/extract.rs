@@ -20,6 +20,7 @@ pub fn extract(b: &[u8]) -> Canonical {
             Canonical {
                 exif,
                 xmp,
+                icc: isobmff::extract_icc(b),
                 ..Default::default()
             }
         }
