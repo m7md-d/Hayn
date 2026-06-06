@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:photo_manager/photo_manager.dart';
 
 import '../../../core/darklib/darklib.dart';
@@ -76,6 +76,11 @@ class StripMetadataTask extends MediaTask {
 
       final dl = await DarkLibCore.stripMetadata(src);
       if (_cancelled) return;
+      if (kDebugMode) {
+        debugPrint(
+          '[Strip] fmt=$fmt in=${src.length} darklib=${dl == null ? 'null' : '${dl.length}B'}',
+        );
+      }
       if (dl != null) {
         bytes = dl;
         ext = _extFor(fmt);
@@ -94,6 +99,7 @@ class StripMetadataTask extends MediaTask {
         }
       }
       if (bytes.isEmpty) {
+        if (kDebugMode) debugPrint('[Strip] UNSUPPORTED fmt=$fmt');
         unsupported++;
         done++;
         yield TaskProgress(progress: done / total, phase: '$done/$total');

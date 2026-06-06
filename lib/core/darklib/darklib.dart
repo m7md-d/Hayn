@@ -1,4 +1,4 @@
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 
 import '../../src/rust/api/metadata.dart' as rust;
 import '../../src/rust/frb_generated.dart';
@@ -24,8 +24,10 @@ abstract final class DarkLibCore {
   static Future<bool> _init() async {
     try {
       await DarkLib.init();
+      if (kDebugMode) debugPrint('[DarkLib] init OK');
       return true;
-    } catch (_) {
+    } catch (e) {
+      if (kDebugMode) debugPrint('[DarkLib] init FAILED: $e');
       return false;
     }
   }
@@ -41,7 +43,8 @@ abstract final class DarkLibCore {
     if (!await ensureReady()) return null;
     try {
       return await rust.stripMetadata(bytes: bytes, stripIcc: stripIcc);
-    } catch (_) {
+    } catch (e) {
+      if (kDebugMode) debugPrint('[DarkLib] strip threw: $e');
       return null; // unsupported container / malformed → fall back
     }
   }

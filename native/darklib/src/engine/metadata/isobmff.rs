@@ -180,6 +180,9 @@ struct Loc {
     data_ref: u16,
     base_offset: u64,
     extents: Vec<Extent>,
+    /// Byte span of this item's record inside the source `iloc` payload, so the
+    /// in-place path can copy kept entries verbatim (offsets untouched).
+    entry: (usize, usize),
 }
 
 struct Iloc {
@@ -278,6 +281,7 @@ fn parse_iloc(b: &[u8], iloc: Bx) -> Option<Iloc> {
     };
     let mut items = Vec::with_capacity(item_count);
     for _ in 0..item_count {
+        let entry_start = q;
         let id = if version < 2 {
             let v = be_u16(b, q)? as u32;
             q += 2;
@@ -318,6 +322,7 @@ fn parse_iloc(b: &[u8], iloc: Bx) -> Option<Iloc> {
             data_ref,
             base_offset,
             extents,
+            entry: (entry_start, q),
         });
     }
     Some(Iloc {
@@ -463,7 +468,18 @@ fn rewrite_iref(b: &[u8], iref: Bx, victims: &HashSet<u32>) -> Option<Vec<u8>> {
 
 // ── the rebuild ─────────────────────────────────────────────────────────────
 
+/// Two-tier strip. Tier 1 (`strip_compact`) rebuilds with fresh offsets and
+/// reclaims the freed bytes, but only for the conservative single-`mdat`,
+/// `construction_method == 0` subset. Anything outside it (multiple `mdat`,
+/// `idat`-backed grid items, etc. — common in real Samsung HEIC) falls through
+/// to tier 2 (`strip_in_place`), which never moves a kept byte: it zero-fills the
+/// EXIF/XMP payloads, delists them, and pads `meta` back to its original size so
+/// every surviving absolute offset stays valid. Both self-validate.
 fn strip_inner(b: &[u8]) -> Option<Vec<u8>> {
+    strip_compact(b).or_else(|| strip_in_place(b))
+}
+
+fn strip_compact(b: &[u8]) -> Option<Vec<u8>> {
     let top = boxes_in(b, 0, b.len())?;
     if top.iter().filter(|x| x.typ == *b"mdat").count() != 1 {
         return None;
@@ -529,6 +545,7 @@ fn strip_inner(b: &[u8]) -> Option<Vec<u8>> {
                     length: e.length,
                 })
                 .collect(),
+            entry: (0, 0),
         })
         .collect();
     let new_iloc_len = serialize_iloc(b, iloc_box, &loc, &placeholder)?.len();
@@ -583,6 +600,7 @@ fn strip_inner(b: &[u8]) -> Option<Vec<u8>> {
             data_ref: it.data_ref,
             base_offset: 0,
             extents: new_ext,
+            entry: (0, 0),
         });
     }
     let new_iloc = serialize_iloc(b, iloc_box, &loc, &new_locs)?;
@@ -625,6 +643,11 @@ fn strip_inner(b: &[u8]) -> Option<Vec<u8>> {
 
 /// Re-parse the output and prove the surgery was lossless for everything kept:
 /// no EXIF/XMP item remains, and every surviving item's bytes equal the source.
+///
+/// `read_item` resolves offsets as absolute file positions, which is only true
+/// for `construction_method == 0`. Items with another method (e.g. an `idat`-
+/// backed grid item) are copied verbatim by both strip paths, so they're proven
+/// unchanged by construction and skipped here rather than mis-read.
 fn validate(src: &[u8], src_loc: &Iloc, victims: &HashSet<u32>, out: &[u8]) -> Option<()> {
     let top = boxes_in(out, 0, out.len())?;
     let meta = *top.iter().find(|x| x.typ == *b"meta")?;
@@ -638,7 +661,7 @@ fn validate(src: &[u8], src_loc: &Iloc, victims: &HashSet<u32>, out: &[u8]) -> O
     }
     let out_loc = parse_iloc(out, iloc)?;
     for src_item in &src_loc.items {
-        if victims.contains(&src_item.id) {
+        if victims.contains(&src_item.id) || src_item.method != 0 {
             continue;
         }
         let out_item = out_loc.items.iter().find(|x| x.id == src_item.id)?;
@@ -647,6 +670,124 @@ fn validate(src: &[u8], src_loc: &Iloc, victims: &HashSet<u32>, out: &[u8]) -> O
         }
     }
     Some(())
+}
+
+// ── tier 2: in-place zero-fill (general) ─────────────────────────────────────
+
+/// Strip EXIF/XMP without moving any kept byte. Works for the structures tier 1
+/// refuses (multiple `mdat`, `idat` grids, base offsets): zero the victim
+/// payloads in place, drop their `iinf`/`iloc`/`iref` records, and absorb the
+/// space the records freed with a `free` box so `meta` keeps its exact size —
+/// leaving every surviving absolute offset valid. Bails (→ caller skips the file
+/// untouched) on anything it can't locate safely.
+fn strip_in_place(b: &[u8]) -> Option<Vec<u8>> {
+    let top = boxes_in(b, 0, b.len())?;
+    let meta = *top.iter().find(|x| x.typ == *b"meta")?;
+    let meta_children = boxes_in(b, meta.body + 4, meta.end)?;
+    let iinf = *meta_children.iter().find(|x| x.typ == *b"iinf")?;
+    let iloc_box = *meta_children.iter().find(|x| x.typ == *b"iloc")?;
+
+    let (_iinf_ver, items) = parse_iinf(b, iinf)?;
+    let loc = parse_iloc(b, iloc_box)?;
+
+    let victims: HashSet<u32> = items
+        .iter()
+        .filter(|(it, _)| is_victim(it))
+        .map(|(it, _)| it.id)
+        .collect();
+    if victims.is_empty() {
+        return Some(b.to_vec()); // already clean
+    }
+
+    // Locate every victim's payload as an absolute file range. We can only do
+    // that for construction_method 0 (file/mdat offsets); a victim stored via
+    // idat/item offset is rare and unsafe to locate here → bail.
+    let mut zero_ranges: Vec<(usize, usize)> = Vec::new();
+    for vloc in loc.items.iter().filter(|it| victims.contains(&it.id)) {
+        if vloc.method != 0 {
+            return None;
+        }
+        for e in &vloc.extents {
+            let off = vloc.base_offset.checked_add(e.offset)? as usize;
+            let end = off.checked_add(e.length as usize)?;
+            if end > b.len() {
+                return None;
+            }
+            zero_ranges.push((off, end));
+        }
+    }
+
+    // Rebuild the three boxes that name the victims, copying kept records
+    // verbatim (no offset rewrite — kept payloads don't move).
+    let new_iinf = rebuild_iinf(b, iinf, &items, &victims)?;
+    let new_iloc = rebuild_iloc_drop(b, iloc_box, &loc, &victims)?;
+    let new_iref = match meta_children.iter().find(|x| x.typ == *b"iref") {
+        Some(ir) => Some(rewrite_iref(b, *ir, &victims)?),
+        None => None,
+    };
+
+    let mut children = Vec::with_capacity(meta.end - meta.body);
+    for c in &meta_children {
+        match &c.typ {
+            b"iinf" => children.extend_from_slice(&new_iinf),
+            b"iloc" => children.extend_from_slice(&new_iloc),
+            b"iref" => {
+                if let Some(ir) = &new_iref {
+                    children.extend_from_slice(ir);
+                }
+            }
+            _ => children.extend_from_slice(b.get(c.start..c.end)?),
+        }
+    }
+
+    // Pad `meta` back to its original size so nothing after it moves. The dropped
+    // records are always larger than a box header, so the delta fits a `free`.
+    let orig_children_len = meta.end - (meta.body + 4);
+    if children.len() > orig_children_len {
+        return None; // unexpected growth — refuse
+    }
+    let delta = orig_children_len - children.len();
+    if delta != 0 {
+        if delta < 8 {
+            return None; // can't represent as a box; refuse rather than shift
+        }
+        children.extend_from_slice(&(delta as u32).to_be_bytes());
+        children.extend_from_slice(b"free");
+        children.resize(children.len() + (delta - 8), 0);
+    }
+
+    let mut meta_payload = b.get(meta.body..meta.body + 4)?.to_vec(); // ver/flags
+    meta_payload.extend_from_slice(&children);
+    let new_meta = wrap_box(b"meta", &meta_payload);
+    if new_meta.len() != meta.end - meta.start {
+        return None; // size model disagreed — refuse
+    }
+
+    let mut out = b.to_vec();
+    out[meta.start..meta.end].copy_from_slice(&new_meta);
+    for (s, e) in zero_ranges {
+        out[s..e].fill(0);
+    }
+
+    validate(b, &loc, &victims, &out)?;
+    Some(out)
+}
+
+/// Re-serialise `iloc` with the victim items removed, copying every kept item's
+/// record byte-for-byte (offsets unchanged — the in-place path moves nothing).
+fn rebuild_iloc_drop(b: &[u8], iloc: Bx, src: &Iloc, victims: &HashSet<u32>) -> Option<Vec<u8>> {
+    let p = iloc.body;
+    let mut payload = b.get(p..p + 6)?.to_vec(); // ver/flags + the two size bytes
+    let kept: Vec<&Loc> = src.items.iter().filter(|it| !victims.contains(&it.id)).collect();
+    if src.version < 2 {
+        payload.extend_from_slice(&(kept.len() as u16).to_be_bytes());
+    } else {
+        payload.extend_from_slice(&(kept.len() as u32).to_be_bytes());
+    }
+    for it in kept {
+        payload.extend_from_slice(b.get(it.entry.0..it.entry.1)?);
+    }
+    Some(wrap_box(b"iloc", &payload))
 }
 
 #[cfg(test)]
@@ -880,5 +1021,195 @@ mod tests {
     fn malformed_bails() {
         let junk = vec![0u8; 40];
         assert!(strip(&junk, StripPolicy::default()).is_err());
+    }
+
+    // ── tier 2 (in-place) — structures tier 1 refuses ────────────────────────
+
+    /// Two `mdat` boxes (image in one, EXIF in the other) — tier 1 bails on the
+    /// `mdat`-count guard, tier 2 zero-strips in place at the original size.
+    #[test]
+    fn in_place_strips_across_multiple_mdat() {
+        let av01 = [0xA0u8, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7];
+        let exif = b"Exif\0\0tiff-GPS-secret-2".to_vec();
+
+        let hdlr = fullbox(
+            b"hdlr",
+            0,
+            [0, 0, 0],
+            b"\0\0\0\0pict\0\0\0\0\0\0\0\0\0\0\0\0\0",
+        );
+        let pitm = fullbox(b"pitm", 0, [0, 0, 0], &1u16.to_be_bytes());
+        let mut iinf_body = Vec::new();
+        iinf_body.extend_from_slice(&2u16.to_be_bytes());
+        iinf_body.extend_from_slice(&infe(1, b"av01"));
+        iinf_body.extend_from_slice(&infe(2, b"Exif"));
+        let iinf = fullbox(b"iinf", 0, [0, 0, 0], &iinf_body);
+        let mut cdsc = Vec::new();
+        cdsc.extend_from_slice(&2u16.to_be_bytes());
+        cdsc.extend_from_slice(&1u16.to_be_bytes());
+        cdsc.extend_from_slice(&1u16.to_be_bytes());
+        let iref = fullbox(b"iref", 0, [0, 0, 0], &wrap_box(b"cdsc", &cdsc));
+
+        let build_iloc = |o1: u32, o2: u32| -> Vec<u8> {
+            let mut body = vec![0x44, 0x00];
+            body.extend_from_slice(&2u16.to_be_bytes());
+            for (id, off, len) in [(1u16, o1, av01.len() as u32), (2u16, o2, exif.len() as u32)] {
+                body.extend_from_slice(&id.to_be_bytes());
+                body.extend_from_slice(&0u16.to_be_bytes()); // method 0
+                body.extend_from_slice(&0u16.to_be_bytes()); // data_ref
+                body.extend_from_slice(&1u16.to_be_bytes()); // extent count
+                body.extend_from_slice(&off.to_be_bytes());
+                body.extend_from_slice(&len.to_be_bytes());
+            }
+            fullbox(b"iloc", 1, [0, 0, 0], &body)
+        };
+
+        let ftyp = wrap_box(b"ftyp", b"heic\0\0\0\0mif1heic");
+        let build_meta = |iloc: &[u8]| -> Vec<u8> {
+            let mut mp = vec![0, 0, 0, 0];
+            mp.extend_from_slice(&hdlr);
+            mp.extend_from_slice(&pitm);
+            mp.extend_from_slice(&iinf);
+            mp.extend_from_slice(&iref);
+            mp.extend_from_slice(iloc);
+            wrap_box(b"meta", &mp)
+        };
+        let assemble = |iloc: &[u8]| -> Vec<u8> {
+            [
+                ftyp.clone(),
+                build_meta(iloc),
+                wrap_box(b"mdat", &av01),
+                wrap_box(b"mdat", &exif),
+            ]
+            .concat()
+        };
+
+        let meta_len = build_meta(&build_iloc(0, 0)).len();
+        let o1 = (ftyp.len() + meta_len + 8) as u32; // av01 in mdat #1
+        let o2 = o1 + av01.len() as u32 + 8; // exif in mdat #2
+        let file = assemble(&build_iloc(o1, o2));
+        assert!(contains(&file, b"GPS-secret-2"));
+
+        let out = strip(&file, StripPolicy::default()).unwrap();
+        assert!(!contains(&out, b"GPS-secret-2"), "EXIF payload zeroed");
+        assert!(!contains(&out, b"Exif"), "EXIF item delisted");
+        assert!(contains(&out, &av01), "image payload intact");
+        assert_eq!(out.len(), file.len(), "in-place keeps the file size");
+
+        let top = boxes_in(&out, 0, out.len()).unwrap();
+        assert_eq!(top.iter().filter(|x| x.typ == *b"mdat").count(), 2);
+        let meta = *top.iter().find(|x| x.typ == *b"meta").unwrap();
+        let mc = boxes_in(&out, meta.body + 4, meta.end).unwrap();
+        let iinf = *mc.iter().find(|x| x.typ == *b"iinf").unwrap();
+        let (_v, items) = parse_iinf(&out, iinf).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].0.typ, *b"av01");
+    }
+
+    /// A `grid` primary backed by `idat` (construction_method 1) plus an `av01`
+    /// tile and an `Exif` item — the typical Samsung HEIC shape. Tier 1 bails on
+    /// the method-0-only guard; tier 2 zero-strips EXIF, leaves the grid (idat)
+    /// and the tile byte-identical.
+    #[test]
+    fn in_place_strips_with_idat_grid_item() {
+        let tile = [0x10u8, 0x11, 0x12, 0x13, 0x14, 0x15];
+        let exif = b"Exif\0\0tiff-GPS-here-data".to_vec();
+        let grid = b"GRID-DESC-bytes".to_vec();
+
+        let hdlr = fullbox(
+            b"hdlr",
+            0,
+            [0, 0, 0],
+            b"\0\0\0\0pict\0\0\0\0\0\0\0\0\0\0\0\0\0",
+        );
+        let pitm = fullbox(b"pitm", 0, [0, 0, 0], &1u16.to_be_bytes());
+        let mut iinf_body = Vec::new();
+        iinf_body.extend_from_slice(&3u16.to_be_bytes());
+        iinf_body.extend_from_slice(&infe(1, b"grid"));
+        iinf_body.extend_from_slice(&infe(2, b"Exif"));
+        iinf_body.extend_from_slice(&infe(3, b"av01"));
+        let iinf = fullbox(b"iinf", 0, [0, 0, 0], &iinf_body);
+
+        let mut dimg = Vec::new(); // grid (1) → tile (3)
+        dimg.extend_from_slice(&1u16.to_be_bytes());
+        dimg.extend_from_slice(&1u16.to_be_bytes());
+        dimg.extend_from_slice(&3u16.to_be_bytes());
+        let mut cdsc = Vec::new(); // exif (2) describes grid (1)
+        cdsc.extend_from_slice(&2u16.to_be_bytes());
+        cdsc.extend_from_slice(&1u16.to_be_bytes());
+        cdsc.extend_from_slice(&1u16.to_be_bytes());
+        let iref = fullbox(
+            b"iref",
+            0,
+            [0, 0, 0],
+            &[wrap_box(b"dimg", &dimg), wrap_box(b"cdsc", &cdsc)].concat(),
+        );
+        let idat = wrap_box(b"idat", &grid);
+
+        let build_iloc = |o_tile: u32, o_exif: u32| -> Vec<u8> {
+            let mut body = vec![0x44, 0x00];
+            body.extend_from_slice(&3u16.to_be_bytes());
+            // item 1: grid, method 1 (offset into idat)
+            body.extend_from_slice(&1u16.to_be_bytes());
+            body.extend_from_slice(&1u16.to_be_bytes()); // method 1
+            body.extend_from_slice(&0u16.to_be_bytes());
+            body.extend_from_slice(&1u16.to_be_bytes());
+            body.extend_from_slice(&0u32.to_be_bytes());
+            body.extend_from_slice(&(grid.len() as u32).to_be_bytes());
+            // item 3: av01 tile, method 0
+            body.extend_from_slice(&3u16.to_be_bytes());
+            body.extend_from_slice(&0u16.to_be_bytes());
+            body.extend_from_slice(&0u16.to_be_bytes());
+            body.extend_from_slice(&1u16.to_be_bytes());
+            body.extend_from_slice(&o_tile.to_be_bytes());
+            body.extend_from_slice(&(tile.len() as u32).to_be_bytes());
+            // item 2: exif, method 0
+            body.extend_from_slice(&2u16.to_be_bytes());
+            body.extend_from_slice(&0u16.to_be_bytes());
+            body.extend_from_slice(&0u16.to_be_bytes());
+            body.extend_from_slice(&1u16.to_be_bytes());
+            body.extend_from_slice(&o_exif.to_be_bytes());
+            body.extend_from_slice(&(exif.len() as u32).to_be_bytes());
+            fullbox(b"iloc", 1, [0, 0, 0], &body)
+        };
+
+        let ftyp = wrap_box(b"ftyp", b"heic\0\0\0\0mif1heic");
+        let build_meta = |iloc: &[u8]| -> Vec<u8> {
+            let mut mp = vec![0, 0, 0, 0];
+            mp.extend_from_slice(&hdlr);
+            mp.extend_from_slice(&pitm);
+            mp.extend_from_slice(&iinf);
+            mp.extend_from_slice(&iref);
+            mp.extend_from_slice(&idat);
+            mp.extend_from_slice(iloc);
+            wrap_box(b"meta", &mp)
+        };
+        let assemble = |iloc: &[u8]| -> Vec<u8> {
+            let mut md = tile.to_vec();
+            md.extend_from_slice(&exif);
+            [ftyp.clone(), build_meta(iloc), wrap_box(b"mdat", &md)].concat()
+        };
+
+        let meta_len = build_meta(&build_iloc(0, 0)).len();
+        let o_tile = (ftyp.len() + meta_len + 8) as u32;
+        let o_exif = o_tile + tile.len() as u32;
+        let file = assemble(&build_iloc(o_tile, o_exif));
+        assert!(contains(&file, b"GPS-here"));
+
+        let out = strip(&file, StripPolicy::default()).unwrap();
+        assert!(!contains(&out, b"GPS-here"), "EXIF payload zeroed");
+        assert!(contains(&out, b"GRID-DESC"), "idat grid descriptor intact");
+        assert!(contains(&out, &tile), "tile payload intact");
+        assert_eq!(out.len(), file.len(), "in-place keeps the file size");
+
+        let top = boxes_in(&out, 0, out.len()).unwrap();
+        let meta = *top.iter().find(|x| x.typ == *b"meta").unwrap();
+        let mc = boxes_in(&out, meta.body + 4, meta.end).unwrap();
+        let iinf = *mc.iter().find(|x| x.typ == *b"iinf").unwrap();
+        let (_v, items) = parse_iinf(&out, iinf).unwrap();
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().any(|(it, _)| it.typ == *b"grid"));
+        assert!(items.iter().any(|(it, _)| it.typ == *b"av01"));
+        assert!(!items.iter().any(|(it, _)| it.typ == *b"Exif"));
     }
 }
