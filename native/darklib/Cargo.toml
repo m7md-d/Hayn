@@ -2,9 +2,20 @@
 name = "darklib"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.79"
+description = "Offline, royalty-free image core — lossless metadata surgery (strip/extract/carry), colour management (ICC + CICP→ICC synthesis), and AV1/WebP/JPEG/PNG decode·encode behind one engine."
+keywords = ["image", "avif", "metadata", "exif", "icc"]
+categories = ["multimedia::images", "encoding"]
+readme = "README.md"
+# license: intentionally unset until the standalone repo is published. The app
+# embedding DarkLib is GPL-3.0; every DarkLib dependency is permissively licensed
+# (BSD/MIT/Apache), so any license is still possible. See README → "License".
+# repository / homepage: set when the standalone repo is created.
 
 [lib]
-crate-type = ["cdylib", "staticlib"]
+# `rlib` so the pure `engine` is usable as a normal Rust dependency; `cdylib`/
+# `staticlib` for the C-ABI/FFI shared library the Flutter app loads.
+crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
 flutter_rust_bridge = "=2.12.0"

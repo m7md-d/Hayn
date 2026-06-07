@@ -73,7 +73,7 @@ impl Default for StripPolicy {
     }
 }
 
-/// Strip metadata losslessly per [`policy`], dispatching on the detected
+/// Strip metadata losslessly per `policy`, dispatching on the detected
 /// container. Returns the new bytes (identical pixels, same container).
 ///
 /// Returns [`DarkError::UnsupportedFormat`] for containers without an in-Rust

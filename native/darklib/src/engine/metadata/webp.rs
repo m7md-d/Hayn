@@ -1,7 +1,7 @@
 //! Lossless WebP metadata surgery.
 //!
-//! RIFF container: `RIFF` <u32 size> `WEBP` then FourCC-tagged chunks (each a
-//! u32 little-endian size + payload padded to even length). Metadata lives in
+//! RIFF container: `RIFF` + a `u32` size + `WEBP`, then FourCC-tagged chunks
+//! (each a u32 little-endian size + payload padded to even length). Metadata is in
 //! the `EXIF` and `XMP ` chunks — drop them and clear the matching VP8X flag
 //! bits (EXIF=0x08, XMP=0x04). `ICCP` (+ flag 0x20) is kept unless the policy
 //! strips colour. Coded chunks (VP8/VP8L/ALPH/ANMF…) are copied byte-for-byte.
