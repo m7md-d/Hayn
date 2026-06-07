@@ -14,6 +14,11 @@ the engine API may change between minor versions.
   RGBA for I400/I420/I422/I444, 8/10/12-bit, full/limited range, BT.601/709/2020
   and MC-identity. The whole `unsafe` dav1d lifecycle is contained in one module
   and fails closed (never returns a torn buffer).
+- **AVIF alpha (transparency) decode**: the alpha auxiliary item is identified by
+  its `auxC` aux-type URN mapped through `ipma` — so it is never confused with an
+  HDR gain map (also an `auxl` auxiliary) — and decoded into the RGBA alpha
+  channel. Failure or a size mismatch leaves the image opaque (never corrupts the
+  colour decode).
 - **Colour management** (`engine::color`): ICC profile extract/inject, plus
   synthesis of an ICC profile from CICP/`nclx` code points (primaries → D50
   colorants via Bradford adaptation + sRGB TRC), so a profile-less AVIF/HEIF

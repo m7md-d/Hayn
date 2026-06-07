@@ -149,7 +149,7 @@ pub fn extract_primary_av1(b: &[u8]) -> Option<Vec<u8>> {
 /// property in `iprp`/`ipco`. AVIF keeps the sequence header here and the frame
 /// OBUs in the item data; prepending these makes the stream self-contained for a
 /// decoder. `None` when absent. (A single still has one `av1C`; an alpha-aux image
-/// adds a second — selecting per-item via `ipma` lands with alpha decode.)
+/// adds a second — the alpha item's own data carries its sequence header.)
 pub fn extract_av1c_config_obus(b: &[u8]) -> Option<Vec<u8>> {
     let top = boxes_in(b, 0, b.len())?;
     let meta = *top.iter().find(|x| x.typ == *b"meta")?;
@@ -163,6 +163,81 @@ pub fn extract_av1c_config_obus(b: &[u8]) -> Option<Vec<u8>> {
             // av1C: marker+version(1) + seq_profile/level(1) + flags(1) + delay(1),
             // then the configOBUs (the sequence header).
             return b.get(prop.body + 4..prop.end).map(<[u8]>::to_vec);
+        }
+    }
+    None
+}
+
+/// Extract the coded AV1 bytes of the **alpha** auxiliary item, if the image has
+/// one. The alpha item is identified rigorously by its `auxC` aux-type URN
+/// (`…:auxiliary:alpha`) mapped to an item via `ipma` — NOT by "the other av01
+/// item", because an Apple HDR gain map is also an `auxl` auxiliary and must
+/// never be mistaken for alpha. `None` (→ opaque) when there's no alpha item or
+/// it isn't a plain `construction_method == 0` `av01` item. Read-only, bounds-safe.
+pub fn extract_alpha_av1(b: &[u8]) -> Option<Vec<u8>> {
+    let top = boxes_in(b, 0, b.len())?;
+    let meta = *top.iter().find(|x| x.typ == *b"meta")?;
+    let mc = boxes_in(b, meta.body + 4, meta.end)?;
+    let iprp = *mc.iter().find(|x| x.typ == *b"iprp")?;
+    let ipc = boxes_in(b, iprp.body, iprp.end)?;
+    let ipco = *ipc.iter().find(|x| x.typ == *b"ipco")?;
+    let ipma = *ipc.iter().find(|x| x.typ == *b"ipma")?;
+
+    let alpha_prop = find_alpha_auxc_index(b, ipco)?; // 1-based index in ipco
+    let alpha_id = find_item_with_property(b, ipma, alpha_prop)?;
+
+    let (_v, items) = parse_iinf(b, *mc.iter().find(|x| x.typ == *b"iinf")?)?;
+    if items.iter().find(|(it, _)| it.id == alpha_id)?.0.typ != *b"av01" {
+        return None;
+    }
+    let loc = parse_iloc(b, *mc.iter().find(|x| x.typ == *b"iloc")?)?;
+    let l = loc.items.iter().find(|x| x.id == alpha_id)?;
+    if l.method != 0 {
+        return None;
+    }
+    read_item(b, l)
+}
+
+/// 1-based index (within `ipco`) of the `auxC` property whose aux-type URN names
+/// alpha. The URN is `urn:mpeg:mpegB:cicp:systems:auxiliary:alpha`.
+fn find_alpha_auxc_index(b: &[u8], ipco: Bx) -> Option<u16> {
+    for (i, prop) in boxes_in(b, ipco.body, ipco.end)?.iter().enumerate() {
+        if prop.typ == *b"auxC" {
+            let payload = b.get(prop.body..prop.end)?;
+            if contains_ascii_ci(payload, b"auxiliary:alpha") {
+                return Some((i + 1) as u16);
+            }
+        }
+    }
+    None
+}
+
+/// Item ID associated with the 1-based `ipco` property index `want`, per `ipma`.
+fn find_item_with_property(b: &[u8], ipma: Bx, want: u16) -> Option<u32> {
+    let version = *b.get(ipma.body)?;
+    let wide = (*b.get(ipma.body + 3)? & 1) == 1; // flags bit 0 → 15-bit indices
+    let id_size = if version < 1 { 2 } else { 4 };
+    let mut q = ipma.body + 4;
+    let entry_count = be_u32(b, q)?;
+    q += 4;
+    for _ in 0..entry_count {
+        let item_id = read_id(b, q, id_size)?;
+        q += id_size;
+        let assoc_count = *b.get(q)?;
+        q += 1;
+        for _ in 0..assoc_count {
+            let idx = if wide {
+                let v = be_u16(b, q)?;
+                q += 2;
+                v & 0x7FFF
+            } else {
+                let v = *b.get(q)? as u16;
+                q += 1;
+                v & 0x7F
+            };
+            if idx == want {
+                return Some(item_id);
+            }
         }
     }
     None

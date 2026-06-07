@@ -37,7 +37,23 @@ pub fn decode(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>)> {
     stream.extend_from_slice(&item);
     // SAFETY: the context/data/picture lifecycle is fully created, used and freed
     // inside this call; every pointer originates from rav1d and stays in scope.
-    unsafe { decode_obus(&stream) }
+    let (w, h, mut rgba) = unsafe { decode_obus(&stream) }?;
+
+    // Transparency: AVIF stores alpha as a separate monochrome auxiliary AV1 item
+    // (its data carries its own sequence header). Decode it and copy its luma into
+    // the alpha channel. Any failure or size mismatch leaves the image opaque —
+    // alpha is never allowed to corrupt the colour decode.
+    if let Some(alpha_obus) = isobmff::extract_alpha_av1(bytes) {
+        // SAFETY: same self-contained dav1d lifecycle as the colour decode.
+        if let Ok((aw, ah, argba)) = unsafe { decode_obus(&alpha_obus) } {
+            if aw == w && ah == h {
+                for px in 0..(w as usize * h as usize) {
+                    rgba[px * 4 + 3] = argba[px * 4]; // mono luma → alpha
+                }
+            }
+        }
+    }
+    Ok((w, h, rgba))
 }
 
 unsafe fn decode_obus(obus: &[u8]) -> Result<(u32, u32, Vec<u8>)> {
@@ -83,8 +99,8 @@ unsafe fn decode_with_ctx(ctx: Option<Dav1dContext>, obus: &[u8]) -> Result<(u32
 /// Convert a decoded `Dav1dPicture` (planar YUV, 8/10/12-bit) to packed 8-bit
 /// RGBA, applying the matrix coefficients + range from the sequence header. Deep
 /// (10/12-bit) sources are reduced to 8-bit here — the current SDR contract; a
-/// wide/HDR path lands with HDR-through-convert. Alpha is opaque: the AVIF alpha
-/// auxiliary item is a separate stream decoded later.
+/// wide/HDR path lands with HDR-through-convert. Alpha is set opaque here;
+/// `decode` composites the separate AVIF alpha auxiliary item over the result.
 unsafe fn picture_to_rgba(pic: &Dav1dPicture) -> Result<(u32, u32, Vec<u8>)> {
     let (w, h) = (pic.p.w, pic.p.h);
     if w <= 0 || h <= 0 {

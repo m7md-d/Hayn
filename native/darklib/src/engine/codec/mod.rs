@@ -298,6 +298,43 @@ mod tests {
         assert_eq!(back.rgba[3], 255, "opaque alpha");
     }
 
+    /// AVIF transparency: the alpha auxiliary item decodes back into the RGBA
+    /// alpha channel (not silently flattened to opaque).
+    #[test]
+    fn avif_decode_recovers_alpha() {
+        // Two alpha regions (left=64, right=192) so ravif emits a real alpha
+        // auxiliary item and the values survive lossy compression.
+        let mut rgba = vec![0u8; 16 * 16 * 4];
+        for y in 0..16usize {
+            for x in 0..16usize {
+                let i = y * 16 + x;
+                rgba[i * 4] = 200;
+                rgba[i * 4 + 1] = 100;
+                rgba[i * 4 + 2] = 50;
+                rgba[i * 4 + 3] = if x < 8 { 64 } else { 192 };
+            }
+        }
+        let d = Decoded {
+            width: 16,
+            height: 16,
+            rgba,
+        };
+        let avif = encode(&d, Target::Avif { quality: 90 }).unwrap();
+
+        let back = decode(&avif, None).unwrap();
+        assert_eq!((back.width, back.height), (16, 16));
+        let a_left = back.rgba[(8 * 16 + 2) * 4 + 3];
+        let a_right = back.rgba[(8 * 16 + 13) * 4 + 3];
+        assert!(
+            (a_left as i32 - 64).abs() < 24,
+            "left alpha ~64 got {a_left}"
+        );
+        assert!(
+            (a_right as i32 - 192).abs() < 24,
+            "right alpha ~192 got {a_right}"
+        );
+    }
+
     fn crc32(data: &[u8]) -> u32 {
         let mut crc = 0xFFFF_FFFFu32;
         for &b in data {
