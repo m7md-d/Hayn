@@ -131,6 +131,7 @@ so the final choice is open. Until then, treat it as part of the parent project.
 
 ## Documentation
 
+- [docs/API.md](docs/API.md) — full public API reference (Rust engine + Dart/FFI) with examples; `cargo doc --open` for the generated rustdoc
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — engine layers, the FFI boundary, the self-validate model
 - [docs/FORMATS.md](docs/FORMATS.md) — format decision tree, royalty-free stance, colour/HDR
 - [docs/SUPPORT.md](docs/SUPPORT.md) — targets, MSRV, the no-armv7 rationale
