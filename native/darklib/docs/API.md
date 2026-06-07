@@ -215,9 +215,9 @@ side and feed pixels in until hardware decode lands).
 - **HEIC decode** is hardware-only (no bundled software HEVC) — `decode`/
   `transcode` of a HEIC source returns an error; callers fall back to a platform
   decoder. See [FORMATS.md](FORMATS.md) and [SUPPORT.md](SUPPORT.md).
-- **AVIF decode**: no `irot`/`imir` rotation yet (EXIF orientation *is* applied),
-  and 10/12-bit is reduced to 8-bit RGBA (the current SDR contract). Transparency
-  (the alpha auxiliary item) **is** decoded.
+- **AVIF decode**: 10/12-bit is reduced to 8-bit RGBA (the current SDR contract).
+  Orientation (`irot`/`imir`) and transparency (the alpha auxiliary item) **are**
+  applied/decoded.
 - **HDR carry through a re-encode** (convert) isn't wired yet — a strip preserves
   the gain map, but a transcode currently drops it.
 - **Very large images**: the encode path doesn't tile yet; previews use

@@ -19,6 +19,9 @@ the engine API may change between minor versions.
   HDR gain map (also an `auxl` auxiliary) — and decoded into the RGBA alpha
   channel. Failure or a size mismatch leaves the image opaque (never corrupts the
   colour decode).
+- **AVIF orientation** (`irot`/`imir`): the primary image's rotation/mirror item
+  properties (read via `ipma`→`ipco`) are baked into the decoded pixels, so AVIF
+  is handled upright like every other format. Completes AVIF decode correctness.
 - **Colour management** (`engine::color`): ICC profile extract/inject, plus
   synthesis of an ICC profile from CICP/`nclx` code points (primaries → D50
   colorants via Bradford adaptation + sRGB TRC), so a profile-less AVIF/HEIF

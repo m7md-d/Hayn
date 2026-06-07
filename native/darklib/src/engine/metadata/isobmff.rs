@@ -212,19 +212,21 @@ fn find_alpha_auxc_index(b: &[u8], ipco: Bx) -> Option<u16> {
     None
 }
 
-/// Item ID associated with the 1-based `ipco` property index `want`, per `ipma`.
-fn find_item_with_property(b: &[u8], ipma: Bx, want: u16) -> Option<u32> {
+/// Parse `ipma` into `(item_id, [1-based ipco property indices])` pairs.
+fn parse_ipma(b: &[u8], ipma: Bx) -> Option<Vec<(u32, Vec<u16>)>> {
     let version = *b.get(ipma.body)?;
     let wide = (*b.get(ipma.body + 3)? & 1) == 1; // flags bit 0 → 15-bit indices
     let id_size = if version < 1 { 2 } else { 4 };
     let mut q = ipma.body + 4;
     let entry_count = be_u32(b, q)?;
     q += 4;
+    let mut out = Vec::with_capacity(entry_count.min(4096) as usize);
     for _ in 0..entry_count {
         let item_id = read_id(b, q, id_size)?;
         q += id_size;
         let assoc_count = *b.get(q)?;
         q += 1;
+        let mut idxs = Vec::with_capacity(assoc_count as usize);
         for _ in 0..assoc_count {
             let idx = if wide {
                 let v = be_u16(b, q)?;
@@ -235,12 +237,54 @@ fn find_item_with_property(b: &[u8], ipma: Bx, want: u16) -> Option<u32> {
                 q += 1;
                 v & 0x7F
             };
-            if idx == want {
-                return Some(item_id);
-            }
+            idxs.push(idx);
+        }
+        out.push((item_id, idxs));
+    }
+    Some(out)
+}
+
+/// Item ID associated with the 1-based `ipco` property index `want`, per `ipma`.
+fn find_item_with_property(b: &[u8], ipma: Bx, want: u16) -> Option<u32> {
+    parse_ipma(b, ipma)?
+        .into_iter()
+        .find(|(_, idxs)| idxs.contains(&want))
+        .map(|(id, _)| id)
+}
+
+/// Read the primary image's orientation transform from its `irot`/`imir` item
+/// properties: `(angle, mirror)` where `angle` is 0..=3 (×90° counter-clockwise)
+/// and `mirror` is `Some(0)` = flip top↔bottom, `Some(1)` = flip left↔right. These
+/// are AVIF/HEIF's native orientation mechanism (distinct from EXIF orientation).
+/// `None` when the primary carries neither. Read-only and bounds-safe.
+pub fn read_orientation(b: &[u8]) -> Option<(u8, Option<u8>)> {
+    let top = boxes_in(b, 0, b.len())?;
+    let meta = *top.iter().find(|x| x.typ == *b"meta")?;
+    let mc = boxes_in(b, meta.body + 4, meta.end)?;
+    let primary = parse_pitm(b, *mc.iter().find(|x| x.typ == *b"pitm")?)?;
+    let iprp = *mc.iter().find(|x| x.typ == *b"iprp")?;
+    let ipc = boxes_in(b, iprp.body, iprp.end)?;
+    let ipco = *ipc.iter().find(|x| x.typ == *b"ipco")?;
+    let ipma = *ipc.iter().find(|x| x.typ == *b"ipma")?;
+    let props = boxes_in(b, ipco.body, ipco.end)?;
+    let idxs = parse_ipma(b, ipma)?
+        .into_iter()
+        .find(|(id, _)| *id == primary)
+        .map(|(_, i)| i)?;
+
+    let mut angle = 0u8;
+    let mut mirror = None;
+    for idx in idxs {
+        let Some(p) = props.get((idx as usize).checked_sub(1)?) else {
+            continue;
+        };
+        if p.typ == *b"irot" {
+            angle = *b.get(p.body)? & 0x03;
+        } else if p.typ == *b"imir" {
+            mirror = Some(*b.get(p.body)? & 0x01);
         }
     }
-    None
+    (angle != 0 || mirror.is_some()).then_some((angle, mirror))
 }
 
 /// Whether this ISOBMFF still carries an HDR gain map — either an ISO 21496-1
@@ -2153,5 +2197,32 @@ mod tests {
         assert!(items.iter().any(|(it, _)| it.typ == *b"grid"));
         assert!(items.iter().any(|(it, _)| it.typ == *b"av01"));
         assert!(!items.iter().any(|(it, _)| it.typ == *b"Exif"));
+    }
+
+    #[test]
+    fn reads_irot_imir_orientation() {
+        // Synthetic meta: pitm(item 1) + iprp{ ipco[irot=1, imir=1], ipma[item1→1,2] }.
+        let mut ipco_payload = wrap_box(b"irot", &[0x01]); // angle 1 (90° CCW)
+        ipco_payload.extend_from_slice(&wrap_box(b"imir", &[0x01])); // mirror mode 1
+        let ipco = wrap_box(b"ipco", &ipco_payload);
+        // ipma v0: v+flags, entry_count=1, item_id=1, assoc_count=2, idx 1 + idx 2.
+        let ipma = wrap_box(b"ipma", &[0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 2, 0x01, 0x02]);
+        let mut iprp_payload = ipco;
+        iprp_payload.extend_from_slice(&ipma);
+        let pitm = wrap_box(b"pitm", &[0, 0, 0, 0, 0, 1]); // v0, item_id 1
+        let mut meta_payload = vec![0, 0, 0, 0]; // meta FullBox version+flags
+        meta_payload.extend_from_slice(&pitm);
+        meta_payload.extend_from_slice(&wrap_box(b"iprp", &iprp_payload));
+        let meta = wrap_box(b"meta", &meta_payload);
+
+        assert_eq!(read_orientation(&meta), Some((1, Some(1))));
+
+        // A primary with no transform property → None.
+        let bare_ipma = wrap_box(b"ipma", &[0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0]);
+        let bare_iprp = wrap_box(b"iprp", &[wrap_box(b"ipco", &[]), bare_ipma].concat());
+        let mut bare = vec![0, 0, 0, 0];
+        bare.extend_from_slice(&wrap_box(b"pitm", &[0, 0, 0, 0, 0, 1]));
+        bare.extend_from_slice(&bare_iprp);
+        assert_eq!(read_orientation(&wrap_box(b"meta", &bare)), None);
     }
 }
