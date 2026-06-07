@@ -25,6 +25,14 @@ miniz_oxide = "0.8"
 # properties while dropping privacy ones, so an Ultra-HDR JPEG survives a strip.
 # Pure Rust, royalty-free (MIT).
 quick-xml = { version = "0.40", default-features = false }
+# Stage 5: pure-Rust AV1 decode (the dav1d port) for AVIF. asm OFF keeps the
+# cross-compile trivial (no nasm/meson) — mirrors `ravif` above; royalty-free
+# (BSD-2, AV1 is patent-free). bitdepth_16 unlocks 10-bit/HDR decode. HEIC stays
+# HW-only (HEVC carries active patents — CLAUDE.md §5).
+rav1d = { version = "1.1.0", default-features = false, features = [
+    "bitdepth_8",
+    "bitdepth_16",
+] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }

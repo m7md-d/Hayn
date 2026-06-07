@@ -14,6 +14,8 @@ use image::{
 
 use crate::engine::error::{DarkError, Result};
 
+mod avif_dav1d;
+
 /// A decoded image as 8-bit RGBA.
 pub struct Decoded {
     pub width: u32,
@@ -67,13 +69,21 @@ pub fn decode(bytes: &[u8], max_edge: Option<u32>) -> Result<Decoded> {
         };
         return finish(dynimg, orientation, max_edge);
     }
-    // AVIF/HEIF decode (AV1/HEVC) isn't bound yet — encode-only for now; the
-    // app keeps its existing decoders. dav1d/HW decode land in a later stage.
-    if matches!(
-        crate::engine::format::detect(bytes),
-        crate::engine::format::ImageFormat::Avif | crate::engine::format::ImageFormat::Heic
-    ) {
-        return Err(DarkError::Malformed("avif/heif decode not supported yet"));
+    // AVIF: software AV1 decode via rav1d (royalty-free, pure Rust). HEIC stays a
+    // hardware path — HEVC patents bar a bundled software decoder (CLAUDE.md §5).
+    match crate::engine::format::detect(bytes) {
+        crate::engine::format::ImageFormat::Avif => {
+            let (w, h, rgba) = avif_dav1d::decode(bytes)?;
+            let buf = image::RgbaImage::from_raw(w, h, rgba)
+                .ok_or(DarkError::Malformed("avif rgba size mismatch"))?;
+            return finish(DynamicImage::ImageRgba8(buf), orientation, max_edge);
+        }
+        crate::engine::format::ImageFormat::Heic => {
+            return Err(DarkError::Malformed(
+                "heic decode is hardware-only (HEVC patents)",
+            ));
+        }
+        _ => {}
     }
     let img = image::load_from_memory(bytes).map_err(|_| DarkError::Malformed("decode failed"))?;
     finish(img, orientation, max_edge)
@@ -252,6 +262,40 @@ mod tests {
             crate::engine::format::ImageFormat::Avif
         );
         assert!(avif.len() > 32, "produced a real AVIF container");
+    }
+
+    /// End-to-end: a real ravif-encoded AVIF decodes back via rav1d to the right
+    /// dimensions and (lossily) the right colour — exercising the pure-Rust AV1
+    /// decode path plus its YUV→RGB conversion.
+    #[test]
+    fn avif_roundtrips_through_rav1d_decode() {
+        let png = solid_png(32, 24, [180, 60, 90, 255]);
+        let d = decode(&png, None).unwrap();
+        let avif = encode(&d, Target::Avif { quality: 90 }).unwrap();
+        assert_eq!(
+            crate::engine::format::detect(&avif),
+            crate::engine::format::ImageFormat::Avif
+        );
+
+        let back = decode(&avif, None).unwrap();
+        assert_eq!((back.width, back.height), (32, 24));
+        // Lossy, but a solid block reconstructs close to the source colour.
+        assert!(
+            (back.rgba[0] as i32 - 180).abs() < 18,
+            "R≈180 got {}",
+            back.rgba[0]
+        );
+        assert!(
+            (back.rgba[1] as i32 - 60).abs() < 18,
+            "G≈60 got {}",
+            back.rgba[1]
+        );
+        assert!(
+            (back.rgba[2] as i32 - 90).abs() < 18,
+            "B≈90 got {}",
+            back.rgba[2]
+        );
+        assert_eq!(back.rgba[3], 255, "opaque alpha");
     }
 
     fn crc32(data: &[u8]) -> u32 {

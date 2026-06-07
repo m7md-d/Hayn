@@ -23,6 +23,16 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        ndk {
+            // We don't ship 32-bit ARM. DarkLib's pure-Rust AV1 decoder (rav1d)
+            // needs nightly Rust only on armeabi-v7a (unstable NEON feature
+            // detection); arm64/x86_64 build it on stable. 32-bit-only Android
+            // devices are effectively extinct (Play has required 64-bit since
+            // 2019), so arm64-v8a (all modern phones) + x86_64 (emulators) is the
+            // whole matrix. See native/darklib/docs/SUPPORT.md.
+            abiFilters.addAll(listOf("arm64-v8a", "x86_64"))
+        }
     }
 
     buildTypes {

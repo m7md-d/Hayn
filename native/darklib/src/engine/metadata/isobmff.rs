@@ -121,6 +121,53 @@ pub fn extract_nclx(b: &[u8]) -> Option<(u16, u16)> {
     None
 }
 
+/// Extract the primary item's coded AV1 bytes (the still picture's temporal unit)
+/// from an AVIF, ready to hand to a decoder. Returns `None` when the primary item
+/// isn't AV1 (`av01`) — e.g. HEVC-coded HEIC, which we never software-decode
+/// (patents, CLAUDE.md §5) — or when it isn't a plain `construction_method == 0`
+/// item (a `grid`/`idat` layout is outside this subset), so the caller falls back
+/// to a platform decoder. Read-only and bounds-safe.
+pub fn extract_primary_av1(b: &[u8]) -> Option<Vec<u8>> {
+    let top = boxes_in(b, 0, b.len())?;
+    let meta = *top.iter().find(|x| x.typ == *b"meta")?;
+    let mc = boxes_in(b, meta.body + 4, meta.end)?;
+    let primary_id = parse_pitm(b, *mc.iter().find(|x| x.typ == *b"pitm")?)?;
+    let (_v, items) = parse_iinf(b, *mc.iter().find(|x| x.typ == *b"iinf")?)?;
+    let (prim, _) = items.iter().find(|(it, _)| it.id == primary_id)?;
+    if prim.typ != *b"av01" {
+        return None; // HEVC/HEIC or a derived (grid/tmap) primary — not ours
+    }
+    let loc = parse_iloc(b, *mc.iter().find(|x| x.typ == *b"iloc")?)?;
+    let l = loc.items.iter().find(|x| x.id == primary_id)?;
+    if l.method != 0 {
+        return None; // idat / item-offset construction — outside the simple subset
+    }
+    read_item(b, l)
+}
+
+/// Extract the AV1 configuration OBUs (the sequence header) from the first `av1C`
+/// property in `iprp`/`ipco`. AVIF keeps the sequence header here and the frame
+/// OBUs in the item data; prepending these makes the stream self-contained for a
+/// decoder. `None` when absent. (A single still has one `av1C`; an alpha-aux image
+/// adds a second — selecting per-item via `ipma` lands with alpha decode.)
+pub fn extract_av1c_config_obus(b: &[u8]) -> Option<Vec<u8>> {
+    let top = boxes_in(b, 0, b.len())?;
+    let meta = *top.iter().find(|x| x.typ == *b"meta")?;
+    let mc = boxes_in(b, meta.body + 4, meta.end)?;
+    let iprp = *mc.iter().find(|x| x.typ == *b"iprp")?;
+    let ipco = *boxes_in(b, iprp.body, iprp.end)?
+        .iter()
+        .find(|x| x.typ == *b"ipco")?;
+    for prop in boxes_in(b, ipco.body, ipco.end)? {
+        if prop.typ == *b"av1C" {
+            // av1C: marker+version(1) + seq_profile/level(1) + flags(1) + delay(1),
+            // then the configOBUs (the sequence header).
+            return b.get(prop.body + 4..prop.end).map(<[u8]>::to_vec);
+        }
+    }
+    None
+}
+
 /// Whether this ISOBMFF still carries an HDR gain map — either an ISO 21496-1
 /// `tmap` (tone-map) derived item, or an auxiliary image whose `auxC` URN names
 /// a gain map (e.g. Apple's `…:hdrgainmap`). Read-only; the gain map is a

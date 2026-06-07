@@ -139,6 +139,13 @@ class CargoKitPlugin implements Plugin<Project> {
                 platforms = plugin.getTargetPlatforms().collect()
             }
 
+            // DarkLib drops 32-bit ARM. Its pure-Rust AV1 decoder (rav1d) needs
+            // nightly Rust only on armeabi-v7a (unstable NEON feature detection);
+            // every other ABI builds on stable. We don't ship that ABI (see
+            // native/darklib/docs/SUPPORT.md), so skip it here too — this keeps a
+            // plain `flutter build apk` working without a --target-platform flag.
+            platforms = platforms.findAll { it != "android-arm" }
+
             // Same thing addFlutterDependencies does in flutter.gradle
             if (buildType == "debug") {
                 platforms.add("android-x86")
