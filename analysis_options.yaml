@@ -9,6 +9,17 @@
 # packages, and plugins designed to encourage good coding practices.
 include: package:flutter_lints/flutter.yaml
 
+analyzer:
+  exclude:
+    # Vendored third-party build glue (cargokit, from flutter_rust_bridge's
+    # template) — not our code to lint, and its internal build_tool package has
+    # its own dependencies that aren't fetched unless a native build ran (which
+    # made CI's analyze fail while local machines passed).
+    - rust_builder/cargokit/**
+    # Generated FFI bindings (flutter_rust_bridge codegen) — regenerated, never
+    # hand-edited.
+    - lib/src/rust/**
+
 linter:
   # The lint rules applied to this project can be customized in the
   # section below to disable rules from the `package:flutter_lints/flutter.yaml`
