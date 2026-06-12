@@ -1,4 +1,4 @@
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 
 import '../../src/rust/api/codec.dart' as rust_codec;
 import '../../src/rust/api/metadata.dart' as rust;
@@ -25,11 +25,19 @@ abstract final class DarkLibCore {
   /// is usable on this build/device.
   static Future<bool> ensureReady() => _ready ??= _init();
 
+  /// Fallbacks must stay graceful, but never invisible (CLAUDE.md §7): in debug
+  /// builds every degradation logs its reason.
+  static T? _degrade<T>(String op, Object e) {
+    if (kDebugMode) debugPrint('[DarkLib] $op degraded: $e');
+    return null;
+  }
+
   static Future<bool> _init() async {
     try {
       await DarkLib.init();
       return true;
-    } catch (_) {
+    } catch (e) {
+      _degrade('init', e);
       return false;
     }
   }
@@ -45,8 +53,9 @@ abstract final class DarkLibCore {
     if (!await ensureReady()) return null;
     try {
       return await rust.stripMetadata(bytes: bytes, stripIcc: stripIcc);
-    } catch (_) {
-      return null; // unsupported container / malformed → fall back
+    } catch (e) {
+      // Unsupported container / malformed → fall back.
+      return _degrade('stripMetadata', e);
     }
   }
 
@@ -79,8 +88,9 @@ abstract final class DarkLibCore {
               maxEdge: maxEdge,
             );
       return out.isEmpty ? null : out;
-    } catch (_) {
-      return null; // undecodable source (e.g. HEIC) / failure → fall back
+    } catch (e) {
+      // Undecodable source (e.g. HEIC) / failure → fall back.
+      return _degrade('transcode', e);
     }
   }
 
@@ -96,8 +106,8 @@ abstract final class DarkLibCore {
     if (!await ensureReady()) return null;
     try {
       return await rust.transplantMetadata(source: source, target: target);
-    } catch (_) {
-      return null;
+    } catch (e) {
+      return _degrade('transplantMetadata', e);
     }
   }
 }

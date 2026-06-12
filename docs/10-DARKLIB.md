@@ -179,11 +179,13 @@ FormatDescriptor  : يدعم أي ميتاداتا؟ يقبل lossless ops؟ HDR
 | # | المرحلة | الحالة |
 |---|---|---|
 | **0** | سلسلة الأدوات + scaffold الـcrate + تكامل FRB + roundtrip أخضر (cargo test + analyze + apk) + هذا الملف | **مُنجَز** |
-| **1** | نواة الميتاداتا في Rust (بلا codecs): `Canonical` + `FormatDescriptor`؛ جراحة الحاوية JPEG/PNG/WebP/AVIF-HEIF — extract/strip(policy)/transplant؛ حالتا ICC + الاتجاه؛ اختبارات golden | قادمة |
-| **2** | مهاجرة ميزة "حذف الميتاداتا" الحيّة خلف الواجهة (تغطّي الآن أندرويد + AVIF/HEIF)؛ إبقاء المسار القديم fallback حتى الإثبات | — |
-| **3** | طبقة الـcodecs (cross-compile C ثقيل): libavif (SVT-AV1 encode + dav1d decode) + libwebp + libjpeg-turbo + libpng؛ ImageCodec decode/encode/transcode | — |
-| **4** | صحّة AVIF: الاتجاه حقل موحّد؛ إدارة ألوان/ICC؛ HDR gain-map (+depth/alpha) أصول مساعدة؛ بوّابة قدرات | — |
-| **5** | مسرّعات الفك العتادية خلف واجهة الفك: MediaCodec `video/av01` (أندرويد) + ImageIO (iOS)، بوّابة قدرات، dispatch على (حجم/batch/متحرّك) | — |
-| **6** | مهاجرة الضغط/التحويل إلى DarkLib؛ observability + golden CI؛ تبليط الصور الكبيرة (دون تصغير الإخراج) | — |
+| **1** | نواة الميتاداتا في Rust (بلا codecs): `Canonical` + `FormatDescriptor`؛ جراحة الحاوية JPEG/PNG/WebP/AVIF-HEIF — extract/strip(policy)/transplant؛ حالتا ICC + الاتجاه؛ اختبارات golden | **مُنجَز** |
+| **2** | مهاجرة ميزة "حذف الميتاداتا" الحيّة خلف الواجهة (تغطّي الآن أندرويد + AVIF/HEIF)؛ إبقاء المسار القديم fallback حتى الإثبات | **مُنجَز** |
+| **3** | طبقة الـcodecs: ترميز PNG/JPEG (`image`) + WebP (libwebp) + AVIF (rav1e/ravif — Rust خالص؛ استُبعد مسار C الثقيل) | **مُنجَز** |
+| **4** | صحّة AVIF: الاتجاه حقل موحّد؛ إدارة ألوان/ICC (+ توليد ICC من nclx)؛ سلامة HDR gain-map في الحذف؛ بوّابة قدرات + ConversionLoss | **مُنجَز** |
+| **5** | الفك: **5a** AVIF برمجي في النواة عبر **rav1d** (لون/شفافية/اتجاه/شبكات ImageGrid) + تبليط الترميز (>16MP) + حمل HDR عبر تحويل AVIF→AVIF — **مُنجَز**؛ **5b** فكّ HEIC العتادي (MediaCodec/ImageIO) خلف الواجهة — متبقٍّ | **5a مُنجَز · 5b متبقٍّ** |
+| **6** | مهاجرة الضغط/التحويل إلى DarkLib — **بدأت** (AVIF: عتاد + زرع ميتاداتا → DarkLib → flutter_avif؛ WebP: DarkLib أولًا فسدّ فجوة iOS؛ كله داخل `ImageEncoder` فيرثه كل المستدعين)؛ المتبقي: observability + golden CI + بثّ فكّ المصادر العملاقة (فوق سقف 8192) | **بدأت** |
+
+> ملاحظة معمارية (تحديث): فكّ AVIF تم بـ **rav1d** (منفذ dav1d بـ Rust خالص، asm معطّل) بدل dav1d-C — بلا تعقيد meson/nasm، وبسببه أُسقط دعم **armeabi-v7a** (rav1d يتطلب nightly هناك فقط). التفاصيل: `native/darklib/docs/SUPPORT.md`، ومرجع الـ API الكامل: `native/darklib/docs/API.md`.
 
 > مبدأ حاكم (من CLAUDE.md): البطء المقبول + النظافة المضمونة + السلامة > السرعة + المخاطرة.
