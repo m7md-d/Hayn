@@ -1,0 +1,47 @@
+# Golden CI — the same green gate that every stage must pass locally
+# (docs/10-DARKLIB.md §11): the Rust core's fmt/clippy/tests (the golden
+# round-trip suite) and the Flutter analyze + unit tests. Pure checks only —
+# no signing, no publishing, nothing leaves the runner.
+name: CI
+
+on:
+  push:
+    branches: [main, bedrock]
+  pull_request:
+
+jobs:
+  darklib:
+    name: DarkLib (Rust)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: native/darklib
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/darklib
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+
+  flutter:
+    name: App (Flutter)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          # Match the development machines (see memory/docs) — analyzer results
+          # can drift between Flutter versions.
+          flutter-version: 3.44.0
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      # The unit suite runs on the Dart VM; DarkLib calls degrade gracefully
+      # when the native library isn't present, which the tests account for.
+      - run: flutter test

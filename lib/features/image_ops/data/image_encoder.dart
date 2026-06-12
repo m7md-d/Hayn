@@ -167,21 +167,37 @@ abstract final class ImageEncoder {
           maxEdge: maxWidth ?? 0,
         );
         if (dark != null && dark.isNotEmpty) return dark;
-        // Lower quantizer = higher quality. Map 0–100 → ~[55..12].
-        final maxQ = (63 - quality * 0.5).round().clamp(12, 55);
-        final minQ = (maxQ - 12).clamp(0, maxQ);
-        // flutter_avif mishandles orientation + date, so we bake the rotation
-        // into the pixels natively and hand it an already-upright LOSSLESS PNG
-        // whose embedded EXIF is exactly what we want; it just copies that EXIF
-        // in → correct orientation + time + camera metadata, with PNG lossless so
-        // only the AVIF pass is lossy. (This is per-image, one-at-a-time in the
-        // task — NOT the cause of the earlier OOM, which was the estimate's
-        // sampling loop.) Off-iOS the bake is null → keepExif:false fallback.
+
+        // HEIC bridge (hybrid decode): DarkLib never software-decodes HEVC, so
+        // a HEIC source lands here. bakeUpright (iOS ImageIO) decodes it via
+        // the PLATFORM into an upright lossless PNG carrying the metadata —
+        // which DarkLib then encodes properly (ICC/XMP carried, HEIC bytes
+        // never touched by us). Off-iOS the bake is null (Android HEIC→AVIF is
+        // already covered by the hardware path above).
         final baked = await NativeImageEncoder.bakeUpright(
           source: source,
           keepMetadata: keepMetadata,
           keepOriginalTime: keepOriginalTime,
         );
+        if (baked != null && baked.isNotEmpty) {
+          final bridged = await DarkLibCore.transcode(
+            baked,
+            format: DarkLibFormat.avif,
+            quality: quality,
+            keepMetadata: keepMetadata,
+            maxEdge: maxWidth ?? 0,
+          );
+          if (bridged != null && bridged.isNotEmpty) return bridged;
+        }
+
+        // Lower quantizer = higher quality. Map 0–100 → ~[55..12].
+        final maxQ = (63 - quality * 0.5).round().clamp(12, 55);
+        final minQ = (maxQ - 12).clamp(0, maxQ);
+        // flutter_avif floor: software libaom. The bake (when available) hands
+        // it an already-upright PNG whose embedded EXIF is exactly what we want
+        // (flutter_avif mishandles orientation + date otherwise); PNG is
+        // lossless so only the AVIF pass is lossy. Per-image, one-at-a-time in
+        // the task. Off-iOS: keepExif:false fallback.
         final input = baked ?? source;
         final out = await avif.encodeAvif(
           input,
@@ -210,8 +226,10 @@ abstract final class ImageEncoder {
       // WebP: DarkLib first — it encodes WebP on EVERY platform (the plugin's
       // WebP encode is Android-only, so an iOS WebP request used to silently
       // fall away to another format) and it carries EXIF/XMP/ICC inside the
-      // file, which the plugin never did for WebP. HEIC sources return null and
-      // fall through to the plugin.
+      // file, which the plugin never did for WebP. A HEIC source fails the
+      // direct transcode and goes over the same platform-decode bridge as AVIF
+      // (bakeUpright → DarkLib); off-iOS the bake is null and the plugin below
+      // handles it (Android decodes HEIC platform-side).
       if (format == DefaultFormat.webp) {
         final dark = await DarkLibCore.transcode(
           source,
@@ -221,6 +239,21 @@ abstract final class ImageEncoder {
           maxEdge: maxWidth ?? 0,
         );
         if (dark != null && dark.isNotEmpty) return dark;
+        final baked = await NativeImageEncoder.bakeUpright(
+          source: source,
+          keepMetadata: keepMetadata,
+          keepOriginalTime: keepOriginalTime,
+        );
+        if (baked != null && baked.isNotEmpty) {
+          final bridged = await DarkLibCore.transcode(
+            baked,
+            format: DarkLibFormat.webp,
+            quality: quality,
+            keepMetadata: keepMetadata,
+            maxEdge: maxWidth ?? 0,
+          );
+          if (bridged != null && bridged.isNotEmpty) return bridged;
+        }
       }
 
       final noCap = maxWidth == null && maxHeight == null;
