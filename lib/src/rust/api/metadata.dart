@@ -33,6 +33,19 @@ Future<Uint8List> stripMetadata({
   stripIcc: stripIcc,
 );
 
+/// Copy `source`'s metadata (EXIF/XMP/ICC, kept verbatim) into the
+/// already-encoded `target` — e.g. carry camera metadata into a hardware
+/// encoder's AVIF output, which the platform encoder itself can't do. Lossless
+/// container surgery on `target`; returns `target` unchanged when nothing can
+/// be carried safely (the verify-or-bail rule). Runs off the Dart isolate.
+Future<Uint8List> transplantMetadata({
+  required List<int> source,
+  required List<int> target,
+}) => DarkLib.instance.api.crateApiMetadataTransplantMetadata(
+  source: source,
+  target: target,
+);
+
 /// Summarise the metadata present in an image. Cheap container scan → sync.
 MetadataSummary readMetadataSummary({required List<int> bytes}) =>
     DarkLib.instance.api.crateApiMetadataReadMetadataSummary(bytes: bytes);

@@ -25,7 +25,8 @@ Future<Uint8List> transcode({
 
 /// Like [`transcode`], but carries the source's EXIF/XMP/ICC into the output
 /// where supported (orientation normalised — the pixels are baked upright on
-/// decode). Formats without an injector yet return the bytes without metadata.
+/// decode), and carries an ISO 21496-1 HDR gain map through a full-resolution
+/// AVIF→AVIF convert. Formats without an injector return bytes without metadata.
 Future<Uint8List> transcodeKeepMetadata({
   required List<int> bytes,
   required CodecFormat format,

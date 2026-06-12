@@ -91,6 +91,16 @@ pub struct MetadataSummary {
     pub tag_count: u32,
 }
 
+/// Copy `source`'s metadata (EXIF/XMP/ICC, kept verbatim) into the
+/// already-encoded `target` — e.g. carry camera metadata into a hardware
+/// encoder's AVIF output, which the platform encoder itself can't do. Lossless
+/// container surgery on `target`; returns `target` unchanged when nothing can
+/// be carried safely (the verify-or-bail rule). Runs off the Dart isolate.
+pub fn transplant_metadata(source: Vec<u8>, target: Vec<u8>) -> Vec<u8> {
+    let meta = em::extract(&source);
+    em::inject(&target, &meta)
+}
+
 /// Summarise the metadata present in an image. Cheap container scan → sync.
 #[flutter_rust_bridge::frb(sync)]
 pub fn read_metadata_summary(bytes: Vec<u8>) -> MetadataSummary {

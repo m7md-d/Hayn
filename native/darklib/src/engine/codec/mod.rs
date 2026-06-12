@@ -1,10 +1,10 @@
 //! ImageCodec — pixel work (decode / encode / transcode) behind one interface.
 //!
-//! Stage 3a uses pure-Rust codecs (the `image` crate: PNG + JPEG) to prove the
-//! interface end-to-end; they cross-compile trivially (no C). libwebp (3b) and
-//! libavif/AV1 (3c) slot in behind THESE functions. Nothing here is wired into
-//! the live compress flow yet — the quality-sensitive encoder choices land
-//! before any migration (goal 6: never worse than today).
+//! Decoders: `image` (PNG/JPEG), libwebp (WebP), rav1d (AVIF — colour, alpha,
+//! orientation, ImageGrid). Encoders: `image`, libwebp, rav1e/ravif (AVIF, with
+//! automatic ImageGrid tiling for huge opaque images). HEIC is never coded in
+//! software (HEVC patents) — platform hardware owns it. `transcode_keep_metadata`
+//! carries EXIF/XMP/ICC and, for AVIF→AVIF, the ISO 21496-1 HDR gain map.
 
 use std::io::Cursor;
 

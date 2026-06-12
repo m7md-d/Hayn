@@ -69,7 +69,7 @@ class DarkLib extends BaseEntrypoint<DarkLibApi, DarkLibApiImpl, DarkLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 840597680;
+  int get rustContentHash => 1635397244;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -114,6 +114,11 @@ abstract class DarkLibApi extends BaseApi {
     required CodecFormat format,
     required int quality,
     required int maxEdge,
+  });
+
+  Future<Uint8List> crateApiMetadataTransplantMetadata({
+    required List<int> source,
+    required List<int> target,
   });
 }
 
@@ -404,6 +409,41 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
       const TaskConstMeta(
         debugName: "transcode_keep_metadata",
         argNames: ["bytes", "format", "quality", "maxEdge"],
+      );
+
+  @override
+  Future<Uint8List> crateApiMetadataTransplantMetadata({
+    required List<int> source,
+    required List<int> target,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(source, serializer);
+          sse_encode_list_prim_u_8_loose(target, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 11,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiMetadataTransplantMetadataConstMeta,
+        argValues: [source, target],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiMetadataTransplantMetadataConstMeta =>
+      const TaskConstMeta(
+        debugName: "transplant_metadata",
+        argNames: ["source", "target"],
       );
 
   @protected

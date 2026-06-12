@@ -1,8 +1,8 @@
-import 'dart:typed_data';
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter_avif/flutter_avif.dart' as avif;
 import 'package:flutter_image_compress/flutter_image_compress.dart' as fic;
 
+import '../../../core/darklib/darklib.dart';
 import '../../settings/providers/preferences_providers.dart';
 import 'native_avif_encoder.dart';
 import 'native_image_encoder.dart';
@@ -14,20 +14,24 @@ import 'native_image_encoder.dart';
 // produce it (e.g. HEIC needs a hardware encoder; WebP encode is Android-only
 // in flutter_image_compress), walks an ordered fallback that NEVER drops alpha.
 //
-// Engines:
-//   • AVIF       → flutter_avif.encodeAvif (libaom, royalty-free; multithread).
+// Engines (in attempt order per format):
+//   • AVIF       → hardware AV1 (Android MediaCodec) + DarkLib metadata
+//                  transplant → DarkLib (rav1e: metadata/HDR/grid-tiling) →
+//                  flutter_avif (software libaom; covers HEIC sources via the
+//                  platform decode).
+//   • WebP       → DarkLib (every platform, in-file metadata) →
+//                  flutter_image_compress (encode is Android-only).
 //   • HEIC/JPEG/PNG → NativeImageEncoder (iOS ImageIO) first, with
 //                  flutter_image_compress as the fallback. The native path
 //                  avoids the "AlphaLast" warning and carries real camera
 //                  metadata (the plugin only did EXIF for JPEG).
-//   • WebP       → flutter_image_compress (libwebp; encode is Android-only).
-// Both run their heavy work off the Dart main isolate (FFI thread / platform
-// thread), so callers don't need to spawn an isolate just for the encode.
+// All engines run their heavy work off the Dart main isolate (FFI thread /
+// platform thread), so callers don't need to spawn an isolate for the encode.
 //
-// Metadata: the native HEIC/JPEG path copies the source's full property set when
-// keepMetadata is set. On the plugin fallback, keepExif is JPEG-only (and AVIF
-// keeps date+GPS at the gallery-asset level, not in-file) — see
-// [_supportsKeepExif].
+// Metadata: DarkLib carries EXIF/XMP/ICC in-file for AVIF/WebP; the native
+// HEIC/JPEG path copies the source's full property set. On the plugin fallback,
+// keepExif is JPEG-only — see [_supportsKeepExif]. Date+GPS are also preserved
+// at the gallery-asset level by the saver.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Longest output edge we encode. Decoding a ~200 MP image at full size is
@@ -133,12 +137,36 @@ abstract final class ImageEncoder {
         // Hardware AV1 (Android MediaCodec) → real .avif, royalty-free + fast,
         // instead of software libaom. It self-validates its output and returns
         // null on iOS / older SoCs / any failure → we fall back to the software
-        // path below. (Android AVIF carries no in-file EXIF on EITHER path, so
-        // the hardware path is no metadata regression; gallery date/GPS are set
-        // by the saver regardless.)
+        // paths below. The hardware encoder can't write in-file metadata, so
+        // DarkLib transplants the source's EXIF/XMP/ICC into its output by
+        // lossless container surgery (works for ANY source incl. HEIC — extract
+        // is container-level, no decode needed). Transplant failure just means
+        // the bytes come back unchanged — never worse than before.
         final hw =
             await NativeAvifEncoder.encode(source: source, quality: quality);
-        if (hw != null && hw.isNotEmpty) return hw;
+        if (hw != null && hw.isNotEmpty) {
+          if (!keepMetadata) return hw;
+          return await DarkLibCore.transplantMetadata(
+                source: source,
+                target: hw,
+              ) ??
+              hw;
+        }
+
+        // DarkLib software AVIF (rav1e): carries EXIF/XMP/ICC properly, keeps
+        // an HDR gain map on AVIF→AVIF, synthesises ICC from nclx, and tiles
+        // huge opaque images as an ImageGrid instead of failing. Covers every
+        // source it can decode (JPEG/PNG/WebP/AVIF); HEIC sources return null
+        // here and continue to the flutter_avif path, which decodes via the
+        // platform.
+        final dark = await DarkLibCore.transcode(
+          source,
+          format: DarkLibFormat.avif,
+          quality: quality,
+          keepMetadata: keepMetadata,
+          maxEdge: maxWidth ?? 0,
+        );
+        if (dark != null && dark.isNotEmpty) return dark;
         // Lower quantizer = higher quality. Map 0–100 → ~[55..12].
         final maxQ = (63 - quality * 0.5).round().clamp(12, 55);
         final minQ = (maxQ - 12).clamp(0, maxQ);
@@ -178,6 +206,22 @@ abstract final class ImageEncoder {
         DefaultFormat.avif || DefaultFormat.auto => null,
       };
       if (cf == null) return null;
+
+      // WebP: DarkLib first — it encodes WebP on EVERY platform (the plugin's
+      // WebP encode is Android-only, so an iOS WebP request used to silently
+      // fall away to another format) and it carries EXIF/XMP/ICC inside the
+      // file, which the plugin never did for WebP. HEIC sources return null and
+      // fall through to the plugin.
+      if (format == DefaultFormat.webp) {
+        final dark = await DarkLibCore.transcode(
+          source,
+          format: DarkLibFormat.webp,
+          quality: quality,
+          keepMetadata: keepMetadata,
+          maxEdge: maxWidth ?? 0,
+        );
+        if (dark != null && dark.isNotEmpty) return dark;
+      }
 
       final noCap = maxWidth == null && maxHeight == null;
 
@@ -223,15 +267,19 @@ abstract final class ImageEncoder {
         minHeight: maxHeight ?? 1000000,
         keepExif: keepMetadata && _supportsKeepExif(format),
       );
-    } catch (_) {
-      // Encoder unavailable / failed on this device → let the chain continue.
+    } catch (e) {
+      // Encoder unavailable / failed on this device → let the chain continue —
+      // but never swallow the reason invisibly (CLAUDE.md §7): surface it in
+      // debug builds so a misbehaving encoder is diagnosable.
+      if (kDebugMode) debugPrint('[ImageEncoder] $format failed: $e');
       return null;
     }
   }
 
-  /// flutter_image_compress only carries EXIF through for JPEG. AVIF now drops
-  /// in-file EXIF too (keepExif there double-rotates — see the encode path);
-  /// HEIC/WebP/PNG would need a manual transplant. Capture date + GPS are
-  /// preserved at the gallery-asset level by the saver regardless.
+  /// flutter_image_compress only carries EXIF through for JPEG (keepExif on
+  /// AVIF double-rotates — see the encode path). WebP/AVIF metadata is now
+  /// handled upstream by DarkLib (in-file EXIF/XMP/ICC); this flag only governs
+  /// the plugin fallback. Capture date + GPS are preserved at the gallery-asset
+  /// level by the saver regardless.
   static bool _supportsKeepExif(DefaultFormat f) => f == DefaultFormat.jpeg;
 }
