@@ -30,6 +30,13 @@ the engine API may change between minor versions.
   auxiliary is assembled the same way. New `isobmff` readers: `primary_item_id`,
   `alpha_item_id`, `item_type`, `read_grid`/`GridInfo`, `extract_item_av1`,
   `av1c_for_item` (replacing `extract_alpha_av1`).
+- **Tiled (ImageGrid) AVIF encode** — the "never downscale" answer to huge
+  images: opaque images above 16 MP encode tile-by-tile (1024² tiles, edges
+  replicated then cropped by the canvas) into a spec-shaped grid container
+  (`isobmff::build_grid_avif` + `GridSpec` + `av1c_raw`: hidden tile items,
+  essential `av1C`, `ispe`/`pixi`, descriptor in `idat`). Peak memory ≈ source +
+  one tile, at full output resolution. Any grid failure falls back to the proven
+  single-item encode; transparent images keep the single-item path for now.
 - **Colour management** (`engine::color`): ICC profile extract/inject, plus
   synthesis of an ICC profile from CICP/`nclx` code points (primaries → D50
   colorants via Bradford adaptation + sRGB TRC), so a profile-less AVIF/HEIF

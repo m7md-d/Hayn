@@ -222,6 +222,7 @@ side and feed pixels in until hardware decode lands).
   so peak memory ≈ canvas + one tile.
 - **HDR carry through a re-encode** (convert) isn't wired yet — a strip preserves
   the gain map, but a transcode currently drops it.
-- **Very large images**: the *encode* path doesn't tile yet (grid *decode* is
-  supported); previews use `max_edge`, but full-resolution tiled encode (no
-  downscale) is planned.
+- **Very large images**: AVIF tiles in BOTH directions — grid decode, and grid
+  *encode* (opaque images above 16 MP encode tile-by-tile as an ImageGrid at full
+  resolution; transparency or other targets use the single-pass path). JPEG/PNG/
+  WebP encodes of huge images are still single-pass.

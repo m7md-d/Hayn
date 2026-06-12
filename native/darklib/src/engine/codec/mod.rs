@@ -107,21 +107,28 @@ fn finish(mut img: DynamicImage, orientation: u16, max_edge: Option<u32>) -> Res
     })
 }
 
+/// Above this many pixels an opaque AVIF encode goes tile-by-tile as an
+/// ImageGrid: bounded memory at FULL resolution — never a downscale (DarkLib §5).
+const AVIF_GRID_THRESHOLD_PX: u64 = 16 * 1024 * 1024;
+/// Grid tile edge. 1024² keeps the tile count low (200 MP ≈ 196 tiles) while
+/// each tile encode stays small and fast.
+const AVIF_GRID_TILE: u32 = 1024;
+
 /// Encode a decoded image to `target`.
 pub fn encode(img: &Decoded, target: Target) -> Result<Vec<u8>> {
     match target {
         Target::Avif { quality } => {
-            use rgb::FromSlice;
-            let res = ravif::Encoder::new()
-                .with_quality(quality.clamp(1, 100) as f32)
-                .with_speed(8)
-                .encode_rgba(ravif::Img::new(
-                    img.rgba.as_rgba(),
-                    img.width as usize,
-                    img.height as usize,
-                ))
-                .map_err(|_| DarkError::Malformed("avif encode failed"))?;
-            Ok(res.avif_file)
+            // Huge opaque images: encode as an ImageGrid, one tile at a time
+            // (peak memory ≈ source + one tile). Images with transparency keep
+            // the single-item path for now (a grid alpha plane is a later step);
+            // any grid failure falls back to the proven single-item encode.
+            let px = (img.width as u64) * (img.height as u64);
+            if px > AVIF_GRID_THRESHOLD_PX && img.rgba.chunks_exact(4).all(|p| p[3] == 255) {
+                if let Ok(out) = encode_avif_grid(img, quality, AVIF_GRID_TILE) {
+                    return Ok(out);
+                }
+            }
+            encode_avif_single(img, quality)
         }
         Target::Webp { quality, lossless } => {
             // libwebp owns its output buffer; copy it out into a Vec.
@@ -157,6 +164,76 @@ pub fn encode(img: &Decoded, target: Target) -> Result<Vec<u8>> {
             Ok(out.into_inner())
         }
     }
+}
+
+/// Single-item AVIF encode via ravif (rav1e).
+fn encode_avif_single(img: &Decoded, quality: u8) -> Result<Vec<u8>> {
+    use rgb::FromSlice;
+    let res = ravif::Encoder::new()
+        .with_quality(quality.clamp(1, 100) as f32)
+        .with_speed(8)
+        .encode_rgba(ravif::Img::new(
+            img.rgba.as_rgba(),
+            img.width as usize,
+            img.height as usize,
+        ))
+        .map_err(|_| DarkError::Malformed("avif encode failed"))?;
+    Ok(res.avif_file)
+}
+
+/// Tiled AVIF encode: split into `tile`×`tile` blocks (edges replicated so every
+/// tile is full-size, as the grid spec requires — the canvas crops them back),
+/// encode each block independently, and assemble an ImageGrid container. Peak
+/// memory ≈ the source buffer + one tile, at full output resolution.
+fn encode_avif_grid(img: &Decoded, quality: u8, tile: u32) -> Result<Vec<u8>> {
+    use crate::engine::metadata::isobmff;
+    let bad = || DarkError::Malformed("avif grid encode failed");
+    let (w, h) = (img.width as usize, img.height as usize);
+    let t = tile as usize;
+    if t == 0 || w == 0 || h == 0 {
+        return Err(bad());
+    }
+    let (cols, rows) = (w.div_ceil(t), h.div_ceil(t));
+
+    let mut tiles = Vec::with_capacity(rows * cols);
+    let mut av1c: Option<Vec<u8>> = None;
+    let mut block = vec![0u8; t * t * 4];
+    for r in 0..rows {
+        for c in 0..cols {
+            let (x0, y0) = (c * t, r * t);
+            for ty in 0..t {
+                let sy = (y0 + ty).min(h - 1); // replicate the bottom edge
+                let src_row = sy * w;
+                for tx in 0..t {
+                    let sx = (x0 + tx).min(w - 1); // replicate the right edge
+                    let s = (src_row + sx) * 4;
+                    let d = (ty * t + tx) * 4;
+                    block[d..d + 4].copy_from_slice(&img.rgba[s..s + 4]);
+                }
+            }
+            let avif = encode_avif_single(
+                &Decoded {
+                    width: tile,
+                    height: tile,
+                    rgba: block.clone(),
+                },
+                quality,
+            )?;
+            if av1c.is_none() {
+                av1c = isobmff::av1c_raw(&avif);
+            }
+            tiles.push(isobmff::extract_primary_av1(&avif).ok_or_else(bad)?);
+        }
+    }
+    let spec = isobmff::GridSpec {
+        rows: rows as u32,
+        cols: cols as u32,
+        tile_w: tile,
+        tile_h: tile,
+        width: img.width,
+        height: img.height,
+    };
+    isobmff::build_grid_avif(&spec, &av1c.ok_or_else(bad)?, &tiles).ok_or_else(bad)
 }
 
 /// Decode → (optional resize) → encode to `target`.
@@ -332,6 +409,53 @@ mod tests {
         assert!(
             (a_right as i32 - 192).abs() < 24,
             "right alpha ~192 got {a_right}"
+        );
+    }
+
+    /// Tiled (ImageGrid) AVIF encode round-trips through our own grid decoder:
+    /// a 40×24 image with 16×16 tiles → 2 rows × 3 cols, right/bottom tiles
+    /// edge-padded on encode and cropped back by the canvas on decode.
+    #[test]
+    fn avif_grid_encode_roundtrips() {
+        let (w, h) = (40usize, 24usize);
+        let mut rgba = vec![0u8; w * h * 4];
+        for y in 0..h {
+            for x in 0..w {
+                let o = (y * w + x) * 4;
+                // Left half red, right half blue — spans tile boundaries.
+                let c: [u8; 4] = if x < w / 2 {
+                    [220, 30, 30, 255]
+                } else {
+                    [30, 30, 220, 255]
+                };
+                rgba[o..o + 4].copy_from_slice(&c);
+            }
+        }
+        let img = Decoded {
+            width: w as u32,
+            height: h as u32,
+            rgba,
+        };
+
+        let avif = encode_avif_grid(&img, 90, 16).expect("grid encode");
+        assert_eq!(
+            crate::engine::format::detect(&avif),
+            crate::engine::format::ImageFormat::Avif
+        );
+
+        let back = decode(&avif, None).expect("own grid decoder reads it");
+        assert_eq!((back.width, back.height), (40, 24), "canvas crops padding");
+        let px = |x: usize, y: usize| -> [u8; 3] {
+            let o = (y * 40 + x) * 4;
+            [back.rgba[o], back.rgba[o + 1], back.rgba[o + 2]]
+        };
+        // Sample inside each region, away from the lossy boundary.
+        let left = px(8, 12);
+        let right = px(34, 12);
+        assert!(left[0] > 150 && left[2] < 110, "left red, got {left:?}");
+        assert!(
+            right[2] > 150 && right[0] < 110,
+            "right blue, got {right:?}"
         );
     }
 

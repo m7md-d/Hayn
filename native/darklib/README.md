@@ -24,8 +24,9 @@ WebP, JPEG, PNG); patent-encumbered formats are never software-encoded.
 - **Royalty-free by construction.** AV1/AVIF (decode via `rav1d`, encode via
   `rav1e`), WebP (`libwebp`), JPEG, PNG. No x264/x265, no software HEVC.
 - **Never downscale the saved output.** Downscaling is opt-in for *previews*
-  only; full-resolution work is the rule (tiling for very large images is on the
-  roadmap).
+  only; full-resolution work is the rule. Huge images encode as a tiled AVIF
+  ImageGrid (and tiled images decode), so even 200 MP stays full-resolution with
+  bounded memory.
 - **Capability-aware.** A per-format descriptor drives "what a conversion will
   lose" so callers can warn instead of silently dropping data.
 
@@ -120,8 +121,8 @@ Cross-compiling for mobile, FFI/codegen, and the asm-off rationale are in
 | 0–2 | Toolchain, FFI scaffold, lossless metadata core, live strip | ✅ |
 | 3 | Codec layer — PNG/JPEG/WebP/AVIF encode | ✅ |
 | 4 | Orientation, metadata-carry, colour (ICC + CICP→ICC), HDR strip-safety, capability gate | ✅ |
-| 5 | AVIF decode (rav1d) ✅ · hardware decode behind the interface (HEIC) | in progress |
-| 6 | Large-image tiling, observability, golden CI, animation | planned |
+| 5 | AVIF decode (rav1d: colour, alpha, orientation, grid) ✅ · large-image tiling (grid encode) ✅ · hardware decode behind the interface (HEIC) | in progress |
+| 6 | HDR carry-through-convert, observability, golden CI, animation | planned |
 
 ## License
 

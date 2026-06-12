@@ -256,6 +256,173 @@ fn dimg_targets(b: &[u8], from: u32) -> Option<Vec<u32>> {
     None
 }
 
+/// The first `av1C` property's RAW box bytes (header included) — for re-embedding
+/// an encoded tile's config verbatim when building a grid container.
+pub fn av1c_raw(b: &[u8]) -> Option<Vec<u8>> {
+    let mc = meta_children(b)?;
+    let iprp = *mc.iter().find(|x| x.typ == *b"iprp")?;
+    let ipco = *boxes_in(b, iprp.body, iprp.end)?
+        .iter()
+        .find(|x| x.typ == *b"ipco")?;
+    boxes_in(b, ipco.body, ipco.end)?
+        .iter()
+        .find(|p| p.typ == *b"av1C")
+        .and_then(|p| b.get(p.start..p.end).map(<[u8]>::to_vec))
+}
+
+/// Geometry of a grid AVIF to build: `rows`×`cols` tiles of `tile_w`×`tile_h`,
+/// displayed as a `width`×`height` canvas (right/bottom tiles cropped).
+pub struct GridSpec {
+    pub rows: u32,
+    pub cols: u32,
+    pub tile_w: u32,
+    pub tile_h: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Build a complete grid AVIF from already-encoded AV1 tile payloads (row-major)
+/// and the tiles' shared `av1C` box (verbatim from any tile's own encode — all
+/// tiles share one config since they share dimensions and settings). Produces
+/// ftyp/meta(hdlr,pitm,iinf,iref dimg,iprp,idat,iloc)/mdat with the descriptor in
+/// `idat`, hidden tile items, and essential `av1C` + `ispe`/`pixi` properties —
+/// the same shape platform encoders write. `None` on impossible geometry.
+pub fn build_grid_avif(spec: &GridSpec, av1c_box: &[u8], tiles: &[Vec<u8>]) -> Option<Vec<u8>> {
+    let n = tiles.len();
+    if n == 0
+        || n != spec.rows.checked_mul(spec.cols)? as usize
+        || n > 0xFFFE // item IDs 2..=n+1 must fit u16
+        || spec.rows > 256
+        || spec.cols > 256
+        || spec.width == 0
+        || spec.height == 0
+    {
+        return None;
+    }
+
+    // Grid descriptor (version 0, flags 1 → 32-bit canvas fields), kept in idat.
+    let mut desc = vec![0u8, 1, (spec.rows - 1) as u8, (spec.cols - 1) as u8];
+    desc.extend_from_slice(&spec.width.to_be_bytes());
+    desc.extend_from_slice(&spec.height.to_be_bytes());
+    let idat = wrap_box(b"idat", &desc);
+
+    let fullbox = |typ: &[u8; 4], version: u8, flags: [u8; 3], body: &[u8]| -> Vec<u8> {
+        let mut p = vec![version, flags[0], flags[1], flags[2]];
+        p.extend_from_slice(body);
+        wrap_box(typ, &p)
+    };
+
+    let mut hdlr_body = vec![0u8; 4]; // pre_defined
+    hdlr_body.extend_from_slice(b"pict");
+    hdlr_body.extend_from_slice(&[0u8; 12]); // reserved
+    hdlr_body.push(0); // empty name
+    let hdlr = fullbox(b"hdlr", 0, [0, 0, 0], &hdlr_body);
+    let pitm = fullbox(b"pitm", 0, [0, 0, 0], &1u16.to_be_bytes());
+
+    // iinf: the grid (id 1, visible) + the tiles (ids 2.., hidden — flags bit 0).
+    let infe = |id: u16, typ: &[u8; 4], hidden: bool| -> Vec<u8> {
+        let mut body = id.to_be_bytes().to_vec();
+        body.extend_from_slice(&0u16.to_be_bytes()); // protection index
+        body.extend_from_slice(typ);
+        body.push(0); // empty item_name
+        fullbox(b"infe", 2, [0, 0, u8::from(hidden)], &body)
+    };
+    let mut iinf_body = ((n + 1) as u16).to_be_bytes().to_vec();
+    iinf_body.extend_from_slice(&infe(1, b"grid", false));
+    for i in 0..n {
+        iinf_body.extend_from_slice(&infe((i + 2) as u16, b"av01", true));
+    }
+    let iinf = fullbox(b"iinf", 0, [0, 0, 0], &iinf_body);
+
+    // iref: dimg — the grid derives from its tiles, row-major.
+    let mut dimg = 1u16.to_be_bytes().to_vec();
+    dimg.extend_from_slice(&(n as u16).to_be_bytes());
+    for i in 0..n {
+        dimg.extend_from_slice(&((i + 2) as u16).to_be_bytes());
+    }
+    let iref = fullbox(b"iref", 0, [0, 0, 0], &wrap_box(b"dimg", &dimg));
+
+    // iprp: ipco = [1: av1C (verbatim), 2: ispe tile, 3: ispe canvas, 4: pixi];
+    // ipma = tiles → av1C(essential) + ispe-tile + pixi, grid → ispe-canvas + pixi.
+    let ispe = |w: u32, h: u32| -> Vec<u8> {
+        let mut body = w.to_be_bytes().to_vec();
+        body.extend_from_slice(&h.to_be_bytes());
+        fullbox(b"ispe", 0, [0, 0, 0], &body)
+    };
+    let pixi = fullbox(b"pixi", 0, [0, 0, 0], &[3, 8, 8, 8]); // 3 channels × 8-bit
+    let ipco = wrap_box(
+        b"ipco",
+        &[
+            av1c_box.to_vec(),
+            ispe(spec.tile_w, spec.tile_h),
+            ispe(spec.width, spec.height),
+            pixi,
+        ]
+        .concat(),
+    );
+    let mut ipma_body = ((n + 1) as u32).to_be_bytes().to_vec();
+    ipma_body.extend_from_slice(&1u16.to_be_bytes()); // grid item
+    ipma_body.extend_from_slice(&[2, 3, 4]); // ispe-canvas + pixi (non-essential)
+    for i in 0..n {
+        ipma_body.extend_from_slice(&((i + 2) as u16).to_be_bytes());
+        ipma_body.extend_from_slice(&[3, 0x80 | 1, 2, 4]); // av1C essential
+    }
+    let ipma = fullbox(b"ipma", 0, [0, 0, 0], &ipma_body);
+    let iprp = wrap_box(b"iprp", &[ipco, ipma].concat());
+
+    // iloc (two passes — offsets are u32 so lengths don't shift): the grid
+    // descriptor via construction_method 1 (idat), tiles at absolute offsets.
+    let build_iloc = |tile_offsets: &[u32]| -> Vec<u8> {
+        let mut body = vec![0x44, 0x00]; // offset_size 4, length_size 4
+        body.extend_from_slice(&((n + 1) as u16).to_be_bytes());
+        body.extend_from_slice(&1u16.to_be_bytes()); // item 1: the grid
+        body.extend_from_slice(&1u16.to_be_bytes()); // method 1 (idat)
+        body.extend_from_slice(&0u16.to_be_bytes()); // data_ref
+        body.extend_from_slice(&1u16.to_be_bytes()); // one extent
+        body.extend_from_slice(&0u32.to_be_bytes());
+        body.extend_from_slice(&(desc.len() as u32).to_be_bytes());
+        for (i, t) in tiles.iter().enumerate() {
+            body.extend_from_slice(&((i + 2) as u16).to_be_bytes());
+            body.extend_from_slice(&0u16.to_be_bytes()); // method 0
+            body.extend_from_slice(&0u16.to_be_bytes());
+            body.extend_from_slice(&1u16.to_be_bytes());
+            body.extend_from_slice(&tile_offsets.get(i).copied().unwrap_or(0).to_be_bytes());
+            body.extend_from_slice(&(t.len() as u32).to_be_bytes());
+        }
+        fullbox(b"iloc", 1, [0, 0, 0], &body)
+    };
+    let build_meta = |iloc: &[u8]| -> Vec<u8> {
+        let mut mp = vec![0, 0, 0, 0];
+        for bx in [&hdlr, &pitm, &iinf, &iref, &iprp, &idat] {
+            mp.extend_from_slice(bx);
+        }
+        mp.extend_from_slice(iloc);
+        wrap_box(b"meta", &mp)
+    };
+
+    let mut ftyp = b"avif".to_vec();
+    ftyp.extend_from_slice(&0u32.to_be_bytes()); // minor version
+    ftyp.extend_from_slice(b"avifmif1miaf");
+    let ftyp = wrap_box(b"ftyp", &ftyp);
+
+    let meta_len = build_meta(&build_iloc(&vec![0; n])).len();
+    let mut offsets = Vec::with_capacity(n);
+    let mut at = (ftyp.len() + meta_len + 8) as u32; // + mdat header
+    for t in tiles {
+        offsets.push(at);
+        at = at.checked_add(u32::try_from(t.len()).ok()?)?;
+    }
+    let mdat: Vec<u8> = tiles.iter().flat_map(|t| t.iter().copied()).collect();
+    Some(
+        [
+            ftyp,
+            build_meta(&build_iloc(&offsets)),
+            wrap_box(b"mdat", &mdat),
+        ]
+        .concat(),
+    )
+}
+
 /// The AV1 config OBUs (sequence header) associated with item `id` via its
 /// `ipma`→`av1C` property — per-item, so a tile or alpha item gets ITS config,
 /// never another item's. `None` when the item has no `av1C` association.
