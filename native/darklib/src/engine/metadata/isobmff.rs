@@ -121,28 +121,161 @@ pub fn extract_nclx(b: &[u8]) -> Option<(u16, u16)> {
     None
 }
 
-/// Extract the primary item's coded AV1 bytes (the still picture's temporal unit)
-/// from an AVIF, ready to hand to a decoder. Returns `None` when the primary item
-/// isn't AV1 (`av01`) — e.g. HEVC-coded HEIC, which we never software-decode
-/// (patents, CLAUDE.md §5) — or when it isn't a plain `construction_method == 0`
-/// item (a `grid`/`idat` layout is outside this subset), so the caller falls back
-/// to a platform decoder. Read-only and bounds-safe.
-pub fn extract_primary_av1(b: &[u8]) -> Option<Vec<u8>> {
+/// The `meta` box's child boxes — the shared entry point for the item readers.
+fn meta_children(b: &[u8]) -> Option<Vec<Bx>> {
     let top = boxes_in(b, 0, b.len())?;
     let meta = *top.iter().find(|x| x.typ == *b"meta")?;
-    let mc = boxes_in(b, meta.body + 4, meta.end)?;
-    let primary_id = parse_pitm(b, *mc.iter().find(|x| x.typ == *b"pitm")?)?;
+    boxes_in(b, meta.body + 4, meta.end)
+}
+
+/// The primary item's ID (`pitm`). Read-only and bounds-safe.
+pub fn primary_item_id(b: &[u8]) -> Option<u32> {
+    let mc = meta_children(b)?;
+    parse_pitm(b, *mc.iter().find(|x| x.typ == *b"pitm")?)
+}
+
+/// The 4CC item type of item `id` (e.g. `av01`, `grid`, `Exif`).
+pub fn item_type(b: &[u8], id: u32) -> Option<[u8; 4]> {
+    let mc = meta_children(b)?;
     let (_v, items) = parse_iinf(b, *mc.iter().find(|x| x.typ == *b"iinf")?)?;
-    let (prim, _) = items.iter().find(|(it, _)| it.id == primary_id)?;
-    if prim.typ != *b"av01" {
-        return None; // HEVC/HEIC or a derived (grid/tmap) primary — not ours
-    }
+    items
+        .iter()
+        .find(|(it, _)| it.id == id)
+        .map(|(it, _)| it.typ)
+}
+
+/// Read item `id`'s data, supporting construction_method 0 (absolute file
+/// offsets) and 1 (offsets into the `idat` box payload — how grid descriptors
+/// are usually stored).
+fn read_item_by_id(b: &[u8], id: u32) -> Option<Vec<u8>> {
+    let mc = meta_children(b)?;
     let loc = parse_iloc(b, *mc.iter().find(|x| x.typ == *b"iloc")?)?;
-    let l = loc.items.iter().find(|x| x.id == primary_id)?;
-    if l.method != 0 {
-        return None; // idat / item-offset construction — outside the simple subset
+    let l = loc.items.iter().find(|x| x.id == id)?;
+    match l.method {
+        0 => read_item(b, l),
+        1 => {
+            let idat = *mc.iter().find(|x| x.typ == *b"idat")?;
+            let mut d = Vec::new();
+            for e in &l.extents {
+                let off = idat.body.checked_add((l.base_offset + e.offset) as usize)?;
+                let end = off.checked_add(e.length as usize)?;
+                if end > idat.end {
+                    return None;
+                }
+                d.extend_from_slice(b.get(off..end)?);
+            }
+            Some(d)
+        }
+        _ => None,
     }
-    read_item(b, l)
+}
+
+/// Extract item `id`'s coded AV1 bytes — `None` unless it is an `av01` item
+/// (HEVC-coded HEIC is never software-decoded — patents, CLAUDE.md §5).
+pub fn extract_item_av1(b: &[u8], id: u32) -> Option<Vec<u8>> {
+    (item_type(b, id)? == *b"av01").then_some(())?;
+    read_item_by_id(b, id)
+}
+
+/// Extract the primary item's coded AV1 bytes (the still picture's temporal
+/// unit), ready to hand to a decoder. `None` when the primary isn't a plain
+/// `av01` item — a `grid` primary is read via [`read_grid`] instead.
+pub fn extract_primary_av1(b: &[u8]) -> Option<Vec<u8>> {
+    extract_item_av1(b, primary_item_id(b)?)
+}
+
+/// An ImageGrid derived item (ISO 23008-12): the output canvas size and the tile
+/// items composing it. Large AVIF/HEIFs are commonly stored this way.
+pub struct GridInfo {
+    pub rows: u32,
+    pub cols: u32,
+    pub width: u32,
+    pub height: u32,
+    /// Tile item IDs in row-major order (the `dimg` reference order).
+    pub tiles: Vec<u32>,
+}
+
+/// Read item `id` as an ImageGrid: parse its descriptor (stored via `idat` or
+/// `mdat`) and its `dimg` tile references. `None` if the item isn't a `grid`,
+/// the descriptor is malformed, or the tile count doesn't match rows×cols.
+pub fn read_grid(b: &[u8], id: u32) -> Option<GridInfo> {
+    if item_type(b, id)? != *b"grid" {
+        return None;
+    }
+    let d = read_item_by_id(b, id)?;
+    if *d.first()? != 0 {
+        return None; // version 0 only
+    }
+    let flags = *d.get(1)?;
+    let rows = *d.get(2)? as u32 + 1;
+    let cols = *d.get(3)? as u32 + 1;
+    let (width, height) = if flags & 1 == 1 {
+        (be_u32(&d, 4)?, be_u32(&d, 8)?)
+    } else {
+        (be_u16(&d, 4)? as u32, be_u16(&d, 6)? as u32)
+    };
+    let tiles = dimg_targets(b, id)?;
+    if tiles.len() != rows.checked_mul(cols)? as usize {
+        return None;
+    }
+    Some(GridInfo {
+        rows,
+        cols,
+        width,
+        height,
+        tiles,
+    })
+}
+
+/// The `dimg` (derived-image) reference targets of item `from`, in reference
+/// order — for a grid, its tiles row-major.
+fn dimg_targets(b: &[u8], from: u32) -> Option<Vec<u32>> {
+    let mc = meta_children(b)?;
+    let iref = *mc.iter().find(|x| x.typ == *b"iref")?;
+    let version = *b.get(iref.body)?;
+    let id_bytes = if version == 0 { 2 } else { 4 };
+    for child in boxes_in(b, iref.body + 4, iref.end)? {
+        if child.typ != *b"dimg" {
+            continue;
+        }
+        let mut q = child.body;
+        let from_id = read_id(b, q, id_bytes)?;
+        q += id_bytes;
+        let count = be_u16(b, q)? as usize;
+        q += 2;
+        if from_id != from {
+            continue;
+        }
+        let mut tos = Vec::with_capacity(count);
+        for _ in 0..count {
+            tos.push(read_id(b, q, id_bytes)?);
+            q += id_bytes;
+        }
+        return Some(tos);
+    }
+    None
+}
+
+/// The AV1 config OBUs (sequence header) associated with item `id` via its
+/// `ipma`→`av1C` property — per-item, so a tile or alpha item gets ITS config,
+/// never another item's. `None` when the item has no `av1C` association.
+pub fn av1c_for_item(b: &[u8], id: u32) -> Option<Vec<u8>> {
+    let mc = meta_children(b)?;
+    let iprp = *mc.iter().find(|x| x.typ == *b"iprp")?;
+    let ipc = boxes_in(b, iprp.body, iprp.end)?;
+    let ipco = *ipc.iter().find(|x| x.typ == *b"ipco")?;
+    let ipma = *ipc.iter().find(|x| x.typ == *b"ipma")?;
+    let props = boxes_in(b, ipco.body, ipco.end)?;
+    let idxs = parse_ipma(b, ipma)?.into_iter().find(|(i, _)| *i == id)?.1;
+    for idx in idxs {
+        let Some(p) = idx.checked_sub(1).and_then(|i| props.get(i as usize)) else {
+            continue;
+        };
+        if p.typ == *b"av1C" {
+            return b.get(p.body + 4..p.end).map(<[u8]>::to_vec);
+        }
+    }
+    None
 }
 
 /// Extract the AV1 configuration OBUs (the sequence header) from the first `av1C`
@@ -168,34 +301,19 @@ pub fn extract_av1c_config_obus(b: &[u8]) -> Option<Vec<u8>> {
     None
 }
 
-/// Extract the coded AV1 bytes of the **alpha** auxiliary item, if the image has
-/// one. The alpha item is identified rigorously by its `auxC` aux-type URN
-/// (`…:auxiliary:alpha`) mapped to an item via `ipma` — NOT by "the other av01
-/// item", because an Apple HDR gain map is also an `auxl` auxiliary and must
-/// never be mistaken for alpha. `None` (→ opaque) when there's no alpha item or
-/// it isn't a plain `construction_method == 0` `av01` item. Read-only, bounds-safe.
-pub fn extract_alpha_av1(b: &[u8]) -> Option<Vec<u8>> {
-    let top = boxes_in(b, 0, b.len())?;
-    let meta = *top.iter().find(|x| x.typ == *b"meta")?;
-    let mc = boxes_in(b, meta.body + 4, meta.end)?;
+/// The item ID of the **alpha** auxiliary image, if any. Identified rigorously by
+/// its `auxC` aux-type URN (`…:auxiliary:alpha`) mapped to an item via `ipma` —
+/// NOT by "the other av01 item", because an Apple HDR gain map is also an `auxl`
+/// auxiliary and must never be mistaken for alpha. The item may be a plain `av01`
+/// or itself a `grid` (large images); decode it like the primary.
+pub fn alpha_item_id(b: &[u8]) -> Option<u32> {
+    let mc = meta_children(b)?;
     let iprp = *mc.iter().find(|x| x.typ == *b"iprp")?;
     let ipc = boxes_in(b, iprp.body, iprp.end)?;
     let ipco = *ipc.iter().find(|x| x.typ == *b"ipco")?;
     let ipma = *ipc.iter().find(|x| x.typ == *b"ipma")?;
-
     let alpha_prop = find_alpha_auxc_index(b, ipco)?; // 1-based index in ipco
-    let alpha_id = find_item_with_property(b, ipma, alpha_prop)?;
-
-    let (_v, items) = parse_iinf(b, *mc.iter().find(|x| x.typ == *b"iinf")?)?;
-    if items.iter().find(|(it, _)| it.id == alpha_id)?.0.typ != *b"av01" {
-        return None;
-    }
-    let loc = parse_iloc(b, *mc.iter().find(|x| x.typ == *b"iloc")?)?;
-    let l = loc.items.iter().find(|x| x.id == alpha_id)?;
-    if l.method != 0 {
-        return None;
-    }
-    read_item(b, l)
+    find_item_with_property(b, ipma, alpha_prop)
 }
 
 /// 1-based index (within `ipco`) of the `auxC` property whose aux-type URN names
@@ -2224,5 +2342,164 @@ mod tests {
         bare.extend_from_slice(&wrap_box(b"pitm", &[0, 0, 0, 0, 0, 1]));
         bare.extend_from_slice(&bare_iprp);
         assert_eq!(read_orientation(&wrap_box(b"meta", &bare)), None);
+    }
+
+    #[test]
+    fn read_grid_parses_descriptor_and_dimg() {
+        // grid item 1 (descriptor in idat, 32-bit fields), tiles 2 and 3.
+        let mut desc = vec![0u8, 1, 1, 0]; // version 0, flags 1 (u32), 2 rows, 1 col
+        desc.extend_from_slice(&100u32.to_be_bytes()); // output width
+        desc.extend_from_slice(&200u32.to_be_bytes()); // output height
+        let pitm = fullbox(b"pitm", 0, [0, 0, 0], &1u16.to_be_bytes());
+        let mut iinf_body = 3u16.to_be_bytes().to_vec();
+        iinf_body.extend_from_slice(&infe(1, b"grid"));
+        iinf_body.extend_from_slice(&infe(2, b"av01"));
+        iinf_body.extend_from_slice(&infe(3, b"av01"));
+        let iinf = fullbox(b"iinf", 0, [0, 0, 0], &iinf_body);
+        let mut dimg = Vec::new(); // grid (1) → tiles (2, 3)
+        dimg.extend_from_slice(&1u16.to_be_bytes());
+        dimg.extend_from_slice(&2u16.to_be_bytes());
+        dimg.extend_from_slice(&2u16.to_be_bytes());
+        dimg.extend_from_slice(&3u16.to_be_bytes());
+        let iref = fullbox(b"iref", 0, [0, 0, 0], &wrap_box(b"dimg", &dimg));
+        let idat = wrap_box(b"idat", &desc);
+        let mut iloc_body = vec![0x44, 0x00];
+        iloc_body.extend_from_slice(&1u16.to_be_bytes()); // one entry (the grid)
+        iloc_body.extend_from_slice(&1u16.to_be_bytes()); // item 1
+        iloc_body.extend_from_slice(&1u16.to_be_bytes()); // method 1 (idat)
+        iloc_body.extend_from_slice(&0u16.to_be_bytes()); // data_ref
+        iloc_body.extend_from_slice(&1u16.to_be_bytes()); // one extent
+        iloc_body.extend_from_slice(&0u32.to_be_bytes());
+        iloc_body.extend_from_slice(&(desc.len() as u32).to_be_bytes());
+        let iloc = fullbox(b"iloc", 1, [0, 0, 0], &iloc_body);
+
+        let mut mp = vec![0, 0, 0, 0];
+        for bx in [&pitm, &iinf, &iref, &idat, &iloc] {
+            mp.extend_from_slice(bx);
+        }
+        let file = wrap_box(b"meta", &mp);
+
+        let g = read_grid(&file, 1).expect("grid parses");
+        assert_eq!((g.rows, g.cols), (2, 1));
+        assert_eq!((g.width, g.height), (100, 200));
+        assert_eq!(g.tiles, vec![2, 3]);
+        assert!(read_grid(&file, 2).is_none(), "an av01 item is not a grid");
+        assert_eq!(primary_item_id(&file), Some(1));
+        assert_eq!(item_type(&file, 3), Some(*b"av01"));
+    }
+
+    /// End-to-end ImageGrid decode (lives here to reuse the container fixture
+    /// helpers): a real AVIF whose primary is a 1×2 grid of ravif-encoded tiles
+    /// (left red, right blue), with the canvas cropping the right tile — decoded
+    /// through `engine::codec::decode`, tiles assembled and cropped correctly.
+    #[test]
+    fn grid_avif_decodes_assembled_and_cropped() {
+        use crate::engine::codec::{decode as full_decode, encode, Decoded, Target};
+
+        // Two real self-contained tile streams (av1C config + frame OBUs).
+        let tile_stream = |rgba: [u8; 4]| -> Vec<u8> {
+            let px: Vec<u8> = std::iter::repeat(rgba).take(16 * 16).flatten().collect();
+            let avif = encode(
+                &Decoded {
+                    width: 16,
+                    height: 16,
+                    rgba: px,
+                },
+                Target::Avif { quality: 90 },
+            )
+            .unwrap();
+            let mut s = extract_av1c_config_obus(&avif).expect("tile av1C");
+            s.extend_from_slice(&extract_primary_av1(&avif).expect("tile obus"));
+            s
+        };
+        let red = tile_stream([220, 30, 30, 255]);
+        let blue = tile_stream([30, 30, 220, 255]);
+
+        // Grid descriptor: 1 row × 2 cols, output 24×16 (crops the right tile).
+        let mut desc = vec![0u8, 0, 0, 1];
+        desc.extend_from_slice(&24u16.to_be_bytes());
+        desc.extend_from_slice(&16u16.to_be_bytes());
+
+        let hdlr = fullbox(
+            b"hdlr",
+            0,
+            [0, 0, 0],
+            b"\0\0\0\0pict\0\0\0\0\0\0\0\0\0\0\0\0\0",
+        );
+        let pitm = fullbox(b"pitm", 0, [0, 0, 0], &1u16.to_be_bytes());
+        let mut iinf_body = 3u16.to_be_bytes().to_vec();
+        iinf_body.extend_from_slice(&infe(1, b"grid"));
+        iinf_body.extend_from_slice(&infe(2, b"av01"));
+        iinf_body.extend_from_slice(&infe(3, b"av01"));
+        let iinf = fullbox(b"iinf", 0, [0, 0, 0], &iinf_body);
+        let mut dimg = Vec::new();
+        dimg.extend_from_slice(&1u16.to_be_bytes());
+        dimg.extend_from_slice(&2u16.to_be_bytes());
+        dimg.extend_from_slice(&2u16.to_be_bytes());
+        dimg.extend_from_slice(&3u16.to_be_bytes());
+        let iref = fullbox(b"iref", 0, [0, 0, 0], &wrap_box(b"dimg", &dimg));
+        let idat = wrap_box(b"idat", &desc);
+
+        let build_iloc = |o_red: u32, o_blue: u32| -> Vec<u8> {
+            let mut body = vec![0x44, 0x00];
+            body.extend_from_slice(&3u16.to_be_bytes());
+            // item 1: grid descriptor, method 1 (idat)
+            body.extend_from_slice(&1u16.to_be_bytes());
+            body.extend_from_slice(&1u16.to_be_bytes());
+            body.extend_from_slice(&0u16.to_be_bytes());
+            body.extend_from_slice(&1u16.to_be_bytes());
+            body.extend_from_slice(&0u32.to_be_bytes());
+            body.extend_from_slice(&(desc.len() as u32).to_be_bytes());
+            // items 2 + 3: tiles, method 0 (absolute file offsets)
+            for (id, off, len) in [(2u16, o_red, red.len()), (3u16, o_blue, blue.len())] {
+                body.extend_from_slice(&id.to_be_bytes());
+                body.extend_from_slice(&0u16.to_be_bytes());
+                body.extend_from_slice(&0u16.to_be_bytes());
+                body.extend_from_slice(&1u16.to_be_bytes());
+                body.extend_from_slice(&off.to_be_bytes());
+                body.extend_from_slice(&(len as u32).to_be_bytes());
+            }
+            fullbox(b"iloc", 1, [0, 0, 0], &body)
+        };
+
+        let ftyp = wrap_box(b"ftyp", b"avif\0\0\0\0avifmif1");
+        let build_meta = |iloc: &[u8]| -> Vec<u8> {
+            let mut mp = vec![0, 0, 0, 0];
+            for bx in [&hdlr, &pitm, &iinf, &iref, &idat] {
+                mp.extend_from_slice(bx);
+            }
+            mp.extend_from_slice(iloc);
+            wrap_box(b"meta", &mp)
+        };
+        let meta_len = build_meta(&build_iloc(0, 0)).len();
+        let o_red = (ftyp.len() + meta_len + 8) as u32;
+        let o_blue = o_red + red.len() as u32;
+        let file = [
+            ftyp.clone(),
+            build_meta(&build_iloc(o_red, o_blue)),
+            wrap_box(b"mdat", &[red.clone(), blue.clone()].concat()),
+        ]
+        .concat();
+
+        assert_eq!(
+            crate::engine::format::detect(&file),
+            crate::engine::format::ImageFormat::Avif
+        );
+        let d = full_decode(&file, None).expect("grid AVIF decodes");
+        assert_eq!((d.width, d.height), (24, 16), "grid canvas size (cropped)");
+        let px = |x: usize, y: usize| -> [u8; 3] {
+            let o = (y * 24 + x) * 4;
+            [d.rgba[o], d.rgba[o + 1], d.rgba[o + 2]]
+        };
+        let left = px(4, 8);
+        let right = px(20, 8);
+        assert!(
+            left[0] > 150 && left[2] < 100,
+            "left tile is red, got {left:?}"
+        );
+        assert!(
+            right[2] > 150 && right[0] < 100,
+            "right (cropped) tile is blue, got {right:?}"
+        );
     }
 }

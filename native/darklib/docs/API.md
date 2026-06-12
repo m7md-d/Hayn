@@ -124,8 +124,9 @@ let withmeta = metadata::inject(&newly_encoded, &meta);
 **Advanced / lower-level** (same module; mostly used internally — reach for these
 only for format-specific work):
 `metadata::isobmff::{extract_icc, extract_nclx, extract_exif_xmp, has_gainmap,
-extract_primary_av1, extract_av1c_config_obus, inject}`,
-`metadata::xmp::strip_privacy_keeping_hdr`,
+primary_item_id, alpha_item_id, item_type, read_grid (GridInfo), extract_item_av1,
+extract_primary_av1, av1c_for_item, extract_av1c_config_obus, read_orientation,
+inject}`, `metadata::xmp::strip_privacy_keeping_hdr`,
 `metadata::exif::{summarize, with_orientation_1, ExifSummary}`, and the per-format
 `metadata::{jpeg,png,webp,isobmff}::strip`.
 
@@ -216,9 +217,11 @@ side and feed pixels in until hardware decode lands).
   `transcode` of a HEIC source returns an error; callers fall back to a platform
   decoder. See [FORMATS.md](FORMATS.md) and [SUPPORT.md](SUPPORT.md).
 - **AVIF decode**: 10/12-bit is reduced to 8-bit RGBA (the current SDR contract).
-  Orientation (`irot`/`imir`) and transparency (the alpha auxiliary item) **are**
-  applied/decoded.
+  Orientation (`irot`/`imir`), transparency (the alpha auxiliary item) and
+  **ImageGrid (tiled) images** are all handled — grid tiles decode one at a time,
+  so peak memory ≈ canvas + one tile.
 - **HDR carry through a re-encode** (convert) isn't wired yet — a strip preserves
   the gain map, but a transcode currently drops it.
-- **Very large images**: the encode path doesn't tile yet; previews use
-  `max_edge`, but full-resolution tiling (no downscale) is planned.
+- **Very large images**: the *encode* path doesn't tile yet (grid *decode* is
+  supported); previews use `max_edge`, but full-resolution tiled encode (no
+  downscale) is planned.

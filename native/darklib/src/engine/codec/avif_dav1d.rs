@@ -27,25 +27,20 @@ fn fail() -> DarkError {
     DarkError::Malformed("avif decode failed")
 }
 
-/// Decode an AVIF still to 8-bit `(width, height, rgba)`. The sequence header
-/// (from `av1C`) is prepended to the primary item's frame OBUs so the stream is
-/// self-contained for the decoder.
+/// Decode an AVIF still to 8-bit `(width, height, rgba)` — a plain `av01`
+/// primary or an ImageGrid (tiled) one, plus the alpha auxiliary and the
+/// `irot`/`imir` orientation transform.
 pub fn decode(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>)> {
-    let mut stream = isobmff::extract_av1c_config_obus(bytes).unwrap_or_default();
-    let item = isobmff::extract_primary_av1(bytes)
-        .ok_or(DarkError::Malformed("avif: no AV1 primary item"))?;
-    stream.extend_from_slice(&item);
-    // SAFETY: the context/data/picture lifecycle is fully created, used and freed
-    // inside this call; every pointer originates from rav1d and stays in scope.
-    let (w, h, mut rgba) = unsafe { decode_obus(&stream) }?;
+    let primary =
+        isobmff::primary_item_id(bytes).ok_or(DarkError::Malformed("avif: no primary item"))?;
+    let (w, h, mut rgba) = decode_item(bytes, primary, 0)?;
 
-    // Transparency: AVIF stores alpha as a separate monochrome auxiliary AV1 item
-    // (its data carries its own sequence header). Decode it and copy its luma into
-    // the alpha channel. Any failure or size mismatch leaves the image opaque —
-    // alpha is never allowed to corrupt the colour decode.
-    if let Some(alpha_obus) = isobmff::extract_alpha_av1(bytes) {
-        // SAFETY: same self-contained dav1d lifecycle as the colour decode.
-        if let Ok((aw, ah, argba)) = unsafe { decode_obus(&alpha_obus) } {
+    // Transparency: AVIF stores alpha as a separate monochrome auxiliary image
+    // (an av01 item, or a grid of them for large images). Decode it and copy its
+    // luma into the alpha channel. Any failure or size mismatch leaves the image
+    // opaque — alpha is never allowed to corrupt the colour decode.
+    if let Some(alpha_id) = isobmff::alpha_item_id(bytes) {
+        if let Ok((aw, ah, argba)) = decode_item(bytes, alpha_id, 0) {
             if aw == w && ah == h {
                 for px in 0..(w as usize * h as usize) {
                     rgba[px * 4 + 3] = argba[px * 4]; // mono luma → alpha
@@ -63,6 +58,77 @@ pub fn decode(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>)> {
         ));
     }
     Ok((w, h, rgba))
+}
+
+/// Cap on a grid canvas (pixels): 256 MP ≈ 1 GiB of RGBA. Covers every real
+/// camera (Samsung's 200 MP included) while refusing a malicious descriptor that
+/// claims a multi-gigabyte canvas.
+const MAX_GRID_PIXELS: u64 = 256 * 1024 * 1024;
+
+/// Decode one item to RGBA: an `av01` item directly, or a `grid` derived item by
+/// decoding its tiles one at a time and assembling them onto the canvas (peak
+/// memory ≈ canvas + one tile — the memory-bounded answer to huge images).
+fn decode_item(bytes: &[u8], id: u32, depth: u8) -> Result<(u32, u32, Vec<u8>)> {
+    if depth == 0 {
+        if let Some(grid) = isobmff::read_grid(bytes, id) {
+            return decode_grid(bytes, &grid);
+        }
+    }
+    // Per-item av1C config (a tile/alpha item must get ITS sequence header, never
+    // another item's); the primary may fall back to the file's first av1C. Some
+    // encoders also repeat the sequence header in the item data — harmless.
+    let mut stream = isobmff::av1c_for_item(bytes, id)
+        .or_else(|| {
+            (Some(id) == isobmff::primary_item_id(bytes))
+                .then(|| isobmff::extract_av1c_config_obus(bytes))
+                .flatten()
+        })
+        .unwrap_or_default();
+    let item = isobmff::extract_item_av1(bytes, id)
+        .ok_or(DarkError::Malformed("avif: item is not AV1"))?;
+    stream.extend_from_slice(&item);
+    // SAFETY: the context/data/picture lifecycle is fully created, used and freed
+    // inside this call; every pointer originates from rav1d and stays in scope.
+    unsafe { decode_obus(&stream) }
+}
+
+/// Assemble an ImageGrid: decode each tile and paste it row-major, cropping the
+/// right/bottom tiles to the canvas (the grid's output size is authoritative).
+fn decode_grid(bytes: &[u8], g: &isobmff::GridInfo) -> Result<(u32, u32, Vec<u8>)> {
+    let (cw, ch) = (g.width as usize, g.height as usize);
+    if cw == 0 || ch == 0 || (cw as u64) * (ch as u64) > MAX_GRID_PIXELS {
+        return Err(DarkError::Malformed("avif grid: bad canvas size"));
+    }
+    let mut canvas = vec![0u8; cw * ch * 4];
+    let (mut tw, mut th) = (0usize, 0usize);
+    for (i, &tile_id) in g.tiles.iter().enumerate() {
+        let (w, h, px) = decode_item(bytes, tile_id, 1)?;
+        let (w, h) = (w as usize, h as usize);
+        if i == 0 {
+            (tw, th) = (w, h);
+            // Tiles must cover the canvas; short tiles would leave black bands.
+            if tw == 0 || th == 0 || tw * (g.cols as usize) < cw || th * (g.rows as usize) < ch {
+                return Err(DarkError::Malformed("avif grid: tiles don't cover canvas"));
+            }
+        } else if (w, h) != (tw, th) {
+            return Err(DarkError::Malformed("avif grid: tile size mismatch"));
+        }
+        let (x0, y0) = ((i % g.cols as usize) * tw, (i / g.cols as usize) * th);
+        for ty in 0..th {
+            let y = y0 + ty;
+            if y >= ch {
+                break;
+            }
+            let copy_w = tw.min(cw.saturating_sub(x0));
+            if copy_w == 0 {
+                break;
+            }
+            let s = ty * tw * 4;
+            let d = (y * cw + x0) * 4;
+            canvas[d..d + copy_w * 4].copy_from_slice(&px[s..s + copy_w * 4]);
+        }
+    }
+    Ok((cw as u32, ch as u32, canvas))
 }
 
 unsafe fn decode_obus(obus: &[u8]) -> Result<(u32, u32, Vec<u8>)> {

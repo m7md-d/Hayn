@@ -22,6 +22,14 @@ the engine API may change between minor versions.
 - **AVIF orientation** (`irot`/`imir`): the primary image's rotation/mirror item
   properties (read via `ipma`→`ipco`) are baked into the decoded pixels, so AVIF
   is handled upright like every other format. Completes AVIF decode correctness.
+- **AVIF ImageGrid (tiled) decode**: a `grid` primary — how large AVIF/HEIFs are
+  commonly stored — is assembled from its `dimg` tiles (descriptor read from
+  `idat` or `mdat`, construction methods 0 and 1). Tiles decode **one at a time**
+  with their own per-item `av1C` config, so peak memory ≈ canvas + one tile; the
+  canvas size is capped (256 MP) against malicious descriptors. A grid *alpha*
+  auxiliary is assembled the same way. New `isobmff` readers: `primary_item_id`,
+  `alpha_item_id`, `item_type`, `read_grid`/`GridInfo`, `extract_item_av1`,
+  `av1c_for_item` (replacing `extract_alpha_av1`).
 - **Colour management** (`engine::color`): ICC profile extract/inject, plus
   synthesis of an ICC profile from CICP/`nclx` code points (primaries → D50
   colorants via Bradford adaptation + sRGB TRC), so a profile-less AVIF/HEIF
