@@ -423,6 +423,229 @@ pub fn build_grid_avif(spec: &GridSpec, av1c_box: &[u8], tiles: &[Vec<u8>]) -> O
     )
 }
 
+/// An ISO 21496-1 tone-map (HDR gain map) structure read from an AVIF: the
+/// `tmap` derived item's metadata payload and the gain-map image item it
+/// combines with the base.
+pub struct TmapInfo {
+    /// The 21496-1 gain-map metadata blob (the `tmap` item's data) — carried
+    /// VERBATIM through a convert; it describes the mapping curve, not the
+    /// coded pixels.
+    pub payload: Vec<u8>,
+    /// The gain-map image item (`av01`) to decode/re-encode.
+    pub gainmap_id: u32,
+}
+
+/// Read the ISO 21496-1 `tmap` structure, if present: a `tmap` item whose `dimg`
+/// references are `[base, gain-map]`. This is the flavour AVIF HDR files carry
+/// (Android Ultra HDR / libavif); Apple's `auxC` HEIC flavour is hardware-decode
+/// territory. Read-only and bounds-safe.
+pub fn read_tmap(b: &[u8]) -> Option<TmapInfo> {
+    let mc = meta_children(b)?;
+    let (_v, items) = parse_iinf(b, *mc.iter().find(|x| x.typ == *b"iinf")?)?;
+    let tmap_id = items.iter().find(|(it, _)| it.typ == *b"tmap")?.0.id;
+    let refs = dimg_targets(b, tmap_id)?;
+    if refs.len() != 2 {
+        return None; // tmap derives from exactly [base, gain map]
+    }
+    let primary = primary_item_id(b)?;
+    let gainmap_id = if refs[0] == primary { refs[1] } else { refs[0] };
+    Some(TmapInfo {
+        payload: read_item_by_id(b, tmap_id)?,
+        gainmap_id,
+    })
+}
+
+/// One coded AV1 image for [`build_hdr_avif`]: the frame payload, its raw `av1C`
+/// box (verbatim from its own encode) and its pixel dimensions.
+pub struct CodedItem {
+    pub payload: Vec<u8>,
+    pub av1c_box: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Build a complete HDR AVIF from scratch: a base (SDR) image, its gain map, the
+/// ISO 21496-1 `tmap` metadata, and the metadata blobs to carry (EXIF/XMP/ICC).
+/// Layout: item 1 = base (`pitm`), 2 = gain map (hidden), 3 = `tmap` derived item
+/// (`dimg` → [1, 2], in an `altr` group with the base so SDR-only readers fall
+/// back cleanly), then optional Exif/XMP items with `cdsc` refs. Building from
+/// scratch — every byte is ours — avoids surgery on a pre-existing structure.
+pub fn build_hdr_avif(
+    base: &CodedItem,
+    gainmap: &CodedItem,
+    tmap_payload: &[u8],
+    meta: &super::Canonical,
+) -> Option<Vec<u8>> {
+    let fullbox = |typ: &[u8; 4], body: &[u8]| -> Vec<u8> {
+        let mut p = vec![0u8, 0, 0, 0];
+        p.extend_from_slice(body);
+        wrap_box(typ, &p)
+    };
+
+    // Items 1..=3 fixed; EXIF/XMP get the next ids. Payload order in mdat:
+    // base, gainmap, tmap, exif?, xmp?.
+    let exif_payload = meta.exif.as_ref().map(|t| {
+        let mut p = 0u32.to_be_bytes().to_vec(); // exif_tiff_header_offset
+        p.extend_from_slice(t);
+        p
+    });
+    let mut mdat_items: Vec<(u32, &[u8])> =
+        vec![(1, &base.payload), (2, &gainmap.payload), (3, tmap_payload)];
+    let mut next_id = 4u32;
+    let exif_id = exif_payload.as_ref().map(|p| {
+        mdat_items.push((next_id, p));
+        next_id += 1;
+        next_id - 1
+    });
+    let xmp_id = meta.xmp.as_ref().map(|x| {
+        mdat_items.push((next_id, x));
+        next_id += 1;
+        next_id - 1
+    });
+    let n = mdat_items.len();
+
+    let hdlr = {
+        let mut body = vec![0u8; 4];
+        body.extend_from_slice(b"pict");
+        body.extend_from_slice(&[0u8; 12]);
+        body.push(0);
+        fullbox(b"hdlr", &body)
+    };
+    let pitm = fullbox(b"pitm", &1u16.to_be_bytes());
+
+    let mut iinf_body = (n as u16).to_be_bytes().to_vec();
+    iinf_body.extend_from_slice(&build_infe(1, b"av01", None)?);
+    iinf_body.extend_from_slice(&{
+        // The gain map is an input to the derived item, not for solo display.
+        let mut infe = build_infe(2, b"av01", None)?;
+        let flags_at = 8 + 3; // box header (8) + version byte → last flag byte
+        *infe.get_mut(flags_at)? |= 1; // hidden
+        infe
+    });
+    iinf_body.extend_from_slice(&build_infe(3, b"tmap", None)?);
+    if let Some(id) = exif_id {
+        iinf_body.extend_from_slice(&build_infe(id, b"Exif", None)?);
+    }
+    if let Some(id) = xmp_id {
+        iinf_body.extend_from_slice(&build_infe(id, b"mime", Some("application/rdf+xml"))?);
+    }
+    let iinf = fullbox(b"iinf", &iinf_body);
+
+    // iref: dimg tmap→[base, gm]; cdsc exif/xmp→base.
+    let mut refs = Vec::new();
+    let mut dimg = 3u16.to_be_bytes().to_vec();
+    dimg.extend_from_slice(&2u16.to_be_bytes());
+    dimg.extend_from_slice(&1u16.to_be_bytes());
+    dimg.extend_from_slice(&2u16.to_be_bytes());
+    refs.extend_from_slice(&wrap_box(b"dimg", &dimg));
+    for id in [exif_id, xmp_id].into_iter().flatten() {
+        let mut cdsc = (id as u16).to_be_bytes().to_vec();
+        cdsc.extend_from_slice(&1u16.to_be_bytes());
+        cdsc.extend_from_slice(&1u16.to_be_bytes());
+        refs.extend_from_slice(&wrap_box(b"cdsc", &cdsc));
+    }
+    let iref = fullbox(b"iref", &refs);
+
+    // grpl/altr: the tmap is the preferred alternative to the base, so HDR-aware
+    // readers render it and SDR readers keep the base.
+    let grpl = {
+        let mut altr = 1u32.to_be_bytes().to_vec(); // group_id
+        altr.extend_from_slice(&2u32.to_be_bytes()); // two entities
+        altr.extend_from_slice(&3u32.to_be_bytes()); // tmap first (preferred)
+        altr.extend_from_slice(&1u32.to_be_bytes());
+        wrap_box(b"grpl", &fullbox(b"altr", &altr))
+    };
+
+    // iprp: [1 av1C base, 2 ispe base, 3 pixi, 4 av1C gm, 5 ispe gm, 6 colr?].
+    let ispe = |w: u32, h: u32| -> Vec<u8> {
+        let mut body = w.to_be_bytes().to_vec();
+        body.extend_from_slice(&h.to_be_bytes());
+        fullbox(b"ispe", &body)
+    };
+    let pixi = fullbox(b"pixi", &[3, 8, 8, 8]);
+    let mut ipco_body = [
+        base.av1c_box.clone(),
+        ispe(base.width, base.height),
+        pixi,
+        gainmap.av1c_box.clone(),
+        ispe(gainmap.width, gainmap.height),
+    ]
+    .concat();
+    let has_icc = if let Some(icc) = &meta.icc {
+        let mut colr = b"prof".to_vec();
+        colr.extend_from_slice(icc);
+        ipco_body.extend_from_slice(&wrap_box(b"colr", &colr));
+        true
+    } else {
+        false
+    };
+    let ipco = wrap_box(b"ipco", &ipco_body);
+    let mut ipma_body = 3u32.to_be_bytes().to_vec(); // base, gm, tmap entries
+    ipma_body.extend_from_slice(&1u16.to_be_bytes()); // base
+    let mut base_props = vec![0x80 | 1, 2, 3];
+    if has_icc {
+        base_props.push(6);
+    }
+    ipma_body.push(base_props.len() as u8);
+    ipma_body.extend_from_slice(&base_props);
+    ipma_body.extend_from_slice(&2u16.to_be_bytes()); // gain map
+    ipma_body.extend_from_slice(&[2, 0x80 | 4, 5]);
+    ipma_body.extend_from_slice(&3u16.to_be_bytes()); // tmap (canvas-sized)
+    ipma_body.extend_from_slice(&[1, 2]);
+    let ipma = fullbox(b"ipma", &ipma_body);
+    let iprp = wrap_box(b"iprp", &[ipco, ipma].concat());
+
+    // iloc, two passes (u32 offsets keep lengths stable): everything in mdat.
+    let build_iloc = |offsets: &[u32]| -> Vec<u8> {
+        let mut body = vec![0x44, 0x00];
+        body.extend_from_slice(&(n as u16).to_be_bytes());
+        for (i, (id, payload)) in mdat_items.iter().enumerate() {
+            body.extend_from_slice(&(*id as u16).to_be_bytes());
+            body.extend_from_slice(&0u16.to_be_bytes()); // method 0
+            body.extend_from_slice(&0u16.to_be_bytes());
+            body.extend_from_slice(&1u16.to_be_bytes());
+            body.extend_from_slice(&offsets.get(i).copied().unwrap_or(0).to_be_bytes());
+            body.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        }
+        let mut p = vec![1u8, 0, 0, 0]; // iloc version 1
+        p.extend_from_slice(&body);
+        wrap_box(b"iloc", &p)
+    };
+    let build_meta = |iloc: &[u8]| -> Vec<u8> {
+        let mut mp = vec![0, 0, 0, 0];
+        for bx in [&hdlr, &pitm, &iinf, &iref, &grpl, &iprp] {
+            mp.extend_from_slice(bx);
+        }
+        mp.extend_from_slice(iloc);
+        wrap_box(b"meta", &mp)
+    };
+
+    let mut ftyp = b"avif".to_vec();
+    ftyp.extend_from_slice(&0u32.to_be_bytes());
+    ftyp.extend_from_slice(b"avifmif1miaf");
+    let ftyp = wrap_box(b"ftyp", &ftyp);
+
+    let meta_len = build_meta(&build_iloc(&vec![0; n])).len();
+    let mut offsets = Vec::with_capacity(n);
+    let mut at = (ftyp.len() + meta_len + 8) as u32;
+    for (_, payload) in &mdat_items {
+        offsets.push(at);
+        at = at.checked_add(u32::try_from(payload.len()).ok()?)?;
+    }
+    let mdat: Vec<u8> = mdat_items
+        .iter()
+        .flat_map(|(_, p)| p.iter().copied())
+        .collect();
+    Some(
+        [
+            ftyp,
+            build_meta(&build_iloc(&offsets)),
+            wrap_box(b"mdat", &mdat),
+        ]
+        .concat(),
+    )
+}
+
 /// The AV1 config OBUs (sequence header) associated with item `id` via its
 /// `ipma`→`av1C` property — per-item, so a tile or alpha item gets ITS config,
 /// never another item's. `None` when the item has no `av1C` association.

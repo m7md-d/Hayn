@@ -37,6 +37,15 @@ the engine API may change between minor versions.
   essential `av1C`, `ispe`/`pixi`, descriptor in `idat`). Peak memory ≈ source +
   one tile, at full output resolution. Any grid failure falls back to the proven
   single-item encode; transparent images keep the single-item path for now.
+- **HDR gain-map carry through convert** (AVIF→AVIF, full resolution):
+  `engine::codec::transcode_keep_metadata` re-encodes the base AND the ISO
+  21496-1 gain-map image, copies the `tmap` curve metadata verbatim, and rebuilds
+  the container from scratch (`isobmff::read_tmap`/`TmapInfo`,
+  `build_hdr_avif`/`CodedItem`: tmap derived item + `dimg`, `altr` fallback group,
+  hidden gain-map item, essential `av1C`, EXIF/XMP/ICC included in the same
+  build). Self-checks the output still reads as HDR with the identical curve; any
+  failure falls back to the SDR convert. The FFI `transcode_keep_metadata` now
+  delegates to this engine function.
 - **Colour management** (`engine::color`): ICC profile extract/inject, plus
   synthesis of an ICC profile from CICP/`nclx` code points (primaries → D50
   colorants via Bradford adaptation + sRGB TRC), so a profile-less AVIF/HEIF

@@ -68,7 +68,8 @@ const MAX_GRID_PIXELS: u64 = 256 * 1024 * 1024;
 /// Decode one item to RGBA: an `av01` item directly, or a `grid` derived item by
 /// decoding its tiles one at a time and assembling them onto the canvas (peak
 /// memory ≈ canvas + one tile — the memory-bounded answer to huge images).
-fn decode_item(bytes: &[u8], id: u32, depth: u8) -> Result<(u32, u32, Vec<u8>)> {
+/// `pub(super)` so the codec can decode auxiliary items (e.g. an HDR gain map).
+pub(super) fn decode_item(bytes: &[u8], id: u32, depth: u8) -> Result<(u32, u32, Vec<u8>)> {
     if depth == 0 {
         if let Some(grid) = isobmff::read_grid(bytes, id) {
             return decode_grid(bytes, &grid);

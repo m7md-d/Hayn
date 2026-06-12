@@ -155,11 +155,16 @@ pub enum Target {
 pub fn decode(bytes: &[u8], max_edge: Option<u32>) -> Result<Decoded>;
 pub fn encode(img: &Decoded, target: Target) -> Result<Vec<u8>>;
 pub fn transcode(bytes: &[u8], target: Target, max_edge: Option<u32>) -> Result<Vec<u8>>;
+pub fn transcode_keep_metadata(bytes: &[u8], target: Target, max_edge: Option<u32>) -> Result<Vec<u8>>;
 ```
 `decode` handles PNG/JPEG/WebP/AVIF (EXIF orientation baked into pixels); **HEIC is
 not software-decoded** → `Err` (use a hardware/platform decoder). `max_edge`
 downscales for **previews only** — `None` keeps full resolution; never downscale a
 saved output. `transcode` = `decode → optional downscale → encode`.
+`transcode_keep_metadata` additionally carries EXIF/XMP/ICC into the output — and
+through a full-resolution AVIF→AVIF convert it carries the ISO 21496-1 HDR gain
+map too (curve metadata verbatim, gain-map image re-encoded; falls back to SDR on
+any failure rather than failing the convert).
 
 ```rust
 let webp = codec::transcode(src, codec::Target::Webp { quality: 80, lossless: false }, None)?;
@@ -220,8 +225,12 @@ side and feed pixels in until hardware decode lands).
   Orientation (`irot`/`imir`), transparency (the alpha auxiliary item) and
   **ImageGrid (tiled) images** are all handled — grid tiles decode one at a time,
   so peak memory ≈ canvas + one tile.
-- **HDR carry through a re-encode** (convert) isn't wired yet — a strip preserves
-  the gain map, but a transcode currently drops it.
+- **HDR carry through a re-encode**: a full-resolution AVIF→AVIF
+  `transcode_keep_metadata` carries the ISO 21496-1 gain map (tmap curve
+  verbatim, gain-map image re-encoded). Converts to other targets, downscaled
+  previews, and Apple's HEIC flavour (hardware-decode territory) still produce
+  SDR; sources with `irot`/`imir` fall back to SDR to avoid base/gain-map
+  misalignment.
 - **Very large images**: AVIF tiles in BOTH directions — grid decode, and grid
   *encode* (opaque images above 16 MP encode tile-by-tile as an ImageGrid at full
   resolution; transparency or other targets use the single-pass path). JPEG/PNG/

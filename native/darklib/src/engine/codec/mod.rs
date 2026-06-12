@@ -241,6 +241,78 @@ pub fn transcode(bytes: &[u8], target: Target, max_edge: Option<u32>) -> Result<
     encode(&decode(bytes, max_edge)?, target)
 }
 
+/// [`transcode`] that also carries the source's metadata (EXIF/XMP/ICC, with
+/// orientation baked into the pixels) into the output, and — for an HDR AVIF
+/// converted to AVIF at full resolution — carries the ISO 21496-1 gain map too,
+/// so the convert doesn't silently flatten HDR to SDR.
+pub fn transcode_keep_metadata(
+    bytes: &[u8],
+    target: Target,
+    max_edge: Option<u32>,
+) -> Result<Vec<u8>> {
+    let meta = crate::engine::metadata::extract(bytes);
+
+    // HDR AVIF → AVIF at full size: re-encode base AND gain map, rebuild the
+    // tmap structure (metadata included in the same from-scratch build). Any
+    // failure falls through to the plain SDR path — never a failed convert.
+    if max_edge.is_none() {
+        if let Target::Avif { quality } = target {
+            if crate::engine::format::detect(bytes) == crate::engine::format::ImageFormat::Avif {
+                if let Some(out) = transcode_hdr_avif(bytes, quality, &meta) {
+                    return Ok(out);
+                }
+            }
+        }
+    }
+
+    let out = transcode(bytes, target, max_edge)?;
+    Ok(crate::engine::metadata::inject(&out, &meta))
+}
+
+/// Carry an ISO 21496-1 gain map through an AVIF→AVIF re-encode: decode + encode
+/// the base and the gain-map image separately, copy the tmap metadata verbatim,
+/// and build the output container from scratch. `None` when the source has no
+/// tmap or any step fails (the caller falls back to the SDR path).
+fn transcode_hdr_avif(
+    bytes: &[u8],
+    quality: u8,
+    meta: &crate::engine::metadata::Canonical,
+) -> Option<Vec<u8>> {
+    use crate::engine::metadata::isobmff;
+    let tmap = isobmff::read_tmap(bytes)?;
+    // An irot/imir transform would be baked into the BASE pixels by `decode` but
+    // not into the gain map — they'd misalign. Rare in stills; bail to SDR.
+    if isobmff::read_orientation(bytes).is_some() {
+        return None;
+    }
+
+    let coded = |rgba_img: &Decoded| -> Option<isobmff::CodedItem> {
+        let avif = encode_avif_single(rgba_img, quality).ok()?;
+        Some(isobmff::CodedItem {
+            payload: isobmff::extract_primary_av1(&avif)?,
+            av1c_box: isobmff::av1c_raw(&avif)?,
+            width: rgba_img.width,
+            height: rgba_img.height,
+        })
+    };
+
+    // The primary decode (base SDR) goes through `decode` (same path as SDR
+    // converts); the gain map is decoded by item id at its own resolution.
+    let base_px = decode(bytes, None).ok()?;
+    let base = coded(&base_px)?;
+    let (gw, gh, grgba) = avif_dav1d::decode_item(bytes, tmap.gainmap_id, 0).ok()?;
+    let gm_px = Decoded {
+        width: gw,
+        height: gh,
+        rgba: grgba,
+    };
+    let gm = coded(&gm_px)?;
+
+    let out = isobmff::build_hdr_avif(&base, &gm, &tmap.payload, meta)?;
+    // Self-check: the rebuilt file must still read as HDR with the same curve.
+    (isobmff::read_tmap(&out)?.payload == tmap.payload).then_some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -457,6 +529,86 @@ mod tests {
             right[2] > 150 && right[0] < 110,
             "right blue, got {right:?}"
         );
+    }
+
+    /// An HDR AVIF (ISO 21496-1 tmap + gain-map item) converted AVIF→AVIF keeps
+    /// its gain map: the tmap curve metadata byte-identical, the gain-map image
+    /// re-encoded at its own resolution, and the EXIF carried — no silent SDR
+    /// flattening.
+    #[test]
+    fn hdr_avif_gainmap_survives_convert() {
+        use crate::engine::metadata::{extract, isobmff, Canonical};
+
+        let coded = |w: u32, h: u32, rgba: [u8; 4]| -> isobmff::CodedItem {
+            let px: Vec<u8> = std::iter::repeat(rgba)
+                .take((w * h) as usize)
+                .flatten()
+                .collect();
+            let avif = encode_avif_single(
+                &Decoded {
+                    width: w,
+                    height: h,
+                    rgba: px,
+                },
+                90,
+            )
+            .unwrap();
+            isobmff::CodedItem {
+                payload: isobmff::extract_primary_av1(&avif).unwrap(),
+                av1c_box: isobmff::av1c_raw(&avif).unwrap(),
+                width: w,
+                height: h,
+            }
+        };
+        let base = coded(32, 24, [230, 140, 40, 255]); // orange base
+        let gm = coded(16, 12, [160, 160, 160, 255]); // half-res grey gain map
+        let curve = b"ISO-21496-1-gainmap-curve-params".to_vec();
+        let meta = Canonical {
+            exif: Some(tiff_orientation(1)),
+            ..Default::default()
+        };
+        let src = isobmff::build_hdr_avif(&base, &gm, &curve, &meta).expect("builds");
+
+        // The source reads back as a well-formed HDR AVIF.
+        assert_eq!(
+            crate::engine::format::detect(&src),
+            crate::engine::format::ImageFormat::Avif
+        );
+        assert!(isobmff::has_gainmap(&src), "tmap detected");
+        let t = isobmff::read_tmap(&src).expect("tmap readable");
+        assert_eq!(t.payload, curve);
+        let d = decode(&src, None).expect("base decodes");
+        assert_eq!((d.width, d.height), (32, 24));
+        assert!(extract(&src).exif.is_some(), "EXIF item present");
+
+        // Convert AVIF→AVIF: the gain map and curve must survive.
+        let out =
+            transcode_keep_metadata(&src, Target::Avif { quality: 85 }, None).expect("HDR convert");
+        assert!(isobmff::has_gainmap(&out), "gain map survives the convert");
+        let t2 = isobmff::read_tmap(&out).expect("tmap in output");
+        assert_eq!(t2.payload, curve, "curve metadata carried verbatim");
+        assert!(extract(&out).exif.is_some(), "EXIF carried");
+
+        let d2 = decode(&out, None).expect("output base decodes");
+        assert_eq!((d2.width, d2.height), (32, 24));
+        assert!(
+            (d2.rgba[0] as i32 - 230).abs() < 25,
+            "base colour ≈ orange, got {}",
+            d2.rgba[0]
+        );
+        let (gw, gh, grgba) =
+            avif_dav1d::decode_item(&out, t2.gainmap_id, 0).expect("gain map decodes");
+        assert_eq!((gw, gh), (16, 12), "gain map keeps its own resolution");
+        assert!(
+            (grgba[0] as i32 - 160).abs() < 25,
+            "gain map value ≈ grey, got {}",
+            grgba[0]
+        );
+
+        // A downscaled (preview) convert takes the SDR path — no tmap.
+        let preview =
+            transcode_keep_metadata(&src, Target::Avif { quality: 85 }, Some(16)).unwrap();
+        assert!(!isobmff::has_gainmap(&preview), "preview path stays SDR");
     }
 
     fn crc32(data: &[u8]) -> u32 {

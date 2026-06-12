@@ -50,16 +50,15 @@ pub fn transcode(
 
 /// Like [`transcode`], but carries the source's EXIF/XMP/ICC into the output
 /// where supported (orientation normalised — the pixels are baked upright on
-/// decode). Formats without an injector yet return the bytes without metadata.
+/// decode), and carries an ISO 21496-1 HDR gain map through a full-resolution
+/// AVIF→AVIF convert. Formats without an injector return bytes without metadata.
 pub fn transcode_keep_metadata(
     bytes: Vec<u8>,
     format: CodecFormat,
     quality: u32,
     max_edge: u32,
 ) -> Result<Vec<u8>, String> {
-    let meta = crate::engine::metadata::extract(&bytes);
     let edge = if max_edge == 0 { None } else { Some(max_edge) };
-    let out =
-        codec::transcode(&bytes, target_of(format, quality), edge).map_err(|e| e.to_string())?;
-    Ok(crate::engine::metadata::inject(&out, &meta))
+    codec::transcode_keep_metadata(&bytes, target_of(format, quality), edge)
+        .map_err(|e| e.to_string())
 }

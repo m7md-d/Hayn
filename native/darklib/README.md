@@ -121,8 +121,8 @@ Cross-compiling for mobile, FFI/codegen, and the asm-off rationale are in
 | 0–2 | Toolchain, FFI scaffold, lossless metadata core, live strip | ✅ |
 | 3 | Codec layer — PNG/JPEG/WebP/AVIF encode | ✅ |
 | 4 | Orientation, metadata-carry, colour (ICC + CICP→ICC), HDR strip-safety, capability gate | ✅ |
-| 5 | AVIF decode (rav1d: colour, alpha, orientation, grid) ✅ · large-image tiling (grid encode) ✅ · hardware decode behind the interface (HEIC) | in progress |
-| 6 | HDR carry-through-convert, observability, golden CI, animation | planned |
+| 5 | AVIF decode (rav1d: colour, alpha, orientation, grid) ✅ · large-image tiling (grid encode) ✅ · HDR gain-map carry through AVIF convert ✅ · hardware decode behind the interface (HEIC) | in progress |
+| 6 | Observability, golden CI, animation | planned |
 
 ## License
 
