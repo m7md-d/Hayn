@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -5,9 +7,11 @@ import 'package:photo_manager/photo_manager.dart';
 import '../../../app/l10n/app_localizations.dart';
 import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
+import '../../../core/isolates/task_runner.dart';
 import '../../../shared/widgets/widgets.dart';
 import '../../library/presentation/providers/asset_entity_cache.dart';
 import '../../library/presentation/widgets/asset_video_player.dart';
+import '../data/remove_audio_task.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RemoveAudioScreen — dedicated single-action screen for stripping audio
@@ -54,6 +58,13 @@ class _RemoveAudioScreenState extends ConsumerState<RemoveAudioScreen> {
   Future<void> _apply() async {
     HapticFeedback.lightImpact();
     final l = AppLocalizations.of(context);
+    // Enqueue the lossless strip-audio engine; it surfaces in the Tasks badge
+    // with progress + cancel and saves a muted copy as a new gallery asset.
+    unawaited(
+      ref
+          .read(taskRunnerProvider.notifier)
+          .enqueue(RemoveAudioTask(assetId: widget.assetId)),
+    );
     HaynSnack.success(context, l.removeAudioQueued);
     Navigator.of(context).pop();
   }

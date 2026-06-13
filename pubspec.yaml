@@ -34,6 +34,15 @@ dependencies:
 
   # In-app video playback (Asset Detail)
   video_player: ^2.9.2
+  # Video/audio engine. The original arthenica ffmpeg_kit is retired (binaries
+  # pulled Apr 2025) — this is the live community fork (CLAUDE.md §6). The `_min`
+  # variant is LGPL (NOT *_gpl: no x264/x265 patent burden) and the SMALLEST
+  # build: it natively decodes H.264/HEVC/VP8/9 for frame extraction, and our
+  # only operations are stream-copy (remove-audio, lossless trim) + decode.
+  # Re-encoding video uses the platform codecs (MediaCodec/VideoToolbox), never
+  # ffmpeg's encoders, so the LGPL min build is sufficient. Requires Android
+  # minSdk 24.
+  ffmpeg_kit_flutter_new_min: ^3.1.0
   drift: ^2.33.0
   sqlite3_flutter_libs: ^0.6.0+eol
   path_provider: ^2.1.5
