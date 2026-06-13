@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -5,8 +7,10 @@ import 'package:photo_manager/photo_manager.dart';
 import '../../../app/l10n/app_localizations.dart';
 import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
+import '../../../core/isolates/task_runner.dart';
 import '../../../shared/widgets/widgets.dart';
 import '../../library/presentation/providers/asset_entity_cache.dart';
+import '../../video_ops/data/extract_frames_task.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ExtractFramesScreen — pick a method (every N seconds / fps / single frame),
@@ -71,6 +75,18 @@ class _ExtractFramesScreenState extends ConsumerState<ExtractFramesScreen> {
   void _save() {
     HapticFeedback.lightImpact();
     final l = AppLocalizations.of(context);
+    final task = ExtractFramesTask(
+      assetId: widget.assetId,
+      mode: switch (_method) {
+        _Method.everyNSeconds => FrameMode.interval,
+        _Method.atFps => FrameMode.fps,
+        _Method.single => FrameMode.single,
+      },
+      intervalSeconds: _interval,
+      fps: _fps,
+      atSeconds: _cursor,
+    );
+    unawaited(ref.read(taskRunnerProvider.notifier).enqueue(task));
     HaynSnack.success(context, l.framesSavingCount(_previewCount));
     Navigator.of(context).pop();
   }

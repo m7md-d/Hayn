@@ -177,6 +177,8 @@ String taskTitleFor(TaskType t, AppLocalizations l) => switch (t) {
       TaskType.compress || TaskType.convert => l.toolCompress,
       TaskType.crop => l.toolCrop,
       TaskType.stripMetadata => l.toolStripMetadata,
+      TaskType.stripAudio => l.toolRemoveAudio,
+      TaskType.extractFrames => l.toolExtractFrames,
       _ => l.tasksTitle,
     };
 
@@ -184,6 +186,8 @@ IconData taskIconFor(TaskType t) => switch (t) {
       TaskType.compress || TaskType.convert => Icons.compress_rounded,
       TaskType.crop => Icons.crop_rounded,
       TaskType.stripMetadata => Icons.cleaning_services_rounded,
+      TaskType.stripAudio => Icons.volume_off_rounded,
+      TaskType.extractFrames => Icons.burst_mode_rounded,
       _ => Icons.auto_fix_high_rounded,
     };
 

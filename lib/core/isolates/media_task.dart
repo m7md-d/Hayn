@@ -10,6 +10,7 @@ enum TaskType {
   smartCut,
   crop,
   stripAudio,
+  extractFrames,
   gifify,
   animatedWebp,
   animatedAvif,
