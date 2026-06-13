@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -5,8 +7,10 @@ import 'package:photo_manager/photo_manager.dart';
 import '../../../app/l10n/app_localizations.dart';
 import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
+import '../../../core/isolates/task_runner.dart';
 import '../../../shared/widgets/widgets.dart';
 import '../../library/presentation/providers/asset_entity_cache.dart';
+import '../../video_ops/data/animate_gif_task.dart';
 import '../../video_ops/presentation/widgets/video_timeline.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -89,6 +93,28 @@ class _AnimateFromVideoScreenState
   void _export() {
     HapticFeedback.lightImpact();
     final l = AppLocalizations.of(context);
+    // GIF is encodable now (ffmpeg, lightweight); animated WebP/AVIF land via
+    // DarkLib — until then, say so honestly rather than fake a queued success.
+    if (_format != _AnimFormat.gif) {
+      HaynSnack.info(context, l.toolsComingSoon);
+      return;
+    }
+    final h = switch (_resolution) {
+      '480p' => 480,
+      '1080p' => 1080,
+      _ => 720,
+    };
+    unawaited(
+      ref.read(taskRunnerProvider.notifier).enqueue(
+            AnimateGifFromVideoTask(
+              assetId: widget.assetId,
+              startSeconds: _start,
+              endSeconds: _end,
+              fps: _fps.round(),
+              height: h,
+            ),
+          ),
+    );
     HaynSnack.success(context, l.animatedExportQueued);
     Navigator.of(context).pop();
   }
