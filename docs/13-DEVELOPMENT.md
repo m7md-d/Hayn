@@ -15,8 +15,11 @@
 | `~/Library/Caches/Homebrew` | `Development/caches/homebrew` |
 | `~/Library/Android/sdk` | `Development/android-sdk` |
 | Java المستخدم لـFlutter/Android | `Development/jdks/temurin-21` |
+| `~/.cargo/registry` و`~/.cargo/git` | `Development/caches/cargo` |
+| `~/.dartServer` (ذاكرة محلل Dart) | `Development/caches/dartServer` |
+| مجلدات Xcode وCocoaPods وSwiftPM | انظر [iOS وXcode](#ios-وxcode) |
 
-بقي `~/.cargo` الصغير نسبيًا وملفات إعداد الطرفية داخليًا. Xcode والمتصفحات وبياناتها لم تُنقل. مجلدا build وRust target داخل المشروع موجودان أصلًا على القرص الخارجي.
+بقي `~/.cargo/bin` الصغير وملفات إعداد الطرفية داخليًا. `Xcode.app` نفسه والمتصفحات لم تُنقل. مجلدا build وRust target داخل المشروع موجودان أصلًا على القرص الخارجي.
 
 ملف الإعداد الصغير `~/.config/hayn-development.zsh` يُقرأ من `.zprofile` و`.zshrc`. يحدد Android وJava ومسارات الأدوات، ويحتفظ Pub وGradle بالمسارات المعتادة عبر الروابط. ضبط Flutter يشير إلى SDK ورابط JDK نفسه. Java السابق لا يزال مثبتًا؛ بيئة تطوير الطرفية تستخدم Java 21 الآن.
 
@@ -65,4 +68,54 @@ flutter build apk --debug --target-platform android-arm64
 
 اختبار مكتبة المضيف احتاج إعادة `cargo build --locked` لأن dylib القديمة لم تطابق FRB content hash؛ البناء الناجح لا يعني أن كل artifact قديم في target صالح مع الجسر الحالي.
 
-بناء iOS لا يزال متعذرًا: Xcode يذكر أن وجهة iOS 26.2 غير مثبتة. ظهور رقم SDK وحده لا يثبت وجود منصة قابلة للبناء. أُلغيت ترقية حد iOS التي أجراها Flutter تلقائيًا أثناء المحاولة، ولم تُثبت منصة أو محاكيات إضافية. عند محاولة البناء لاحقًا يمكن توجيه CocoaPods خارجيًا باستخدام `CP_HOME_DIR` و`CP_CACHE_DIR`؛ استُخدمت قيم تحت `Development/caches/cocoapods` في هذه المحاولة، لكن CocoaPods لم يصل إلى مرحلة تنزيل الحزم. لم تُضف روابط أو متغيرات دائمة له في هذه الدفعة.
+بناء iOS لا يزال متعذرًا: Xcode يذكر أن وجهة iOS 26.2 غير مثبتة. ظهور رقم SDK وحده لا يثبت وجود منصة قابلة للبناء. أُلغيت ترقية حد iOS التي أجراها Flutter تلقائيًا أثناء المحاولة، ولم تُثبت منصة أو محاكيات إضافية. عند محاولة البناء لاحقًا يمكن توجيه CocoaPods خارجيًا باستخدام `CP_HOME_DIR` و`CP_CACHE_DIR`؛ استُخدمت قيم تحت `Development/caches/cocoapods` في هذه المحاولة، لكن CocoaPods لم يصل إلى مرحلة تنزيل الحزم. لم تُضف روابط أو متغيرات دائمة له في هذه الدفعة. (حُلّ لاحقًا — انظر القسم التالي.)
+
+## iOS وXcode
+
+أُعدّ بتاريخ 2026-09-26. `Xcode.app` (26.3، SDK iOS 26.2) باقٍ في `/Applications` عمدًا؛ المنقول هو ما ينزّله Xcode والأدوات تلقائيًا بعد ذلك.
+
+### منصة iOS (المحاكي) — الاستثناء الداخلي الوحيد
+
+Xcode 26 يرفض حتى وجهة **Any iOS Device** (البناء لجهاز فعلي) ما لم تُثبت منصة iOS المطابقة لـSDK: `iOS 26.2 is not installed`. المنصة هي محاكي iOS نفسه، ولا صلة لإصدارها بإصدار الهاتف المستهدف؛ الهاتف يعمل بأي iOS ≥ حد المشروع. لا توجد محاكيات iOS 18.7 أصلًا (آخر iOS 18 في فهرس Apple هو 18.6).
+
+المثبت: **iOS 26.3.1 (23D8133)، variant `arm64`** — أصغر من universal بنحو 2 GiB، ويكفي Mac بمعالج Apple.
+
+**لا يمكن تخزينها خارجيًا.** `simdiskimaged` مقيد بـsandbox على `/Library/Developer/CoreSimulator/...`، والنسخ دون مساحة إضافية (clone) لا يعمل بين قرصين. و`xcodebuild -downloadPlatform ... -exportPath` **يسجّل المنصة داخليًا أيضًا** (في `/System/Library/AssetsV2`) ثم يصدّر نسخة إلى المسار المحدد. التكلفة الداخلية الفعلية:
+
+| البند | الحجم | المكان |
+|---|---|---|
+| صورة المحاكي | 7.8 GiB | `/System/Library/AssetsV2/com_apple_MobileAsset_iOSSimulatorRuntime` |
+| dyld shared cache للمحاكي | 3.8 GiB | `/Library/Developer/CoreSimulator/Caches/dyld/<macOS build>/` — يُعاد توليده عند تحديث macOS |
+
+نسخة أرشيفية من الصورة: `Development/apple/runtimes/iphonesimulator_26.3.1_23D8133.dmg`. لتحرير المساحة الداخلية مؤقتًا: `xcrun simctl runtime delete <id>`، ثم عند الحاجة `xcrun simctl runtime add <dmg>` دون تنزيل.
+
+- **لا تضف الـdmg والمنصة نفسها مسجلة.** ينتج نسخة `Unusable - Duplicate` تأخذ 7.8 GiB أخرى في `/Library/Developer/CoreSimulator/Images/Inbox`. افحص بـ`xcrun simctl runtime list` واحذف المكرر بـ`xcrun simctl runtime delete <id>`.
+- **كل تحديث لـXcode بـSDK جديد يطلب منصة جديدة** (~8 GiB + cache). عطّل التحديث التلقائي لـXcode في App Store وحدّث عن قصد، ثم احذف المنصة القديمة.
+- منصات watchOS/tvOS/visionOS وMetal Toolchain من Settings ← Components تُخزن داخليًا بالآلية نفسها؛ المشروع لا يحتاجها.
+
+### المسارات المنقولة
+
+روابط بنفس أسلوب الجدول أعلاه؛ السجل في `Development/logs/ios-migration.json` والنسخ الاحتياطية الصغيرة في `Development/backups/ios-20260926`.
+
+| المسار المعتاد | مكان البيانات الفعلي |
+|---|---|
+| `~/Library/Developer/Xcode/DerivedData` | `Development/apple/xcode/DerivedData` |
+| `~/Library/Developer/Xcode/iOS DeviceSupport` و`watchOS DeviceSupport` | `Development/apple/xcode/…` |
+| `~/Library/Developer/Xcode/Archives` | `Development/apple/xcode/Archives` |
+| `~/Library/Developer/DVTDownloads` | `Development/apple/DVTDownloads` |
+| `~/.cocoapods` و`~/Library/Caches/CocoaPods` | `Development/caches/cocoapods/{home,cache}` |
+| `~/Library/Caches/org.swift.swiftpm` | `Development/caches/swiftpm` |
+
+أهداف Rust `aarch64-apple-ios` و`aarch64-apple-ios-sim` مثبتة (rustup خارجي أصلًا). cargokit يثبت `x86_64-apple-ios` تلقائيًا إن طُلب.
+
+**ما يكتب فيه `CoreSimulatorService` يبقى داخليًا:** `~/Library/Developer/CoreSimulator/{Devices,Caches}` و`~/Library/Developer/XCTestDevices` و`~/Library/Developer/Xcode/UserData/IB Support`. الخدمة تعمل في الخلفية دون إذن TCC للأقراص الخارجية فتفشل بـ`EPERM` (`Operation not permitted`) — لا تُنشأ أجهزة المحاكي، ويفشل `ibtool` في تجميع الـstoryboards (`Failed to find or create execution context … IBCocoaTouchFramework`). نُقلت ثم أُعيدت لهذا السبب؛ النسخ الخارجية المعزولة في `Development/backups/ios-20260926/reverted-external`. حجمها صغير ما لم يُشغَّل المحاكي.
+
+### التحقق
+
+`flutter build ios --debug --no-codesign --no-pub` نجح داخل المشروع (نسخة تحقق معزولة سبقته في `Development/verification/Hayn-ios-20260926`). ذهبت DerivedData (1.8 GiB) وذاكرة CocoaPods إلى الخارجي، ولم يُكتب داخليًا ملف كبير. `--no-pub` يمنع Flutter من تعديل `pubspec.lock` (ما زال لا يطابق حزم SDK المقفلة — انظر أعلاه).
+
+**حد iOS الأدنى: 15.0** (اعتُمد بتاريخ 2026-09-26). Flutter 3.47 يفرضه عند أي بناء iOS؛ عُدّل `IPHONEOS_DEPLOYMENT_TARGET` ×3 في `project.pbxproj`، و`platform :ios` وحلقة `post_install` في `Podfile`. `Podfile.lock` تحدّث ليشمل `darklib` و`ffmpeg_kit_flutter_new_min`. أربع plugins لا تدعم Swift Package Manager وتُبنى عبر CocoaPods (تحذير لا خطأ): `darklib`، `ffmpeg_kit_flutter_new_min`، `flutter_avif_ios`، `flutter_image_compress_common`.
+
+**التطبيق لا يعمل على المحاكي حاليًا:** `ffmpeg_kit_flutter_new_min` لا يوفر شريحة arm64 للمحاكي، ومحاكيات iOS 26+ على Apple Silicon تشترطها (لا علاقة لذلك باختيار variant `arm64` للمنصة). البناء للجهاز الفعلي غير متأثر. المنصة المثبتة تبقى لازمة لأن Xcode يشترطها للبناء.
+
+**الجهاز الفعلي:** `flutter build ios --release --no-pub` بتوقيع تلقائي نجح (3:02، ‏Runner.app ‏64 MB) وثُبّت على iPhone 13 Pro ‏(iOS 18.7.2) عبر `xcrun devicectl device install app`. الفريق `4KF43H9U64` حساب مجاني (Personal Team): ملف التوقيع صالح **7 أيام** ثم يلزم إعادة البناء والتثبيت، وأول تثبيت يتطلب الثقة بالمطوّر على الهاتف من الإعدادات ← عام ← إدارة الجهاز و VPN.
