@@ -432,5 +432,6 @@
   "videoEditorRemoveLossless": "إزالة الصوت بدون فقد — يُنسخ تيار الفيديو كما هو.",
   "videoEditorCodec": "الترميز",
   "videoEditorResolution": "الدقّة",
-  "videoEditorResolutionOriginal": "الأصلية"
+  "videoEditorResolutionOriginal": "الأصلية",
+  "taskIncompleteBatch": "تم حفظ {saved} من أصل {total}. تعذر إكمال بقية العناصر؛ يمكنك عرض النتائج المحفوظة."
 }

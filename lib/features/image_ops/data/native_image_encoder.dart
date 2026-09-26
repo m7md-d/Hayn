@@ -1,32 +1,19 @@
 import 'package:flutter/services.dart';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// NativeImageEncoder — encodes to HEIC/JPEG via the platform's own ImageIO
-// pipeline (iOS), instead of flutter_image_compress. Why we own this step:
-//
-//   • No "opaque image with AlphaLast" warnings: we decode straight to the
-//     source's (opaque) CGImage and hand THAT to CGImageDestination, so there's
-//     no spurious alpha channel for ImageIO to complain about and drop.
-//   • Real camera EXIF survives: when keepMetadata is set we copy the source's
-//     full property set (Exif/TIFF/GPS + colour profile) into the output — which
-//     flutter_image_compress only does for JPEG. Display orientation is always
-//     carried so the photo never comes out rotated.
-//
-// Returns null when there's no native impl (Android/desktop today), the format
-// isn't writable on this OS (e.g. a device with no HEVC encoder), or anything
-// fails — the caller then falls back to the plugin encoder. Never throws.
-// ─────────────────────────────────────────────────────────────────────────────
+import '../../../core/diagnostics/media_diagnostics.dart';
+
+// ImageIO platform adapter. Absent plugins, failed calls and empty results
+// remain distinguishable in release diagnostics. Null permits fallback.
+// Preservation needs independent validation; copying properties alone is not
+// proof of unchanged orientation, colour or HDR (docs/12-STABILIZATION.md).
 
 abstract final class NativeImageEncoder {
   // Shares the lossless-strip channel; the native side multiplexes by method.
   static const MethodChannel channel = MethodChannel('hayn/metadata');
 
   /// Encode [source] to [format] ('heic' | 'jpeg' | 'png') at [quality] (0–100).
-  /// The native side copies the whole source property set then removes only what
-  /// the flags drop: [keepMetadata] governs camera/GPS + the HDR gain map;
-  /// [keepOriginalTime] (independent) governs the in-file capture date. [bitDepth]
-  /// 0 = match the source, 8 = re-encode the base at 8-bit (colour precision
-  /// only — HDR is kept regardless).
+  /// Flags request metadata, capture time and bit depth from the native code.
+  /// Their semantic preservation is not guaranteed by this adapter.
   static Future<Uint8List?> encode({
     required Uint8List source,
     required String format,
@@ -44,17 +31,34 @@ abstract final class NativeImageEncoder {
         'keepOriginalTime': keepOriginalTime,
         'bitDepth': bitDepth,
       });
-      return (res != null && res.isNotEmpty) ? res : null;
+      if (res == null || res.isEmpty) {
+        MediaDiagnostics.record(
+          MediaBackend.imageIO,
+          MediaOperation.encode,
+          MediaDiagnosticCode.emptyOutput,
+        );
+        return null;
+      }
+      return res;
+    } on MissingPluginException {
+      MediaDiagnostics.record(
+        MediaBackend.imageIO,
+        MediaOperation.encode,
+        MediaDiagnosticCode.unavailable,
+      );
+      return null;
     } catch (_) {
+      MediaDiagnostics.record(
+        MediaBackend.imageIO,
+        MediaOperation.encode,
+        MediaDiagnosticCode.exception,
+      );
       return null;
     }
   }
 
-  /// Bake the EXIF orientation INTO the pixels → a LOSSLESS PNG with corrected
-  /// metadata (orientation = 1; date per [keepOriginalTime]; camera/GPS per
-  /// [keepMetadata]). Used for AVIF (flutter_avif mishandles orientation/date)
-  /// and PNG output (PNG viewers ignore EXIF orientation). Lossless — no quality
-  /// loss. Returns null off-iOS / on failure (caller falls back).
+  /// Ask ImageIO for upright PNG pixels. A lossless PNG encoder does not prove
+  /// a lossless decode/colour/HDR conversion from the original image.
   static Future<Uint8List?> bakeUpright({
     required Uint8List source,
     required bool keepMetadata,
@@ -66,8 +70,28 @@ abstract final class NativeImageEncoder {
         'keepMetadata': keepMetadata,
         'keepOriginalTime': keepOriginalTime,
       });
-      return (res != null && res.isNotEmpty) ? res : null;
+      if (res == null || res.isEmpty) {
+        MediaDiagnostics.record(
+          MediaBackend.imageIO,
+          MediaOperation.bake,
+          MediaDiagnosticCode.emptyOutput,
+        );
+        return null;
+      }
+      return res;
+    } on MissingPluginException {
+      MediaDiagnostics.record(
+        MediaBackend.imageIO,
+        MediaOperation.bake,
+        MediaDiagnosticCode.unavailable,
+      );
+      return null;
     } catch (_) {
+      MediaDiagnostics.record(
+        MediaBackend.imageIO,
+        MediaOperation.bake,
+        MediaDiagnosticCode.exception,
+      );
       return null;
     }
   }

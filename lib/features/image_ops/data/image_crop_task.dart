@@ -38,8 +38,8 @@ class ImageCropTask extends MediaTask {
     required this.cropFraction,
     this.quality = 90,
     FormatCapabilities? caps,
-  })  : id = 'crop-${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}',
-        _caps = caps ?? FormatCapabilities.detect();
+  }) : id = 'crop-${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}',
+       _caps = caps ?? FormatCapabilities.detect();
 
   final String assetId;
   final int rotationQuarters; // 0..3, clockwise
@@ -61,7 +61,7 @@ class ImageCropTask extends MediaTask {
   bool _cancelled = false;
 
   @override
-  Stream<TaskProgress> run() async* {
+  Stream<TaskEvent> run() async* {
     yield const TaskProgress(progress: 0, phase: '0/1');
 
     final entity = await AssetEntity.fromId(assetId);
@@ -124,13 +124,16 @@ class ImageCropTask extends MediaTask {
     );
     if (saved == null) throw StateError('Crop save failed');
     outputAssetIds.add(saved.id);
+    if (_cancelled) return;
     yield const TaskProgress(progress: 1, phase: '1/1');
+    yield const TaskSucceeded();
   }
 
   /// Decode [src] to raw RGBA + dimensions via the platform engine (handles
   /// HEIC on iOS, with EXIF orientation already applied). Null on failure.
   Future<({Uint8List rgba, int width, int height})?> _decodeRgba(
-      Uint8List src) async {
+    Uint8List src,
+  ) async {
     try {
       final codec = await ui.instantiateImageCodec(src);
       final frame = await codec.getNextFrame();

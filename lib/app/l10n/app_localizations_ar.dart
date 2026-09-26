@@ -1328,4 +1328,9 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get videoEditorResolutionOriginal => 'الأصلية';
+
+  @override
+  String taskIncompleteBatch(int saved, int total) {
+    return 'تم حفظ $saved من أصل $total. تعذر إكمال بقية العناصر؛ يمكنك عرض النتائج المحفوظة.';
+  }
 }

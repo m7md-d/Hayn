@@ -1,5 +1,3 @@
-import '../errors/app_error.dart';
-import '../result/result.dart';
 import 'task_progress.dart';
 
 enum TaskType {
@@ -38,14 +36,23 @@ abstract class MediaTask {
   /// task fills it in; read by the UI once completed.
   final List<String> outputAssetIds = <String>[];
 
-  /// Emits progress events; completes with Ok or Err.
-  Stream<TaskProgress> run();
+  /// Emits progress followed by one terminal event. Closing is not success.
+  /// Throwing also fails the task. The runner owns cancellation and cleanup.
+  Stream<TaskEvent> run();
 
   Future<void> cancel();
 
-  /// Synchronously clean up temp files.
+  /// Release temporary resources after the producer stops. Called once by the
+  /// runner on every exit; failures are recorded without hiding the result.
   Future<void> cleanup();
 }
 
-/// Result type returned from MediaTask execution.
-typedef TaskResult<T> = Result<T, AppError>;
+/// Some requested items failed. Already saved outputs remain accessible.
+class IncompleteBatch implements Exception {
+  const IncompleteBatch({required this.saved, required this.total});
+  final int saved;
+  final int total;
+
+  @override
+  String toString() => 'Incomplete batch: $saved/$total saved';
+}

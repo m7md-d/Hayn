@@ -1292,4 +1292,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get videoEditorResolutionOriginal => 'Original';
+
+  @override
+  String taskIncompleteBatch(int saved, int total) {
+    return 'Saved $saved of $total. Some items could not be completed; saved results are still available.';
+  }
 }

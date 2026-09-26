@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:photo_manager/photo_manager.dart';
 
 import '../../../core/darklib/darklib.dart';
+import '../../../core/diagnostics/media_diagnostics.dart';
 import '../../../core/isolates/media_task.dart';
 import '../../../core/isolates/task_progress.dart';
 import 'gallery_saver.dart';
@@ -24,7 +25,7 @@ import 'output_name.dart';
 
 class StripMetadataTask extends MediaTask {
   StripMetadataTask({required this.assetIds})
-      : id = 'strip-${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}';
+    : id = 'strip-${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}';
 
   final List<String> assetIds;
 
@@ -43,11 +44,10 @@ class StripMetadataTask extends MediaTask {
   bool _cancelled = false;
 
   @override
-  Stream<TaskProgress> run() async* {
+  Stream<TaskEvent> run() async* {
     final total = assetIds.length;
     if (total == 0) {
-      yield const TaskProgress(progress: 1, phase: '0/0');
-      return;
+      throw ArgumentError('No images selected');
     }
 
     var done = 0;
@@ -112,7 +112,11 @@ class StripMetadataTask extends MediaTask {
           outputAssetIds.add(asset.id);
         }
       } catch (_) {
-        // Skip; continue the batch.
+        MediaDiagnostics.record(
+          MediaBackend.gallery,
+          MediaOperation.save,
+          MediaDiagnosticCode.exception,
+        );
       }
 
       done++;
@@ -120,6 +124,13 @@ class StripMetadataTask extends MediaTask {
     }
 
     if (_cancelled) return;
+    if (saved != total) {
+      MediaDiagnostics.record(
+        MediaBackend.taskRunner,
+        MediaOperation.task,
+        MediaDiagnosticCode.incompleteBatch,
+      );
+    }
     if (saved == 0) {
       // Nothing saved: if it was purely unsupported formats, surface a helpful
       // hint (use Compress for HEIC) rather than a generic failure.
@@ -127,18 +138,22 @@ class StripMetadataTask extends MediaTask {
       throw StateError('Nothing was stripped');
     }
     yield TaskProgress(progress: 1, phase: '$saved/$total');
+    if (saved != total) {
+      throw IncompleteBatch(saved: saved, total: total);
+    }
+    yield const TaskSucceeded();
   }
 
   // Container is preserved by a lossless strip, so the output extension matches
   // the source format.
   static String _extFor(SniffedFormat f) => switch (f) {
-        SniffedFormat.jpeg => 'jpg',
-        SniffedFormat.png => 'png',
-        SniffedFormat.webp => 'webp',
-        SniffedFormat.heic => 'heic',
-        SniffedFormat.avif => 'avif',
-        _ => 'jpg',
-      };
+    SniffedFormat.jpeg => 'jpg',
+    SniffedFormat.png => 'png',
+    SniffedFormat.webp => 'webp',
+    SniffedFormat.heic => 'heic',
+    SniffedFormat.avif => 'avif',
+    _ => 'jpg',
+  };
 
   @override
   Future<void> cancel() async => _cancelled = true;

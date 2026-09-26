@@ -1,4 +1,7 @@
-import 'package:flutter/foundation.dart';
+import 'dart:typed_data';
+
+import '../../../core/diagnostics/media_diagnostics.dart';
+
 import 'package:flutter_avif/flutter_avif.dart' as avif;
 import 'package:flutter_image_compress/flutter_image_compress.dart' as fic;
 
@@ -7,32 +10,9 @@ import '../../settings/providers/preferences_providers.dart';
 import 'native_avif_encoder.dart';
 import 'native_image_encoder.dart';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ImageEncoder — turns source image bytes into a target format, honouring the
-// "detect, don't assume" rule (CLAUDE.md §2/§7): instead of trusting a
-// capability map, it ATTEMPTS the requested encoder and, if the device can't
-// produce it (e.g. HEIC needs a hardware encoder; WebP encode is Android-only
-// in flutter_image_compress), walks an ordered fallback that NEVER drops alpha.
-//
-// Engines (in attempt order per format):
-//   • AVIF       → hardware AV1 (Android MediaCodec) + DarkLib metadata
-//                  transplant → DarkLib (rav1e: metadata/HDR/grid-tiling) →
-//                  flutter_avif (software libaom; covers HEIC sources via the
-//                  platform decode).
-//   • WebP       → DarkLib (every platform, in-file metadata) →
-//                  flutter_image_compress (encode is Android-only).
-//   • HEIC/JPEG/PNG → NativeImageEncoder (iOS ImageIO) first, with
-//                  flutter_image_compress as the fallback. The native path
-//                  avoids the "AlphaLast" warning and carries real camera
-//                  metadata (the plugin only did EXIF for JPEG).
-// All engines run their heavy work off the Dart main isolate (FFI thread /
-// platform thread), so callers don't need to spawn an isolate for the encode.
-//
-// Metadata: DarkLib carries EXIF/XMP/ICC in-file for AVIF/WebP; the native
-// HEIC/JPEG path copies the source's full property set. On the plugin fallback,
-// keepExif is JPEG-only — see [_supportsKeepExif]. Date+GPS are also preserved
-// at the gallery-asset level by the saver.
-// ─────────────────────────────────────────────────────────────────────────────
+// Coordinates the existing backends. Non-empty output is NOT proof that HDR,
+// colour, orientation or metadata survived: see docs/12-STABILIZATION.md.
+// Backend and format fallback are recorded in bounded release diagnostics.
 
 /// Longest output edge we encode. Decoding a ~200 MP image at full size is
 /// ~800 MB of RGBA → an instant OOM, and it also exceeds hardware encoder limits.
@@ -51,7 +31,17 @@ const int kMaxEncodeLongEdge = 8192;
 }
 
 class EncodedImage {
-  const EncodedImage(this.bytes, this.format);
+  const EncodedImage(
+    this.bytes,
+    this.format, {
+    this.backend,
+    this.requestedFormat,
+    this.diagnostics = const [],
+  });
+
+  final MediaBackend? backend;
+  final DefaultFormat? requestedFormat;
+  final List<MediaDiagnostic> diagnostics;
 
   final Uint8List bytes;
 
@@ -60,19 +50,19 @@ class EncodedImage {
   final DefaultFormat format;
 
   String get extension => switch (format) {
-        DefaultFormat.avif => 'avif',
-        DefaultFormat.heic => 'heic',
-        DefaultFormat.webp => 'webp',
-        DefaultFormat.png => 'png',
-        DefaultFormat.jpeg => 'jpg',
-        DefaultFormat.auto => 'jpg',
-      };
+    DefaultFormat.avif => 'avif',
+    DefaultFormat.heic => 'heic',
+    DefaultFormat.webp => 'webp',
+    DefaultFormat.png => 'png',
+    DefaultFormat.jpeg => 'jpg',
+    DefaultFormat.auto => 'jpg',
+  };
 }
 
 abstract final class ImageEncoder {
   /// Encode [source] to [target] at [quality] (0–100). On encoder failure walks
   /// [fallbackChain]. Returns the bytes + the format actually produced. Throws
-  /// only if even the universal floor (PNG/JPEG) fails.
+  /// if all attempted encoders fail. Diagnostics accompany success or failure.
   static Future<EncodedImage> encode({
     required Uint8List source,
     required DefaultFormat target,
@@ -83,9 +73,16 @@ abstract final class ImageEncoder {
     int bitDepth = 0,
     int? maxWidth,
     int? maxHeight,
-  }) async {
+  }) => MediaDiagnostics.trace((trace) async {
     for (final fmt in fallbackChain(target, hasAlpha)) {
-      final bytes = await _tryEncode(
+      if (fmt != target) {
+        MediaDiagnostics.record(
+          MediaBackend.imageEncoder,
+          MediaOperation.encode,
+          MediaDiagnosticCode.formatFallback,
+        );
+      }
+      final encoded = await _tryEncode(
         source: source,
         format: fmt,
         quality: quality,
@@ -95,19 +92,32 @@ abstract final class ImageEncoder {
         maxWidth: maxWidth,
         maxHeight: maxHeight,
       );
-      if (bytes != null && bytes.isNotEmpty) return EncodedImage(bytes, fmt);
+      if (encoded != null) {
+        return EncodedImage(
+          encoded.bytes,
+          encoded.format,
+          backend: encoded.backend,
+          requestedFormat: target,
+          diagnostics: trace.events,
+        );
+      }
     }
-    throw StateError('No image encoder succeeded for $target');
-  }
+    throw ImageEncodingFailure(target, trace.events);
+  });
 
   /// Ordered formats to attempt: requested first, then alpha-aware fallbacks.
-  /// PNG is the always-available alpha-safe floor; JPEG the opaque floor. An
+  /// PNG is the final alpha-capable candidate; JPEG is opaque. An
   /// alpha image never lists JPEG. Pure + unit-testable.
-  static List<DefaultFormat> fallbackChain(DefaultFormat target, bool hasAlpha) {
+  static List<DefaultFormat> fallbackChain(
+    DefaultFormat target,
+    bool hasAlpha,
+  ) {
     final out = <DefaultFormat>[];
     void add(DefaultFormat f) {
       if (f == DefaultFormat.auto) return;
-      if (hasAlpha && f == DefaultFormat.jpeg) return; // never flatten on fallback
+      if (hasAlpha && f == DefaultFormat.jpeg) {
+        return; // never flatten on fallback
+      }
       if (!out.contains(f)) out.add(f);
     }
 
@@ -122,7 +132,7 @@ abstract final class ImageEncoder {
     return out;
   }
 
-  static Future<Uint8List?> _tryEncode({
+  static Future<EncodedImage?> _tryEncode({
     required Uint8List source,
     required DefaultFormat format,
     required int quality,
@@ -132,33 +142,37 @@ abstract final class ImageEncoder {
     int? maxWidth,
     int? maxHeight,
   }) async {
+    var backend = MediaBackend.androidAvif;
     try {
       if (format == DefaultFormat.avif) {
-        // Hardware AV1 (Android MediaCodec) → real .avif, royalty-free + fast,
-        // instead of software libaom. It self-validates its output and returns
-        // null on iOS / older SoCs / any failure → we fall back to the software
-        // paths below. The hardware encoder can't write in-file metadata, so
-        // DarkLib transplants the source's EXIF/XMP/ICC into its output by
-        // lossless container surgery (works for ANY source incl. HEIC — extract
-        // is container-level, no decode needed). Transplant failure just means
-        // the bytes come back unchanged — never worse than before.
-        final hw =
-            await NativeAvifEncoder.encode(source: source, quality: quality);
+        // Hardware output is followed by a best-effort metadata transplant.
+        // This path still needs independent preservation verification.
+        final hw = await NativeAvifEncoder.encode(
+          source: source,
+          quality: quality,
+        );
         if (hw != null && hw.isNotEmpty) {
-          if (!keepMetadata) return hw;
-          return await DarkLibCore.transplantMetadata(
-                source: source,
-                target: hw,
-              ) ??
-              hw;
+          if (!keepMetadata) return EncodedImage(hw, format, backend: backend);
+          final withMetadata = await DarkLibCore.transplantMetadata(
+            source: source,
+            target: hw,
+          );
+          if (withMetadata == null || withMetadata.isEmpty) {
+            MediaDiagnostics.record(
+              MediaBackend.darklib,
+              MediaOperation.transplant,
+              MediaDiagnosticCode.preservationUnverified,
+            );
+          }
+          return EncodedImage(
+            withMetadata == null || withMetadata.isEmpty ? hw : withMetadata,
+            format,
+            backend: backend,
+          );
         }
 
-        // DarkLib software AVIF (rav1e): carries EXIF/XMP/ICC properly, keeps
-        // an HDR gain map on AVIF→AVIF, synthesises ICC from nclx, and tiles
-        // huge opaque images as an ImageGrid instead of failing. Covers every
-        // source it can decode (JPEG/PNG/WebP/AVIF); HEIC sources return null
-        // here and continue to the flutter_avif path, which decodes via the
-        // platform.
+        // DarkLib software AVIF. Preservation limitations remain in phase B.
+        backend = MediaBackend.darklib;
         final dark = await DarkLibCore.transcode(
           source,
           format: DarkLibFormat.avif,
@@ -166,14 +180,12 @@ abstract final class ImageEncoder {
           keepMetadata: keepMetadata,
           maxEdge: maxWidth ?? 0,
         );
-        if (dark != null && dark.isNotEmpty) return dark;
+        if (dark != null && dark.isNotEmpty) {
+          return EncodedImage(dark, format, backend: backend);
+        }
 
-        // HEIC bridge (hybrid decode): DarkLib never software-decodes HEVC, so
-        // a HEIC source lands here. bakeUpright (iOS ImageIO) decodes it via
-        // the PLATFORM into an upright lossless PNG carrying the metadata —
-        // which DarkLib then encodes properly (ICC/XMP carried, HEIC bytes
-        // never touched by us). Off-iOS the bake is null (Android HEIC→AVIF is
-        // already covered by the hardware path above).
+        // Platform decode bridge for sources DarkLib cannot decode directly.
+        // PNG encoding does not prove preservation of source HDR or colour.
         final baked = await NativeImageEncoder.bakeUpright(
           source: source,
           keepMetadata: keepMetadata,
@@ -187,18 +199,17 @@ abstract final class ImageEncoder {
             keepMetadata: keepMetadata,
             maxEdge: maxWidth ?? 0,
           );
-          if (bridged != null && bridged.isNotEmpty) return bridged;
+          if (bridged != null && bridged.isNotEmpty) {
+            return EncodedImage(bridged, format, backend: backend);
+          }
         }
 
         // Lower quantizer = higher quality. Map 0–100 → ~[55..12].
         final maxQ = (63 - quality * 0.5).round().clamp(12, 55);
         final minQ = (maxQ - 12).clamp(0, maxQ);
-        // flutter_avif floor: software libaom. The bake (when available) hands
-        // it an already-upright PNG whose embedded EXIF is exactly what we want
-        // (flutter_avif mishandles orientation + date otherwise); PNG is
-        // lossless so only the AVIF pass is lossy. Per-image, one-at-a-time in
-        // the task. Off-iOS: keepExif:false fallback.
+        // Transitional software fallback; its EXIF handling is limited.
         final input = baked ?? source;
+        backend = MediaBackend.flutterAvif;
         final out = await avif.encodeAvif(
           input,
           minQuantizer: minQ,
@@ -211,7 +222,7 @@ abstract final class ImageEncoder {
           speed: 8,
           keepExif: baked != null && keepMetadata,
         );
-        return out;
+        return _result(out, format, backend);
       }
 
       final cf = switch (format) {
@@ -231,6 +242,7 @@ abstract final class ImageEncoder {
       // (bakeUpright → DarkLib); off-iOS the bake is null and the plugin below
       // handles it (Android decodes HEIC platform-side).
       if (format == DefaultFormat.webp) {
+        backend = MediaBackend.darklib;
         final dark = await DarkLibCore.transcode(
           source,
           format: DarkLibFormat.webp,
@@ -238,7 +250,9 @@ abstract final class ImageEncoder {
           keepMetadata: keepMetadata,
           maxEdge: maxWidth ?? 0,
         );
-        if (dark != null && dark.isNotEmpty) return dark;
+        if (dark != null && dark.isNotEmpty) {
+          return EncodedImage(dark, format, backend: backend);
+        }
         final baked = await NativeImageEncoder.bakeUpright(
           source: source,
           keepMetadata: keepMetadata,
@@ -252,23 +266,25 @@ abstract final class ImageEncoder {
             keepMetadata: keepMetadata,
             maxEdge: maxWidth ?? 0,
           );
-          if (bridged != null && bridged.isNotEmpty) return bridged;
+          if (bridged != null && bridged.isNotEmpty) {
+            return EncodedImage(bridged, format, backend: backend);
+          }
         }
       }
 
       final noCap = maxWidth == null && maxHeight == null;
 
-      // PNG output: viewers ignore EXIF orientation, so bake it into the pixels
-      // (lossless) rather than leave a tag that shows sideways. The bake also
-      // carries the corrected metadata. Falls through to the plugin off-iOS
-      // (Android applies orientation on decode).
+      // Prefer upright platform pixels for PNG; source preservation remains
+      // subject to the colour/HDR limitations in the stabilization plan.
       if (noCap && format == DefaultFormat.png) {
         final baked = await NativeImageEncoder.bakeUpright(
           source: source,
           keepMetadata: keepMetadata,
           keepOriginalTime: keepOriginalTime,
         );
-        if (baked != null && baked.isNotEmpty) return baked;
+        if (baked != null && baked.isNotEmpty) {
+          return EncodedImage(baked, format, backend: MediaBackend.imageIO);
+        }
       }
 
       // Prefer our own ImageIO encoder for HEIC/JPEG: it avoids the plugin's
@@ -287,12 +303,15 @@ abstract final class ImageEncoder {
           // Only HEIC honours a forced depth; JPEG is 8-bit anyway.
           bitDepth: format == DefaultFormat.heic ? bitDepth : 0,
         );
-        if (native != null && native.isNotEmpty) return native;
+        if (native != null && native.isNotEmpty) {
+          return EncodedImage(native, format, backend: MediaBackend.imageIO);
+        }
       }
 
       // Huge default bounds = "keep original dimensions"; a real cap only when
       // the caller asks for one. flutter_image_compress scales DOWN to fit.
-      return fic.FlutterImageCompress.compressWithList(
+      backend = MediaBackend.imageCompress;
+      final out = await fic.FlutterImageCompress.compressWithList(
         source,
         format: cf,
         quality: quality.clamp(1, 100),
@@ -300,19 +319,44 @@ abstract final class ImageEncoder {
         minHeight: maxHeight ?? 1000000,
         keepExif: keepMetadata && _supportsKeepExif(format),
       );
-    } catch (e) {
-      // Encoder unavailable / failed on this device → let the chain continue —
-      // but never swallow the reason invisibly (CLAUDE.md §7): surface it in
-      // debug builds so a misbehaving encoder is diagnosable.
-      if (kDebugMode) debugPrint('[ImageEncoder] $format failed: $e');
+      return _result(out, format, backend);
+    } catch (_) {
+      MediaDiagnostics.record(
+        backend,
+        MediaOperation.encode,
+        MediaDiagnosticCode.exception,
+      );
       return null;
     }
   }
 
-  /// flutter_image_compress only carries EXIF through for JPEG (keepExif on
-  /// AVIF double-rotates — see the encode path). WebP/AVIF metadata is now
-  /// handled upstream by DarkLib (in-file EXIF/XMP/ICC); this flag only governs
-  /// the plugin fallback. Capture date + GPS are preserved at the gallery-asset
-  /// level by the saver regardless.
+  static EncodedImage? _result(
+    Uint8List bytes,
+    DefaultFormat format,
+    MediaBackend backend,
+  ) {
+    if (bytes.isEmpty) {
+      MediaDiagnostics.record(
+        backend,
+        MediaOperation.encode,
+        MediaDiagnosticCode.emptyOutput,
+      );
+      return null;
+    }
+    return EncodedImage(bytes, format, backend: backend);
+  }
+
+  /// The plugin can request JPEG EXIF copying. This is not a full metadata,
+  /// orientation, colour or HDR preservation contract.
   static bool _supportsKeepExif(DefaultFormat f) => f == DefaultFormat.jpeg;
+}
+
+class ImageEncodingFailure implements Exception {
+  ImageEncodingFailure(this.requestedFormat, List<MediaDiagnostic> diagnostics)
+    : diagnostics = List.unmodifiable(diagnostics);
+  final DefaultFormat requestedFormat;
+  final List<MediaDiagnostic> diagnostics;
+
+  @override
+  String toString() => 'No image encoder succeeded for ${requestedFormat.name}';
 }

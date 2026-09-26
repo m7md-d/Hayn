@@ -1,4 +1,5 @@
 import 'dart:async';
+
 import 'media_task.dart';
 import 'task_progress.dart';
 
@@ -16,7 +17,7 @@ class DummyTask extends MediaTask {
   bool _cancelled = false;
 
   @override
-  Stream<TaskProgress> run() async* {
+  Stream<TaskEvent> run() async* {
     const steps = 20;
     for (var i = 0; i <= steps; i++) {
       if (_cancelled) return;
@@ -25,10 +26,10 @@ class DummyTask extends MediaTask {
       yield TaskProgress(
         progress: i / steps,
         phase: 'Processing step $i / $steps',
-        estimatedRemaining:
-            Duration(milliseconds: (steps - i) * 200),
+        estimatedRemaining: Duration(milliseconds: (steps - i) * 200),
       );
     }
+    yield const TaskSucceeded();
   }
 
   @override

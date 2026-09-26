@@ -1,5 +1,7 @@
 import 'package:flutter/services.dart';
 
+import '../../../core/diagnostics/media_diagnostics.dart';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // NativeAvifEncoder — bridge to the device's HARDWARE AV1 encoder (Android
 // MediaCodec `video/av01`) which produces a real .avif. This is the royalty-free
@@ -8,7 +10,7 @@ import 'package:flutter/services.dart';
 //
 // Returns null whenever hardware isn't available or anything fails (iOS, older
 // SoCs, an unexpected stream) so the caller transparently falls back to the
-// software encoder — output can never regress.
+// software encoder. Correct preservation still requires output verification.
 // ─────────────────────────────────────────────────────────────────────────────
 
 abstract final class NativeAvifEncoder {
@@ -25,8 +27,16 @@ abstract final class NativeAvifEncoder {
       final ok = await _channel.invokeMethod<bool>('isAvailable') ?? false;
       _available = ok;
       return ok;
-    } catch (_) {
+    } on MissingPluginException {
       _available = false;
+      return false;
+    } catch (_) {
+      MediaDiagnostics.record(
+        MediaBackend.androidAvif,
+        MediaOperation.probe,
+        MediaDiagnosticCode.exception,
+      );
+      // A transient probe error must not disable hardware for this process.
       return false;
     }
   }
@@ -37,13 +47,41 @@ abstract final class NativeAvifEncoder {
     required Uint8List source,
     required int quality,
   }) async {
-    if (!await isAvailable()) return null;
+    if (!await isAvailable()) {
+      MediaDiagnostics.record(
+        MediaBackend.androidAvif,
+        MediaOperation.encode,
+        MediaDiagnosticCode.unavailable,
+      );
+      return null;
+    }
     try {
-      return await _channel.invokeMethod<Uint8List>('encode', {
+      final res = await _channel.invokeMethod<Uint8List>('encode', {
         'bytes': source,
         'quality': quality.clamp(0, 100),
       });
+      if (res == null || res.isEmpty) {
+        MediaDiagnostics.record(
+          MediaBackend.androidAvif,
+          MediaOperation.encode,
+          MediaDiagnosticCode.emptyOutput,
+        );
+        return null;
+      }
+      return res;
+    } on MissingPluginException {
+      MediaDiagnostics.record(
+        MediaBackend.androidAvif,
+        MediaOperation.encode,
+        MediaDiagnosticCode.unavailable,
+      );
+      return null;
     } catch (_) {
+      MediaDiagnostics.record(
+        MediaBackend.androidAvif,
+        MediaOperation.encode,
+        MediaDiagnosticCode.exception,
+      );
       return null;
     }
   }

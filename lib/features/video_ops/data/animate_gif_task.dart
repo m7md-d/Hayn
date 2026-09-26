@@ -52,19 +52,21 @@ class AnimateGifFromVideoTask extends MediaTask {
   String? _outPath;
 
   @override
-  Stream<TaskProgress> run() async* {
+  Stream<TaskEvent> run() async* {
     yield const TaskProgress(progress: 0, phase: 'prepare');
 
     final entity = await AssetEntity.fromId(assetId);
     final input = await entity?.file;
     if (_cancelled) return;
     if (entity == null || input == null) {
-      yield const TaskProgress(progress: 1, phase: 'error');
-      return;
+      throw StateError('Video input or output unavailable');
     }
 
     final dir = await getTemporaryDirectory();
-    final out = p.join(dir.path, 'gif_${DateTime.now().microsecondsSinceEpoch}.gif');
+    final out = p.join(
+      dir.path,
+      'gif_${DateTime.now().microsecondsSinceEpoch}.gif',
+    );
     _outPath = out;
 
     final dur = (endSeconds - startSeconds).clamp(0.1, 60.0);
@@ -73,7 +75,8 @@ class AnimateGifFromVideoTask extends MediaTask {
     // One filtergraph: thin to `fps`, scale to height (even via -2), then split —
     // one branch builds an optimised palette (stats_mode=diff favours moving
     // areas), the other maps to it with light dithering to kill banding.
-    final filter = 'fps=$f,scale=-2:$h:flags=lanczos,'
+    final filter =
+        'fps=$f,scale=-2:$h:flags=lanczos,'
         'split[s0][s1];[s0]palettegen=stats_mode=diff[p];'
         '[s1][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle';
 
@@ -90,20 +93,16 @@ class AnimateGifFromVideoTask extends MediaTask {
     ]);
     if (_cancelled) {
       await _run?.cancel();
-      await cleanup();
       return;
     }
 
     final ok = await _run!.success;
     if (_cancelled) {
-      await cleanup();
       return;
     }
     final file = File(out);
     if (!ok || !await file.exists() || await file.length() == 0) {
-      await cleanup();
-      yield const TaskProgress(progress: 1, phase: 'error');
-      return;
+      throw StateError('Video input or output unavailable');
     }
 
     yield const TaskProgress(progress: 0.9, phase: 'save');
@@ -118,8 +117,10 @@ class AnimateGifFromVideoTask extends MediaTask {
       creationDate: DateTime.now(),
     );
     if (saved != null) outputAssetIds.add(saved.id);
-    await cleanup();
-    yield TaskProgress(progress: 1, phase: saved == null ? 'error' : 'done');
+    if (_cancelled) return;
+    if (saved == null) throw StateError('Video result could not be saved');
+    yield const TaskProgress(progress: 1, phase: 'done');
+    yield const TaskSucceeded();
   }
 
   @override
@@ -132,11 +133,7 @@ class AnimateGifFromVideoTask extends MediaTask {
   Future<void> cleanup() async {
     final path = _outPath;
     if (path == null) return;
-    try {
-      final f = File(path);
-      if (await f.exists()) await f.delete();
-    } catch (_) {
-      // best-effort temp cleanup
-    }
+    final f = File(path);
+    if (await f.exists()) await f.delete();
   }
 }

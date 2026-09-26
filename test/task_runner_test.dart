@@ -15,7 +15,7 @@ class _FailTask extends MediaTask {
   @override
   TaskType get type => TaskType.dummy;
   @override
-  Stream<TaskProgress> run() async* {
+  Stream<TaskEvent> run() async* {
     yield const TaskProgress(progress: 0.3, phase: 'working');
     throw StateError('boom');
   }
@@ -33,9 +33,10 @@ class _OkTask extends MediaTask {
   @override
   TaskType get type => TaskType.dummy;
   @override
-  Stream<TaskProgress> run() async* {
+  Stream<TaskEvent> run() async* {
     yield const TaskProgress(progress: 0.5, phase: 'half');
     yield const TaskProgress(progress: 1, phase: 'done');
+    yield const TaskSucceeded();
   }
 
   @override
@@ -56,16 +57,19 @@ Future<TaskState> _settle(ProviderContainer c, String id) async {
 }
 
 void main() {
-  test('a throwing task ends FAILED — done must not overwrite the error', () async {
-    final c = ProviderContainer();
-    addTearDown(c.dispose);
+  test(
+    'a throwing task ends FAILED — done must not overwrite the error',
+    () async {
+      final c = ProviderContainer();
+      addTearDown(c.dispose);
 
-    await c.read(taskRunnerProvider.notifier).enqueue(_FailTask('f1'));
-    final s = await _settle(c, 'f1');
+      await c.read(taskRunnerProvider.notifier).enqueue(_FailTask('f1'));
+      final s = await _settle(c, 'f1');
 
-    expect(s.status, TaskStatus.failed);
-    expect(s.error, isA<StateError>());
-  });
+      expect(s.status, TaskStatus.failed);
+      expect(s.error, isA<StateError>());
+    },
+  );
 
   test('a normal task ends completed', () async {
     final c = ProviderContainer();
@@ -78,20 +82,23 @@ void main() {
     expect(s.error, isNull);
   });
 
-  test('clearFinished removes completed + failed, keeps the list tidy', () async {
-    final c = ProviderContainer();
-    addTearDown(c.dispose);
-    final runner = c.read(taskRunnerProvider.notifier);
+  test(
+    'clearFinished removes completed + failed, keeps the list tidy',
+    () async {
+      final c = ProviderContainer();
+      addTearDown(c.dispose);
+      final runner = c.read(taskRunnerProvider.notifier);
 
-    await runner.enqueue(_OkTask('ok'));
-    await runner.enqueue(_FailTask('fail'));
-    await _settle(c, 'ok');
-    await _settle(c, 'fail');
-    expect(c.read(taskRunnerProvider).length, 2);
+      await runner.enqueue(_OkTask('ok'));
+      await runner.enqueue(_FailTask('fail'));
+      await _settle(c, 'ok');
+      await _settle(c, 'fail');
+      expect(c.read(taskRunnerProvider).length, 2);
 
-    runner.clearFinished();
-    expect(c.read(taskRunnerProvider), isEmpty);
-  });
+      runner.clearFinished();
+      expect(c.read(taskRunnerProvider), isEmpty);
+    },
+  );
 
   test('remove drops a single finished task', () async {
     final c = ProviderContainer();

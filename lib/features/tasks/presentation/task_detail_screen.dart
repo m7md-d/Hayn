@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../../app/l10n/app_localizations.dart';
 import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
 import '../../../core/isolates/task_runner.dart';
+import '../../../core/isolates/media_task.dart';
 import '../../../shared/widgets/widgets.dart';
 import '../../image_ops/data/image_compress_task.dart';
 import '../../image_ops/data/metadata.dart' show StripUnsupportedFormat;
@@ -89,7 +91,9 @@ class TaskDetailScreen extends ConsumerWidget {
                           width: 48,
                           height: 48,
                           child: IdThumbnail(
-                              id: srcId, placeholderColor: hc.surfaceSunken),
+                            id: srcId,
+                            placeholderColor: hc.surfaceSunken,
+                          ),
                         ),
                       )
                     else
@@ -101,8 +105,11 @@ class TaskDetailScreen extends ConsumerWidget {
                           borderRadius: BorderRadius.circular(AppRadius.sm),
                         ),
                         alignment: Alignment.center,
-                        child: Icon(taskIconFor(task.task.type),
-                            color: hc.accent, size: 22),
+                        child: Icon(
+                          taskIconFor(task.task.type),
+                          color: hc.accent,
+                          size: 22,
+                        ),
                       ),
                     const SizedBox(width: AppSpacing.s3),
                     Expanded(
@@ -118,8 +125,9 @@ class TaskDetailScreen extends ConsumerWidget {
                           const SizedBox(height: 2),
                           Text(
                             l.taskItemsCount(task.task.itemCount),
-                            style: theme.textTheme.bodyMedium
-                                ?.copyWith(color: hc.text2),
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: hc.text2,
+                            ),
                           ),
                         ],
                       ),
@@ -162,13 +170,13 @@ class TaskDetailScreen extends ConsumerWidget {
                     const SizedBox(height: 4),
                     Row(
                       children: [
-                        Icon(Icons.schedule_rounded,
-                            size: 12, color: hc.text3),
+                        Icon(Icons.schedule_rounded, size: 12, color: hc.text3),
                         const SizedBox(width: 4),
                         Text(
                           '~${_formatDuration(progress.estimatedRemaining!)} ${l.taskRemaining}',
-                          style: theme.textTheme.labelSmall
-                              ?.copyWith(color: hc.text3),
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: hc.text3,
+                          ),
                         ),
                       ],
                     ),
@@ -195,7 +203,7 @@ class TaskDetailScreen extends ConsumerWidget {
                 ref.read(taskRunnerProvider.notifier).cancel(task.task.id);
               },
             )
-          else if (task.status == TaskStatus.completed &&
+          else if (task.status != TaskStatus.pending &&
               task.task.outputAssetIds.isNotEmpty)
             HaynPrimaryButton(
               label: l.taskViewOutputButton,
@@ -233,8 +241,11 @@ class TaskDetailScreen extends ConsumerWidget {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.error_outline_rounded,
-                      color: hc.dangerColor, size: 18),
+                  Icon(
+                    Icons.error_outline_rounded,
+                    color: hc.dangerColor,
+                    size: 18,
+                  ),
                   const SizedBox(width: AppSpacing.s2),
                   Expanded(
                     child: Column(
@@ -251,6 +262,11 @@ class TaskDetailScreen extends ConsumerWidget {
                         Text(
                           task.error is StripUnsupportedFormat
                               ? l.stripHeicUnsupported
+                              : task.error is IncompleteBatch
+                              ? l.taskIncompleteBatch(
+                                  (task.error! as IncompleteBatch).saved,
+                                  (task.error! as IncompleteBatch).total,
+                                )
                               : task.error.toString(),
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: hc.dangerColor,
@@ -278,7 +294,9 @@ class TaskDetailScreen extends ConsumerWidget {
   /// Label/value rows for the details card: when it ran, how long it took, and
   /// task-specific parameters (compression format/quality).
   List<({String label, String value})> _detailRows(
-      TaskState task, AppLocalizations l) {
+    TaskState task,
+    AppLocalizations l,
+  ) {
     final rows = <({String label, String value})>[
       (label: l.taskQueuedLabel, value: taskRelativeTime(task.enqueuedAt, l)),
     ];
@@ -308,7 +326,9 @@ class _DetailsCard extends StatelessWidget {
     final theme = Theme.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md, vertical: AppSpacing.s2),
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.s2,
+      ),
       decoration: BoxDecoration(
         color: hc.surface,
         borderRadius: BorderRadius.circular(AppRadius.lg),

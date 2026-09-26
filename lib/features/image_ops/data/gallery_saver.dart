@@ -3,10 +3,12 @@ import 'dart:typed_data';
 
 import 'package:photo_manager/photo_manager.dart';
 
+import '../../../core/diagnostics/media_diagnostics.dart';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GallerySaver — writes a processed image as a NEW asset in the device gallery
 // (photo_manager's editor). The original is never touched; these ops are
-// non-destructive (only Surgical Replace, its own phase, overwrites in place).
+// non-destructive; replacement of the original is outside this service.
 //
 // The save can carry the source's capture date + GPS so the new copy keeps its
 // place in the timeline and its location (EXIF inside the bytes is handled by
@@ -34,6 +36,11 @@ abstract final class GallerySaver {
         longitude: (longitude != null && longitude != 0) ? longitude : null,
       );
     } catch (_) {
+      MediaDiagnostics.record(
+        MediaBackend.gallery,
+        MediaOperation.save,
+        MediaDiagnosticCode.exception,
+      );
       return null;
     }
   }
@@ -56,6 +63,11 @@ abstract final class GallerySaver {
         longitude: (longitude != null && longitude != 0) ? longitude : null,
       );
     } catch (_) {
+      MediaDiagnostics.record(
+        MediaBackend.gallery,
+        MediaOperation.save,
+        MediaDiagnosticCode.exception,
+      );
       return null;
     }
   }

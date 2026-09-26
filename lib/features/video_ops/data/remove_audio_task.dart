@@ -22,7 +22,7 @@ import 'ffmpeg_runner.dart';
 
 class RemoveAudioTask extends MediaTask {
   RemoveAudioTask({required this.assetId})
-      : id = 'rmaudio-${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}';
+    : id = 'rmaudio-${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}';
 
   final String assetId;
 
@@ -40,15 +40,14 @@ class RemoveAudioTask extends MediaTask {
   String? _outPath;
 
   @override
-  Stream<TaskProgress> run() async* {
+  Stream<TaskEvent> run() async* {
     yield const TaskProgress(progress: 0, phase: 'prepare');
 
     final entity = await AssetEntity.fromId(assetId);
     final input = await entity?.file;
     if (_cancelled) return;
     if (entity == null || input == null) {
-      yield const TaskProgress(progress: 1, phase: 'error');
-      return;
+      throw StateError('Video input or output unavailable');
     }
 
     // Output beside the app's temp dir; ".mp4" keeps the MP4/MOV container the
@@ -70,12 +69,17 @@ class RemoveAudioTask extends MediaTask {
     // to FFmpeg's statistics callback for no real UX gain).
     _run = await FfmpegRunner.run([
       '-y',
-      '-i', input.path,
-      '-map', '0:v',
-      '-map', '0:s?',
-      '-c', 'copy',
+      '-i',
+      input.path,
+      '-map',
+      '0:v',
+      '-map',
+      '0:s?',
+      '-c',
+      'copy',
       '-an',
-      '-movflags', '+faststart',
+      '-movflags',
+      '+faststart',
       out,
     ]);
     if (_cancelled) {
@@ -85,27 +89,30 @@ class RemoveAudioTask extends MediaTask {
     yield TaskProgress(
       progress: 0.5,
       phase: 'process',
-      estimatedRemaining:
-          totalMs == null ? null : Duration(milliseconds: totalMs ~/ 4),
+      estimatedRemaining: totalMs == null
+          ? null
+          : Duration(milliseconds: totalMs ~/ 4),
     );
 
     final ok = await _run!.success;
     if (_cancelled) return;
     final file = File(out);
     if (!ok || !await file.exists() || await file.length() == 0) {
-      yield const TaskProgress(progress: 1, phase: 'error');
-      return;
+      throw StateError('Video input or output unavailable');
     }
 
     yield const TaskProgress(progress: 0.9, phase: 'save');
     final saved = await GallerySaver.saveVideo(
       file,
-      filename: '${p.basenameWithoutExtension(await _sourceName(entity))}_muted.mp4',
+      filename:
+          '${p.basenameWithoutExtension(await _sourceName(entity))}_muted.mp4',
       creationDate: DateTime.now(),
     );
     if (saved != null) outputAssetIds.add(saved.id);
-    await cleanup();
-    yield TaskProgress(progress: 1, phase: saved == null ? 'error' : 'done');
+    if (_cancelled) return;
+    if (saved == null) throw StateError('Video result could not be saved');
+    yield const TaskProgress(progress: 1, phase: 'done');
+    yield const TaskSucceeded();
   }
 
   Future<String> _sourceName(AssetEntity e) async =>
@@ -121,11 +128,7 @@ class RemoveAudioTask extends MediaTask {
   Future<void> cleanup() async {
     final path = _outPath;
     if (path == null) return;
-    try {
-      final f = File(path);
-      if (await f.exists()) await f.delete();
-    } catch (_) {
-      // best-effort temp cleanup
-    }
+    final f = File(path);
+    if (await f.exists()) await f.delete();
   }
 }

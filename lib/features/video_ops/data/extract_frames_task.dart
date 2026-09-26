@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
 
+import '../../../core/diagnostics/media_diagnostics.dart';
 import '../../../core/isolates/media_task.dart';
 import '../../../core/isolates/task_progress.dart';
 import '../../image_ops/data/gallery_saver.dart';
@@ -58,15 +59,14 @@ class ExtractFramesTask extends MediaTask {
   Directory? _workDir;
 
   @override
-  Stream<TaskProgress> run() async* {
+  Stream<TaskEvent> run() async* {
     yield const TaskProgress(progress: 0, phase: 'prepare');
 
     final entity = await AssetEntity.fromId(assetId);
     final input = await entity?.file;
     if (_cancelled) return;
     if (entity == null || input == null) {
-      yield const TaskProgress(progress: 1, phase: 'error');
-      return;
+      throw StateError('Video input or output unavailable');
     }
 
     final tmp = await getTemporaryDirectory();
@@ -79,45 +79,55 @@ class ExtractFramesTask extends MediaTask {
 
     final args = switch (mode) {
       FrameMode.interval => [
-          '-y', '-i', input.path,
-          '-vf', 'fps=1/${intervalSeconds <= 0 ? 1 : intervalSeconds}',
-          '-frames:v', '$_maxFrames',
-          pattern,
-        ],
+        '-y',
+        '-i',
+        input.path,
+        '-vf',
+        'fps=1/${intervalSeconds <= 0 ? 1 : intervalSeconds}',
+        '-frames:v',
+        '$_maxFrames',
+        pattern,
+      ],
       FrameMode.fps => [
-          '-y', '-i', input.path,
-          '-vf', 'fps=${fps <= 0 ? 1 : fps}',
-          '-frames:v', '$_maxFrames',
-          pattern,
-        ],
+        '-y',
+        '-i',
+        input.path,
+        '-vf',
+        'fps=${fps <= 0 ? 1 : fps}',
+        '-frames:v',
+        '$_maxFrames',
+        pattern,
+      ],
       // Seek BEFORE -i for a fast keyframe-accurate seek, one frame out.
       FrameMode.single => [
-          '-y', '-ss', '${atSeconds < 0 ? 0 : atSeconds}',
-          '-i', input.path,
-          '-frames:v', '1',
-          pattern,
-        ],
+        '-y',
+        '-ss',
+        '${atSeconds < 0 ? 0 : atSeconds}',
+        '-i',
+        input.path,
+        '-frames:v',
+        '1',
+        pattern,
+      ],
     };
 
     yield const TaskProgress(progress: 0.3, phase: 'process');
     final ran = await _ffmpeg(args);
     if (_cancelled) {
-      await cleanup();
       return;
     }
     if (!ran) {
-      await cleanup();
-      yield const TaskProgress(progress: 1, phase: 'error');
-      return;
+      throw StateError('Video input or output unavailable');
     }
 
     // Save each produced frame, in filename order, as a new gallery image.
-    final frames = work
-        .listSync()
-        .whereType<File>()
-        .where((f) => f.path.endsWith('.png'))
-        .toList()
-      ..sort((a, b) => a.path.compareTo(b.path));
+    final frames =
+        work
+            .listSync()
+            .whereType<File>()
+            .where((f) => f.path.endsWith('.png'))
+            .toList()
+          ..sort((a, b) => a.path.compareTo(b.path));
     final base = p.basenameWithoutExtension(await _name(entity));
 
     var saved = 0;
@@ -139,12 +149,20 @@ class ExtractFramesTask extends MediaTask {
           outputAssetIds.add(asset.id);
         }
       } catch (_) {
-        // Skip a bad frame; keep saving the rest.
+        MediaDiagnostics.record(
+          MediaBackend.gallery,
+          MediaOperation.save,
+          MediaDiagnosticCode.exception,
+        );
       }
     }
 
-    await cleanup();
-    yield TaskProgress(progress: 1, phase: saved == 0 ? 'error' : 'done');
+    if (_cancelled) return;
+    if (frames.isEmpty || saved != frames.length) {
+      throw IncompleteBatch(saved: saved, total: frames.length);
+    }
+    yield const TaskProgress(progress: 1, phase: 'done');
+    yield const TaskSucceeded();
   }
 
   /// Run FFmpeg via the shared façade (see [FfmpegRunner]); cancellable.
@@ -173,10 +191,6 @@ class ExtractFramesTask extends MediaTask {
   Future<void> cleanup() async {
     final dir = _workDir;
     if (dir == null) return;
-    try {
-      if (await dir.exists()) await dir.delete(recursive: true);
-    } catch (_) {
-      // best-effort temp cleanup
-    }
+    if (await dir.exists()) await dir.delete(recursive: true);
   }
 }

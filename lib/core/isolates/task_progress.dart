@@ -1,4 +1,22 @@
-class TaskProgress {
+sealed class TaskEvent {
+  const TaskEvent();
+}
+
+/// Emit only after all requested work has succeeded, including gallery saves.
+final class TaskSucceeded extends TaskEvent {
+  const TaskSucceeded();
+}
+
+final class TaskFailed extends TaskEvent {
+  const TaskFailed(this.error);
+  final Object error;
+}
+
+final class TaskCancelled extends TaskEvent {
+  const TaskCancelled();
+}
+
+final class TaskProgress extends TaskEvent {
   const TaskProgress({
     required this.progress,
     required this.phase,

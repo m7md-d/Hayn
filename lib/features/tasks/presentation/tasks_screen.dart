@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:url_launcher/url_launcher.dart';
+
 import '../../../app/l10n/app_localizations.dart';
 import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
@@ -26,7 +27,9 @@ import '../../library/presentation/widgets/id_thumbnail.dart';
 
 enum _TasksFilter { all, running, done, failed }
 
-final _tasksFilterProvider = StateProvider<_TasksFilter>((ref) => _TasksFilter.all);
+final _tasksFilterProvider = StateProvider<_TasksFilter>(
+  (ref) => _TasksFilter.all,
+);
 
 class TasksScreen extends ConsumerStatefulWidget {
   const TasksScreen({super.key});
@@ -56,10 +59,12 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
     final filter = ref.watch(_tasksFilterProvider);
 
     final filtered = _applyFilter(tasks, filter);
-    final hasFinished = tasks.any((t) =>
-        t.status == TaskStatus.completed ||
-        t.status == TaskStatus.failed ||
-        t.status == TaskStatus.cancelled);
+    final hasFinished = tasks.any(
+      (t) =>
+          t.status == TaskStatus.completed ||
+          t.status == TaskStatus.failed ||
+          t.status == TaskStatus.cancelled,
+    );
 
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
@@ -101,7 +106,10 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsetsDirectional.fromSTEB(
-                  AppSpacing.md, 0, AppSpacing.md, AppSpacing.s3,
+                  AppSpacing.md,
+                  0,
+                  AppSpacing.md,
+                  AppSpacing.s3,
                 ),
                 child: HaynSegmentedPill<_TasksFilter>(
                   value: filter,
@@ -109,15 +117,21 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
                       ref.read(_tasksFilterProvider.notifier).state = f,
                   items: [
                     HaynSegmentItem(
-                        value: _TasksFilter.all, label: l.tasksFilterAll),
+                      value: _TasksFilter.all,
+                      label: l.tasksFilterAll,
+                    ),
                     HaynSegmentItem(
-                        value: _TasksFilter.running,
-                        label: l.tasksFilterRunning),
+                      value: _TasksFilter.running,
+                      label: l.tasksFilterRunning,
+                    ),
                     HaynSegmentItem(
-                        value: _TasksFilter.done, label: l.tasksFilterDone),
+                      value: _TasksFilter.done,
+                      label: l.tasksFilterDone,
+                    ),
                     HaynSegmentItem(
-                        value: _TasksFilter.failed,
-                        label: l.tasksFilterFailed),
+                      value: _TasksFilter.failed,
+                      label: l.tasksFilterFailed,
+                    ),
                   ],
                 ),
               ),
@@ -135,7 +149,8 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
           else
             SliverPadding(
               padding: const EdgeInsetsDirectional.symmetric(
-                  horizontal: AppSpacing.md),
+                horizontal: AppSpacing.md,
+              ),
               sliver: SliverList.separated(
                 itemCount: filtered.length,
                 separatorBuilder: (_, __) =>
@@ -156,40 +171,46 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
   List<TaskState> _applyFilter(List<TaskState> tasks, _TasksFilter f) =>
       switch (f) {
         _TasksFilter.all => tasks,
-        _TasksFilter.running => tasks
-            .where((t) =>
-                t.status == TaskStatus.running ||
-                t.status == TaskStatus.pending)
-            .toList(),
+        _TasksFilter.running =>
+          tasks
+              .where(
+                (t) =>
+                    t.status == TaskStatus.running ||
+                    t.status == TaskStatus.pending,
+              )
+              .toList(),
         _TasksFilter.done =>
           tasks.where((t) => t.status == TaskStatus.completed).toList(),
-        _TasksFilter.failed => tasks
-            .where((t) =>
-                t.status == TaskStatus.failed ||
-                t.status == TaskStatus.cancelled)
-            .toList(),
+        _TasksFilter.failed =>
+          tasks
+              .where(
+                (t) =>
+                    t.status == TaskStatus.failed ||
+                    t.status == TaskStatus.cancelled,
+              )
+              .toList(),
       };
 }
 
 // Maps a task type to its localised, human-readable title — so the queue
 // reads "Compress · 3 images", not an opaque "compress-1a2b3c" id.
 String taskTitleFor(TaskType t, AppLocalizations l) => switch (t) {
-      TaskType.compress || TaskType.convert => l.toolCompress,
-      TaskType.crop => l.toolCrop,
-      TaskType.stripMetadata => l.toolStripMetadata,
-      TaskType.stripAudio => l.toolRemoveAudio,
-      TaskType.extractFrames => l.toolExtractFrames,
-      _ => l.tasksTitle,
-    };
+  TaskType.compress || TaskType.convert => l.toolCompress,
+  TaskType.crop => l.toolCrop,
+  TaskType.stripMetadata => l.toolStripMetadata,
+  TaskType.stripAudio => l.toolRemoveAudio,
+  TaskType.extractFrames => l.toolExtractFrames,
+  _ => l.tasksTitle,
+};
 
 IconData taskIconFor(TaskType t) => switch (t) {
-      TaskType.compress || TaskType.convert => Icons.compress_rounded,
-      TaskType.crop => Icons.crop_rounded,
-      TaskType.stripMetadata => Icons.cleaning_services_rounded,
-      TaskType.stripAudio => Icons.volume_off_rounded,
-      TaskType.extractFrames => Icons.burst_mode_rounded,
-      _ => Icons.auto_fix_high_rounded,
-    };
+  TaskType.compress || TaskType.convert => Icons.compress_rounded,
+  TaskType.crop => Icons.crop_rounded,
+  TaskType.stripMetadata => Icons.cleaning_services_rounded,
+  TaskType.stripAudio => Icons.volume_off_rounded,
+  TaskType.extractFrames => Icons.burst_mode_rounded,
+  _ => Icons.auto_fix_high_rounded,
+};
 
 enum TaskOpenResult { opened, deleted, none }
 
@@ -290,8 +311,9 @@ class _TaskCard extends StatelessWidget {
                     children: [
                       Text(
                         taskTitleFor(task.type, l),
-                        style: theme.textTheme.bodyLarge
-                            ?.copyWith(fontWeight: FontWeight.w600),
+                        style: theme.textTheme.bodyLarge?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -299,8 +321,9 @@ class _TaskCard extends StatelessWidget {
                       Text(
                         '${l.taskItemsCount(task.itemCount)} · '
                         '${taskRelativeTime(taskState.enqueuedAt, l)}',
-                        style: theme.textTheme.bodySmall
-                            ?.copyWith(color: hc.text2),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: hc.text2,
+                        ),
                       ),
                     ],
                   ),
@@ -345,7 +368,10 @@ class _TaskCard extends StatelessWidget {
   bool _hasAction(TaskStatus s) => s != TaskStatus.pending;
 
   List<Widget> _actionsFor(
-      BuildContext context, TaskStatus status, AppLocalizations l) {
+    BuildContext context,
+    TaskStatus status,
+    AppLocalizations l,
+  ) {
     final hc = context.hc;
     final notifier = ref.read(taskRunnerProvider.notifier);
     final task = taskState.task;
@@ -359,19 +385,22 @@ class _TaskCard extends StatelessWidget {
               notifier.cancel(task.id);
             },
             icon: Icon(Icons.close_rounded, size: 16, color: hc.dangerColor),
-            label: Text(l.taskCancelButton,
-                style: TextStyle(color: hc.dangerColor)),
+            label: Text(
+              l.taskCancelButton,
+              style: TextStyle(color: hc.dangerColor),
+            ),
           ),
         ];
       case TaskStatus.completed:
+      case TaskStatus.failed:
+      case TaskStatus.cancelled:
         return [
           TextButton.icon(
             onPressed: () {
               HapticFeedback.lightImpact();
               notifier.remove(task.id);
             },
-            icon: Icon(Icons.delete_outline_rounded,
-                size: 16, color: hc.text2),
+            icon: Icon(Icons.delete_outline_rounded, size: 16, color: hc.text2),
             label: Text(l.taskRemove, style: TextStyle(color: hc.text2)),
           ),
           const SizedBox(width: AppSpacing.s2),
@@ -390,19 +419,6 @@ class _TaskCard extends StatelessWidget {
               icon: const Icon(Icons.open_in_new_rounded, size: 16),
               label: Text(l.taskViewOutputButton),
             ),
-        ];
-      case TaskStatus.failed:
-      case TaskStatus.cancelled:
-        return [
-          TextButton.icon(
-            onPressed: () {
-              HapticFeedback.lightImpact();
-              notifier.remove(task.id);
-            },
-            icon: Icon(Icons.delete_outline_rounded,
-                size: 16, color: hc.text2),
-            label: Text(l.taskRemove, style: TextStyle(color: hc.text2)),
-          ),
         ];
       default:
         return const [SizedBox.shrink()];

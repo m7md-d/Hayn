@@ -1,10 +1,11 @@
 import 'dart:async';
 
 import 'package:ffmpeg_kit_flutter_new_min/ffmpeg_kit.dart';
-import 'package:ffmpeg_kit_flutter_new_min/ffmpeg_kit_config.dart';
 import 'package:ffmpeg_kit_flutter_new_min/ffprobe_kit.dart';
 import 'package:ffmpeg_kit_flutter_new_min/return_code.dart';
 import 'package:ffmpeg_kit_flutter_new_min/statistics.dart';
+
+import '../../../core/diagnostics/media_diagnostics.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FfmpegRunner — the single seam between the app and the FFmpeg engine
@@ -32,7 +33,15 @@ class FfmpegRun {
   /// Ask FFmpeg to stop this session; [success] then completes false.
   Future<void> cancel() async {
     final id = _sessionId;
-    if (id != null) await FFmpegKit.cancel(id);
+    if (id != null) {
+      try {
+        await FFmpegKit.cancel(id);
+      } finally {
+        // Even a rejected cancel request must not trigger cleanup while the
+        // native session can still be writing to its output files.
+        await _done;
+      }
+    }
   }
 }
 
@@ -45,22 +54,34 @@ abstract final class FfmpegRunner {
     List<String> args, {
     void Function(int timeMs)? onProgress,
   }) async {
-    if (onProgress != null) {
-      FFmpegKitConfig.enableStatisticsCallback((Statistics s) {
-        onProgress(s.getTime());
-      });
-    }
     try {
       final completer = Completer<bool>();
       final session = await FFmpegKit.executeWithArgumentsAsync(
         args,
         (session) async {
-          final rc = await session.getReturnCode();
-          if (!completer.isCompleted) completer.complete(ReturnCode.isSuccess(rc));
+          var succeeded = false;
+          try {
+            succeeded = ReturnCode.isSuccess(await session.getReturnCode());
+          } catch (_) {
+            MediaDiagnostics.record(
+              MediaBackend.ffmpeg,
+              MediaOperation.task,
+              MediaDiagnosticCode.exception,
+            );
+          } finally {
+            if (!completer.isCompleted) completer.complete(succeeded);
+          }
         },
+        null,
+        onProgress == null ? null : (Statistics s) => onProgress(s.getTime()),
       );
       return FfmpegRun._(session.getSessionId(), completer.future);
     } catch (_) {
+      MediaDiagnostics.record(
+        MediaBackend.ffmpeg,
+        MediaOperation.task,
+        MediaDiagnosticCode.exception,
+      );
       return FfmpegRun._(null, Future<bool>.value(false));
     }
   }
@@ -74,6 +95,11 @@ abstract final class FfmpegRunner {
       final secs = double.tryParse(info?.getDuration() ?? '');
       return secs == null ? null : (secs * 1000).round();
     } catch (_) {
+      MediaDiagnostics.record(
+        MediaBackend.ffmpeg,
+        MediaOperation.probe,
+        MediaDiagnosticCode.exception,
+      );
       return null;
     }
   }

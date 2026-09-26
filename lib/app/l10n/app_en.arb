@@ -432,5 +432,17 @@
   "videoEditorRemoveLossless": "Removing sound is lossless — the video stream is copied untouched.",
   "videoEditorCodec": "Codec",
   "videoEditorResolution": "Resolution",
-  "videoEditorResolutionOriginal": "Original"
+  "videoEditorResolutionOriginal": "Original",
+  "taskIncompleteBatch": "Saved {saved} of {total}. Some items could not be completed; saved results are still available.",
+  "@taskIncompleteBatch": {
+    "description": "A batch failed after saving some or none of its outputs.",
+    "placeholders": {
+      "saved": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  }
 }

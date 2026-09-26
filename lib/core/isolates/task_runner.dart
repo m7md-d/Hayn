@@ -1,5 +1,8 @@
 import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../diagnostics/media_diagnostics.dart';
 import 'media_task.dart';
 import 'task_progress.dart';
 
@@ -29,8 +32,9 @@ class TaskState {
   final DateTime? endedAt;
 
   /// Wall-clock duration of the run, once it has both endpoints.
-  Duration? get elapsed =>
-      (startedAt != null && endedAt != null) ? endedAt!.difference(startedAt!) : null;
+  Duration? get elapsed => (startedAt != null && endedAt != null)
+      ? endedAt!.difference(startedAt!)
+      : null;
 
   TaskState copyWith({
     TaskStatus? status,
@@ -51,82 +55,161 @@ class TaskState {
   }
 }
 
+class _ActiveTask {
+  _ActiveTask(this.task);
+  final MediaTask task;
+  final subscription = Completer<StreamSubscription<TaskEvent>?>();
+  Completer<void>? finishing;
+}
+
 class TaskRunner extends Notifier<List<TaskState>> {
-  final _subscriptions = <String, StreamSubscription<TaskProgress>>{};
+  final _active = <String, _ActiveTask>{};
+  bool _disposed = false;
 
   @override
-  List<TaskState> build() => [];
+  List<TaskState> build() {
+    ref.onDispose(() {
+      _disposed = true;
+      for (final run in _active.values.toList()) {
+        unawaited(_finish(run, TaskStatus.cancelled));
+      }
+    });
+    return [];
+  }
 
   Future<void> enqueue(MediaTask task) async {
-    // New work to notify about → the "all done" badge dot should light up again
-    // once it finishes, even if a previous batch was already acknowledged.
+    if (_disposed) throw StateError('Task runner is disposed');
+    if (state.any((s) => s.task.id == task.id)) {
+      throw ArgumentError('Task ID already exists');
+    }
     ref.read(tasksAcknowledgedProvider.notifier).state = false;
+    final now = DateTime.now();
     state = [
       ...state,
       TaskState(
-          task: task,
-          status: TaskStatus.pending,
-          enqueuedAt: DateTime.now()),
+        task: task,
+        status: TaskStatus.running,
+        enqueuedAt: now,
+        startedAt: now,
+      ),
     ];
-    await _start(task);
+    final run = _ActiveTask(task);
+    _active[task.id] = run;
+    try {
+      final sub = task.run().listen(
+        (event) {
+          if (run.finishing != null) return;
+          switch (event) {
+            case TaskProgress():
+              _updateTask(task.id, (s) => s.copyWith(progress: event));
+            case TaskSucceeded():
+              unawaited(_finish(run, TaskStatus.completed));
+            case TaskFailed(:final error):
+              unawaited(_finish(run, TaskStatus.failed, error: error));
+            case TaskCancelled():
+              unawaited(_finish(run, TaskStatus.cancelled));
+          }
+        },
+        onError: (Object error, StackTrace stack) {
+          unawaited(_finish(run, TaskStatus.failed, error: error));
+        },
+        onDone: () {
+          if (run.finishing != null) return;
+          MediaDiagnostics.record(
+            MediaBackend.taskRunner,
+            MediaOperation.task,
+            MediaDiagnosticCode.missingResult,
+          );
+          unawaited(
+            _finish(
+              run,
+              TaskStatus.failed,
+              error: StateError('Task closed without a terminal result'),
+            ),
+          );
+        },
+      );
+      run.subscription.complete(sub);
+    } catch (error) {
+      run.subscription.complete(null);
+      await _finish(run, TaskStatus.failed, error: error);
+    }
   }
 
-  Future<void> _start(MediaTask task) async {
-    _updateTask(task.id,
-        (s) => s.copyWith(status: TaskStatus.running, startedAt: DateTime.now()));
+  /// Reserve the first terminal outcome before awaiting anything. In particular,
+  /// cancel the producer BEFORE waiting for async* subscription cancellation.
+  Future<void> _finish(_ActiveTask run, TaskStatus status, {Object? error}) {
+    if (run.finishing case final existing?) return existing.future;
+    final done = Completer<void>();
+    run.finishing = done;
+    unawaited(_stopAndClean(run, status, error).then((_) => done.complete()));
+    return done.future;
+  }
 
-    final sub = task.run().listen(
-      (progress) {
-        _updateTask(
-          task.id,
-          (s) => s.copyWith(status: TaskStatus.running, progress: progress),
+  Future<void> _stopAndClean(
+    _ActiveTask run,
+    TaskStatus status,
+    Object? error,
+  ) async {
+    if (status == TaskStatus.failed) {
+      MediaDiagnostics.record(
+        MediaBackend.taskRunner,
+        MediaOperation.task,
+        MediaDiagnosticCode.exception,
+      );
+    }
+    if (status != TaskStatus.completed) {
+      try {
+        await run.task.cancel();
+      } catch (cancelError) {
+        MediaDiagnostics.record(
+          MediaBackend.taskRunner,
+          MediaOperation.cancel,
+          MediaDiagnosticCode.exception,
         );
-      },
-      onError: (Object err) {
-        _updateTask(
-            task.id,
-            (s) => s.copyWith(
-                status: TaskStatus.failed,
-                error: err,
-                endedAt: DateTime.now()));
-        _subscriptions.remove(task.id);
-        task.cleanup();
-      },
-      // A throwing async* generator emits the error event AND THEN a done
-      // event — so without this guard `onDone` would overwrite the just-set
-      // `failed` (or `cancelled`) status with `completed`, which is exactly
-      // why crashed tasks were showing up green. Only promote to completed if
-      // the task is still running when the stream closes normally.
-      onDone: () {
-        _updateTask(
-          task.id,
-          (s) => s.status == TaskStatus.running
-              ? s.copyWith(
-                  status: TaskStatus.completed, endedAt: DateTime.now())
-              : s,
-        );
-        _subscriptions.remove(task.id);
-      },
+        error ??= cancelError;
+        status = TaskStatus.failed;
+      }
+    }
+    try {
+      await (await run.subscription.future)?.cancel();
+    } catch (streamError) {
+      MediaDiagnostics.record(
+        MediaBackend.taskRunner,
+        MediaOperation.cancel,
+        MediaDiagnosticCode.exception,
+      );
+      error ??= streamError;
+      status = TaskStatus.failed;
+    }
+    try {
+      await run.task.cleanup();
+    } catch (_) {
+      MediaDiagnostics.record(
+        MediaBackend.taskRunner,
+        MediaOperation.cleanup,
+        MediaDiagnosticCode.exception,
+      );
+    }
+    _active.remove(run.task.id);
+    _updateTask(
+      run.task.id,
+      (s) => s.copyWith(status: status, error: error, endedAt: DateTime.now()),
     );
-
-    _subscriptions[task.id] = sub;
   }
 
   Future<void> cancel(String taskId) async {
-    final taskState = state.where((s) => s.task.id == taskId).firstOrNull;
-    if (taskState == null) return;
-
-    await _subscriptions[taskId]?.cancel();
-    _subscriptions.remove(taskId);
-    await taskState.task.cancel();
-    _updateTask(taskId,
-        (s) => s.copyWith(status: TaskStatus.cancelled, endedAt: DateTime.now()));
+    final run = _active[taskId];
+    if (run != null) await _finish(run, TaskStatus.cancelled);
   }
 
   /// Remove one finished task from the queue. No-op while it's still running.
   void remove(String taskId) {
     final s = state.where((t) => t.task.id == taskId).firstOrNull;
-    if (s == null || s.status == TaskStatus.running) return;
+    if (s == null ||
+        (s.status == TaskStatus.running || s.status == TaskStatus.pending)) {
+      return;
+    }
     state = [
       for (final t in state)
         if (t.task.id != taskId) t,
@@ -143,6 +226,7 @@ class TaskRunner extends Notifier<List<TaskState>> {
   }
 
   void _updateTask(String id, TaskState Function(TaskState) update) {
+    if (_disposed) return;
     state = [
       for (final s in state)
         if (s.task.id == id) update(s) else s,

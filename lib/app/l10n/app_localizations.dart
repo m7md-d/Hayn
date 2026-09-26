@@ -2299,6 +2299,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Original'**
   String get videoEditorResolutionOriginal;
+
+  /// A batch failed after saving some or none of its outputs.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved {saved} of {total}. Some items could not be completed; saved results are still available.'**
+  String taskIncompleteBatch(int saved, int total);
 }
 
 class _AppLocalizationsDelegate

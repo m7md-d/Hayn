@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:photo_manager/photo_manager.dart';
 
 import '../../../core/capabilities/format_capabilities.dart';
+import '../../../core/diagnostics/media_diagnostics.dart';
 import '../../../core/isolates/media_task.dart';
 import '../../../core/isolates/task_progress.dart';
 import '../../settings/providers/preferences_providers.dart';
@@ -35,8 +36,9 @@ class ImageCompressTask extends MediaTask {
     this.precomputedId,
     this.precomputed,
     FormatCapabilities? caps,
-  })  : id = 'compress-${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}',
-        _caps = caps ?? FormatCapabilities.detect();
+  }) : id =
+           'compress-${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}',
+       _caps = caps ?? FormatCapabilities.detect();
 
   final List<String> assetIds;
   final DefaultFormat format;
@@ -54,7 +56,7 @@ class ImageCompressTask extends MediaTask {
   /// Keep the photo's info — camera, EXIF and GPS location — on the new copy.
   final bool keepMetadata;
 
-  /// Target output bit depth: 0 = match source (preserves HDR), 8 = force SDR.
+  /// Requested bit depth; actual HDR preservation is not yet verified.
   final int bitDepth;
 
   /// Release iOS's tmp-exported originals every this many images (memory).
@@ -81,11 +83,10 @@ class ImageCompressTask extends MediaTask {
   bool _cancelled = false;
 
   @override
-  Stream<TaskProgress> run() async* {
+  Stream<TaskEvent> run() async* {
     final total = assetIds.length;
     if (total == 0) {
-      yield const TaskProgress(progress: 1, phase: '0/0');
-      return;
+      throw ArgumentError('No images selected');
     }
 
     var done = 0;
@@ -133,6 +134,11 @@ class ImageCompressTask extends MediaTask {
               maxHeight: cap.maxHeight,
             );
           } catch (_) {
+            MediaDiagnostics.record(
+              MediaBackend.taskRunner,
+              MediaOperation.encode,
+              MediaDiagnosticCode.exception,
+            );
             encoded = null;
           }
         }
@@ -153,8 +159,9 @@ class ImageCompressTask extends MediaTask {
           // PhotoKit falls back to the file's embedded EXIF date on null, which
           // is why an AVIF copy kept its original time. `now` forces the asset
           // to the top of the timeline regardless of any in-file date.
-          creationDate:
-              keepOriginalTime ? entity.createDateTime : DateTime.now(),
+          creationDate: keepOriginalTime
+              ? entity.createDateTime
+              : DateTime.now(),
           latitude: keepMetadata ? entity.latitude : null,
           longitude: keepMetadata ? entity.longitude : null,
         );
@@ -163,7 +170,11 @@ class ImageCompressTask extends MediaTask {
           outputAssetIds.add(asset.id);
         }
       } catch (_) {
-        // Skip this asset; the rest of the batch continues.
+        MediaDiagnostics.record(
+          MediaBackend.gallery,
+          MediaOperation.save,
+          MediaDiagnosticCode.exception,
+        );
       }
 
       done++;
@@ -179,10 +190,21 @@ class ImageCompressTask extends MediaTask {
 
     await PhotoManager.clearFileCache();
     if (_cancelled) return;
+    if (saved != total) {
+      MediaDiagnostics.record(
+        MediaBackend.taskRunner,
+        MediaOperation.task,
+        MediaDiagnosticCode.incompleteBatch,
+      );
+    }
     if (saved == 0) {
       throw StateError('No image was saved');
     }
     yield TaskProgress(progress: 1, phase: '$saved/$total');
+    if (saved != total) {
+      throw IncompleteBatch(saved: saved, total: total);
+    }
+    yield const TaskSucceeded();
   }
 
   @override
