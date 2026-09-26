@@ -75,8 +75,10 @@ app.*.map.json
 **/ios/ServiceDefinitions.json
 **/ios/Runner/GeneratedPluginRegistrant.*
 
-# Agent-specific local config (Claude Code session files)
-.claude/
+# Agent-local settings stay private; shared Claude rules belong in Git.
+.claude/*
+!.claude/rules/
+!.claude/rules/**
 
 # HTML prototype scratchpad — keep out of the source tree
 *_prototype_*.html

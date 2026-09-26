@@ -1,5 +1,7 @@
 # API reference
 
+> Status reviewed 2026-09-26: this describes the experimental implementation, not a preservation guarantee. The [bounded contract](../../../docs/10-DARKLIB.md) and [known defects](../../../docs/12-STABILIZATION.md) take precedence over older completion claims.
+
 This is the curated reference for DarkLib's public surface — every function and
 type, what it does, and how to use it. It covers two audiences:
 
@@ -102,8 +104,10 @@ impl Default for StripPolicy;               // { Keep, Keep }
 ```rust
 pub fn strip(bytes: &[u8], policy: StripPolicy) -> Result<Vec<u8>>;
 ```
-Remove EXIF/XMP/IPTC (and ICC if `policy.icc == Strip`) losslessly, dispatching on
-the detected container (JPEG/PNG/WebP/AVIF/HEIF). HDR gain maps are preserved.
+Requests EXIF/XMP/IPTC removal (and ICC if `policy.icc == Strip`), dispatching on
+the detected container (JPEG/PNG/WebP/AVIF/HEIF) without pixel re-encoding.
+Known orientation and Ultra-HDR MPF defects mean this is not a preservation
+guarantee; see the stabilization plan.
 `Err(UnsupportedFormat)` for containers without an editor.
 
 ```rust
@@ -113,7 +117,9 @@ pub fn inject(encoded: &[u8], meta: &Canonical) -> Vec<u8>;
 `extract` reads the canonical model; `inject` writes EXIF/XMP/ICC back into already
 -encoded bytes (orientation normalised to 1). Pair them around a re-encode to
 carry metadata across a transcode. `inject` returns the input unchanged if it
-can't safely add the items (verify-or-bail).
+can't safely add the items (current verify-or-bail behavior). The current return
+type does not report that degradation; callers cannot treat this as proof of
+metadata preservation. Explicit result diagnostics are planned.
 
 ```rust
 let meta  = metadata::extract(src);
@@ -199,8 +205,9 @@ struct FormatInfo { format, supports_exif, supports_xmp, supports_icc,
 struct MetadataSummary { has_exif, has_xmp, has_icc, has_gps, has_date,
                          has_camera, orientation: u16, tag_count: u32 }
 ```
-`strip_metadata` keeps the orientation tag always and the ICC profile unless
-`strip_icc` is true; throws on an unsupported container. `read_metadata_summary`
+`strip_metadata` requests keeping orientation and ICC unless `strip_icc` is
+true, but orientation is not consistently retained by the current editors. It
+throws on unsupported containers. `read_metadata_summary`
 powers a "what will be removed" preview and works cross-platform incl. HEIC/AVIF.
 
 ### `api::codec`

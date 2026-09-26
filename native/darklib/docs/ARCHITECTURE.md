@@ -1,5 +1,7 @@
 # Architecture
 
+> Status reviewed 2026-09-26: this describes the experimental implementation, not a preservation guarantee. The [bounded contract](../../../docs/10-DARKLIB.md) and [known defects](../../../docs/12-STABILIZATION.md) take precedence over older completion claims.
+
 DarkLib is one crate with two layers: a **portable pure-Rust engine** and a thin
 **FFI adapter**. Only the engine is meant for general reuse.
 

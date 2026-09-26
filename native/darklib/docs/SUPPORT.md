@@ -1,5 +1,7 @@
 # Supported targets
 
+> Status reviewed 2026-09-26: this describes the experimental implementation, not a preservation guarantee. The [bounded contract](../../../docs/10-DARKLIB.md) and [known defects](../../../docs/12-STABILIZATION.md) take precedence over older completion claims.
+
 DarkLib builds on **stable Rust** for every target it supports.
 
 | Platform | Target triple | ABI | Supported |
@@ -11,7 +13,7 @@ DarkLib builds on **stable Rust** for every target it supports.
 | iOS simulator | `aarch64-apple-ios-sim`, `x86_64-apple-ios` | — | ✅ |
 | Desktop / host | `aarch64-*`, `x86_64-*` | — | ✅ |
 
-**Minimum Supported Rust Version (MSRV): 1.79.**
+**MSRV discrepancy:** the manifest declares 1.79, but locked `image 0.25.10` requires 1.88. The minimum is not certified until tested and reconciled.
 
 ## Why no 32-bit ARM (`armeabi-v7a`)
 
@@ -54,3 +56,11 @@ It's a deliberate non-goal, but if a downstream consumer must target it, the
 options are: build that ABI on a nightly toolchain, or gate the `rav1d` dependency
 behind `cfg(not(target_arch = "arm"))` and fall back to a platform decoder for
 AVIF on 32-bit ARM. Neither is maintained here.
+
+## Packaging caveat (2026-09-26)
+
+Supported DarkLib targets and APK contents are different questions. The current
+debug APK can still contain vendor armv7 libraries; Cargokit also adds x86/x64
+to debug builds. `--split-per-abi` conflicts with the application's current
+`ndk.abiFilters`. See the [measured build results](../../../docs/12-STABILIZATION.md)
+before treating the table above as a guarantee about packaged slices.

@@ -9,8 +9,8 @@ Every change must pass, with no warnings:
 
 ```sh
 cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
+cargo clippy --all-targets --locked -- -D warnings
+cargo test --locked
 ```
 
 Cross-compile sanity (`cargo ndk -t arm64-v8a build`) and, when embedded,
@@ -26,8 +26,9 @@ Cross-compile sanity (`cargo ndk -t arm64-v8a build`) and, when embedded,
   must not re-encode pixels. If you can't do it as container surgery, it doesn't
   belong on that path.
 - **Verify-or-bail for container rebuilds.** Anything that rewrites ISO-BMFF
-  offsets must self-validate (re-parse + byte-compare kept items) and return the
-  input unchanged on any mismatch. Never ship a "probably fine" rebuild.
+  offsets must self-validate (re-parse + byte-compare kept items) and return an
+  explicit error on any mismatch. Returning unchanged input must never count as
+  successful privacy stripping. Validate structure with an independent reader too.
 - **Royalty-free codecs only.** No patent-encumbered software codecs (no x264/
   x265/HEVC). See [docs/FORMATS.md](docs/FORMATS.md).
 - **Contain `unsafe`.** FFI/`unsafe` lifecycles stay in one module with a
@@ -35,8 +36,9 @@ Cross-compile sanity (`cargo ndk -t arm64-v8a build`) and, when embedded,
 - **Test on real, awkward files.** HEIC from iPhones, HDR, transparency, odd
   dimensions, profile-less `nclx` images. Add a golden test with each feature.
 - **Comments in English**, matching the existing code.
-- **Stable Rust only** (MSRV 1.79). Don't introduce nightly requirements; that's
-  exactly why 32-bit ARM is unsupported.
+- **Stable Rust only.** The manifest currently declares 1.79, but locked
+  `image 0.25.10` requires 1.88. Treat this as a known MSRV defect, not verified
+  support. Do not introduce nightly requirements; 32-bit ARM remains unsupported.
 
 ## Adding a format or codec
 
@@ -44,3 +46,12 @@ The engine is built to extend: add detection in `engine::format`, a capability
 row to `FormatDescriptor`, metadata surgery under `engine::metadata`, and a
 `codec::Target`/decode arm as needed — each behind the same interfaces, with
 tests. Keep the pure `engine` free of FFI and platform assumptions.
+
+## Current scope and completion evidence
+
+Read [the bounded contract](../../docs/10-DARKLIB.md),
+[HDR research](../../docs/11-HDR-RESEARCH.md), and
+[stabilization plan](../../docs/12-STABILIZATION.md). These supersede older
+completion claims. A round trip through our own reader is not a conformance
+test. Keep documentation and regression tests with each behavior change;
+remove superseded paths and dependencies when their transition criteria pass.

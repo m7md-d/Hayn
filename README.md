@@ -14,29 +14,19 @@ It happens to run **entirely on your device** as a side effect of the design (no
 
 ---
 
-## What it does
+## Current status
 
-| | Feature | Status |
-|---|---|---|
-| 📦 | **Compress + convert** images with a smart format tree (AVIF → HEIC/HEIF → WebP → JPEG) | UI complete · engine pending |
-| ✂️ | **Crop, rotate, flip, strip metadata** with a custom canvas + rule-of-thirds overlay | UI complete · engine pending |
-| 🩹 | **Surgical replace** — swap an original photo in-place while preserving filename, dates, GPS, metadata and album order, with a trash for safe rollback | UI complete · engine pending |
-| 🎬 | **Trim video** lossless at keyframes, or smart-cut at arbitrary boundaries | UI complete · engine pending |
-| 🟧 | **Crop video** with a re-encode warning and the same crop canvas | UI complete · engine pending |
-| 🔇 | **Remove audio** from a video — lossless, the video stream is copied untouched | UI complete · engine pending |
-| 🎞️ | **Animated images** (GIF / WebP / AVIF) from a video clip or a photo sequence | UI complete · engine pending |
-| 🖼️ | **Extract frames** from a video at intervals, fps, or a single timestamp | UI complete · engine pending |
-| 🎙️ | **Separate music** from voice (offline source separation via ONNX + HTDemucs) | UI complete · model pending |
+The `bedrock` branch contains working library browsing and image operations, a Rust image core (DarkLib), and limited FFmpeg tasks for removing audio, extracting frames and creating GIFs. Image preservation and error handling still have known gaps; this is not a release claim.
 
-All flows enforce four non-negotiable rules: no internet, no quality damage, no destructive operation without a verified backup, no heavy work on the main isolate.
+| Area | Status |
+|---|---|
+| Library, settings, image conversion/crop/metadata tools | Implemented, with preservation defects under review |
+| DarkLib / AVIF / WebP / platform HEIC bridges | Experimental integration; independent compatibility tests required |
+| Remove audio / extract frames / video-to-GIF | Implemented tasks; failure-state handling needs repair |
+| Surgical replacement | Removed; its old design document is historical |
+| Other video/audio tools and source separation | Partial UI or planned; not complete engines |
 
----
-
-## Project status
-
-Hayn is in **active development**. Every screen, gesture, design token, theme, localisation pass and animation is shipping today. The actual codecs and the surgical-replace transaction are scheduled next — see [docs/05-ROADMAP.md](docs/05-ROADMAP.md) for the phase plan and exit criteria.
-
-Today you can run the app, browse your library, navigate every flow end-to-end, and tweak every setting — but the "Save" action is currently a toast. The engines are the next phase.
+Read [the stabilization plan](docs/12-STABILIZATION.md) for measured results and known defects, [DarkLib's bounded contract](docs/10-DARKLIB.md) for scope, and [the HDR research](docs/11-HDR-RESEARCH.md) before changing image preservation. Earlier design documents describe intended features, not completion evidence.
 
 ---
 
@@ -44,10 +34,11 @@ Today you can run the app, browse your library, navigate every flow end-to-end, 
 
 ```bash
 flutter pub get
+flutter gen-l10n
 flutter run
 ```
 
-Tested on Android (Samsung S25, API 36) and the Flutter desktop targets. iOS will follow once the native channels are wired.
+Android and iOS native channels exist. Host tests do not certify device compatibility; see the stabilization plan for verification limits.
 
 ---
 
@@ -62,9 +53,9 @@ Tested on Android (Samsung S25, API 36) and the Flutter desktop targets. iOS wil
 | Video playback | `video_player` |
 | Localisation | Flutter intl + ARB (Arabic / English) with full RTL |
 | Theming | Material 3 + a `HaynColors` `ThemeExtension` for tokens we own |
-| Persistence | `shared_preferences` (prefs); a real DB lands with the engine phase |
+| Persistence | `shared_preferences` (prefs) and Drift (media index) |
 
-Codec choices, the FFmpeg fork situation, and the platform-channel boundaries are documented in [docs/02-ARCHITECTURE.md](docs/02-ARCHITECTURE.md) and [docs/03-FORMATS.md](docs/03-FORMATS.md). **TL;DR:** the original `ffmpeg_kit_flutter` is dead (April 2025) — we ship the community fork `ffmpeg_kit_flutter_new` at LGPL, and we use the system encoders (MediaCodec / VideoToolbox) for the heavy video paths to avoid x264/x265 entirely.
+The current dependency is `ffmpeg_kit_flutter_new_min`; DarkLib uses Rust codecs and platform bridges. Dependency names and versions are recorded in `pubspec.yaml`, Cargo manifests and their lockfiles. Package licensing and distribution requirements must be reviewed for the actual shipped binaries; system codecs are not a blanket legal guarantee.
 
 ---
 
@@ -74,7 +65,11 @@ The docs are split between the contributor guide (root) and the design + feature
 
 | File | What's inside |
 |---|---|
-| [CLAUDE.md](CLAUDE.md) | The agent / contributor handbook. Read this first. The golden rules, the stack, the surgical safety protocol. |
+| [CLAUDE.md](CLAUDE.md) | The agent / contributor handbook. Read this first. Current scope, modular rules, documentation and verification requirements. |
+| [docs/10-DARKLIB.md](docs/10-DARKLIB.md) | Bounded library contract, fallback and preservation policies |
+| [docs/11-HDR-RESEARCH.md](docs/11-HDR-RESEARCH.md) | HDR, grids, gain maps and primary sources |
+| [docs/12-STABILIZATION.md](docs/12-STABILIZATION.md) | Actual status, defects and acceptance gates |
+| [docs/13-DEVELOPMENT.md](docs/13-DEVELOPMENT.md) | External development tools and local setup |
 | [docs/01-PRD.md](docs/01-PRD.md) | Product scope, principles, success criteria |
 | [docs/02-ARCHITECTURE.md](docs/02-ARCHITECTURE.md) | Layers, isolates, task queue, capabilities |
 | [docs/03-FORMATS.md](docs/03-FORMATS.md) | Format decision trees + licensing reasoning |
@@ -85,7 +80,7 @@ The docs are split between the contributor guide (root) and the design + feature
 | [docs/08-COMPONENTS.md](docs/08-COMPONENTS.md) | Component catalog |
 | [docs/09-SCREENS.md](docs/09-SCREENS.md) | Screen catalog + flows |
 | [docs/features/F1-image-ops.md](docs/features/F1-image-ops.md) | Compress / crop / strip metadata |
-| [docs/features/F2-surgical-replace.md](docs/features/F2-surgical-replace.md) | ⚠️ The surgical replace transaction (most consequential) |
+| [docs/features/F2-surgical-replace.md](docs/features/F2-surgical-replace.md) | Historical design for removed surgical replacement |
 | [docs/features/F3-video-editing.md](docs/features/F3-video-editing.md) | Trim, crop, compress video |
 | [docs/features/F4-animated-images.md](docs/features/F4-animated-images.md) | GIF / WebP / AVIF animated |
 | [docs/features/F5-audio-separation.md](docs/features/F5-audio-separation.md) | ⚠️ Music / voice separation |
@@ -95,17 +90,17 @@ The docs are split between the contributor guide (root) and the design + feature
 ## The four non-negotiable rules
 
 1. **Offline. Always.** No `http`, no socket, no analytics, no telemetry. Works in airplane mode.
-2. **No quality damage.** Never re-encode unless absolutely necessary, and never twice.
+2. **Explicit preservation.** Avoid unnecessary re-encoding; identify and validate any loss in precision, color, HDR, alpha or dimensions.
 3. **User data is sacred.** Anything that touches the original goes through a verified, reversible transaction with a trash safety net.
 4. **Heavy work off the main isolate.** The UI stays at 60 / 120 fps no matter what.
 
-These aren't aspirations — they're enforced at the architecture level. See [CLAUDE.md](CLAUDE.md) for the full rules.
+These are requirements; known gaps and their exit criteria are tracked in [the stabilization plan](docs/12-STABILIZATION.md). See [CLAUDE.md](CLAUDE.md) for the contributor rules.
 
 ---
 
 ## Contributing
 
-Read [CLAUDE.md](CLAUDE.md) end-to-end. Then read the feature doc for the area you want to touch. Then write the tests and the feature together. The exit criteria in [docs/05-ROADMAP.md](docs/05-ROADMAP.md) gate the phases — don't claim a phase complete before the cases in [docs/06-TESTING.md](docs/06-TESTING.md) pass.
+Read [CLAUDE.md](CLAUDE.md) end-to-end. Then read the feature doc for the area you want to touch. Then write the tests and the feature together. The current exit criteria in [docs/12-STABILIZATION.md](docs/12-STABILIZATION.md) gate completion. Keep behavior, documentation and tests in the same change.
 
 ```bash
 flutter analyze   # must be clean
@@ -120,6 +115,4 @@ flutter test      # must be green
 
 This is a strong copyleft license: you're free to run, study, modify, redistribute and even commercially use Hayn, but any redistributed version — including modified forks — must stay under the same GPL-3.0 license and ship its complete source. Contributors grant patent rights as part of the licence; there is no warranty.
 
-The codec stack is chosen so that the binary itself never carries
-patent-encumbered code (no `libx264` / `libx265` linked in). The
-reasoning is in [docs/03-FORMATS.md](docs/03-FORMATS.md).
+The project policy avoids bundling x264/x265. This is a packaging policy, not a guarantee about patents or every downstream distribution.

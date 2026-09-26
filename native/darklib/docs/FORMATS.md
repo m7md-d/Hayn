@@ -1,5 +1,7 @@
 # Formats, codecs & colour
 
+> Status reviewed 2026-09-26: this describes the experimental implementation, not a preservation guarantee. The [bounded contract](../../../docs/10-DARKLIB.md) and [known defects](../../../docs/12-STABILIZATION.md) take precedence over older completion claims.
+
 DarkLib's codec choices are driven by two rules: **patent-clean only**, and **no
 avoidable quality loss**.
 

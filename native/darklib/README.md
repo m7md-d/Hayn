@@ -1,5 +1,7 @@
 # DarkLib
 
+> Status reviewed 2026-09-26: this describes the experimental implementation, not a preservation guarantee. The [bounded contract](../../docs/10-DARKLIB.md) and [known defects](../../docs/12-STABILIZATION.md) take precedence over older completion claims.
+
 **An offline, royalty-free image core in Rust** — lossless metadata surgery,
 colour management, and modern-codec decode/encode behind one small engine.
 
@@ -64,11 +66,12 @@ roadmap; see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).)
 codec (see [docs/FORMATS.md](docs/FORMATS.md)); HEIC decode is delegated to the
 platform's hardware decoder. ² via the `image` crate where applicable.
 
-Colour: ICC profiles are carried verbatim; a profile-less AVIF/HEIF (e.g. an
-iPhone Display-P3 HEIC tagged only with `nclx`) gets an ICC **synthesised** from
-its CICP code points so its gamut survives a convert. HDR gain maps are preserved
-through a strip (ISO-BMFF by construction; Ultra-HDR JPEG via XMP property
-surgery).
+Colour and HDR handling are experimental. ICC carry and CICP synthesis exist,
+but the RGBA8 pipeline does not preserve general PQ/HLG precision; strip has
+known orientation and Ultra-HDR JPEG MPF defects. A format checkmark above
+means an API path exists, not that all image properties are preserved. See the
+[stabilization plan](../../docs/12-STABILIZATION.md) and
+[HDR research](../../docs/11-HDR-RESEARCH.md).
 
 ## Supported targets
 
@@ -85,7 +88,7 @@ use darklib::engine::{metadata, codec, format};
 // 1. Sniff the container.
 let fmt = format::detect(bytes);                 // ImageFormat::Avif, …
 
-// 2. Strip metadata losslessly (keeps ICC + orientation by default).
+// 2. Request metadata stripping (known orientation/HDR gaps: see status).
 let clean = metadata::strip(bytes, metadata::StripPolicy::default())?;
 
 // 3. Extract the canonical metadata model (raw EXIF/XMP/ICC + orientation).
@@ -114,15 +117,14 @@ cargo fmt --check
 Cross-compiling for mobile, FFI/codegen, and the asm-off rationale are in
 [docs/BUILD.md](docs/BUILD.md).
 
-## Roadmap
+## Stabilization
 
-| Stage | Scope | State |
-|---|---|---|
-| 0–2 | Toolchain, FFI scaffold, lossless metadata core, live strip | ✅ |
-| 3 | Codec layer — PNG/JPEG/WebP/AVIF encode | ✅ |
-| 4 | Orientation, metadata-carry, colour (ICC + CICP→ICC), HDR strip-safety, capability gate | ✅ |
-| 5 | AVIF decode (rav1d: colour, alpha, orientation, grid) ✅ · large-image tiling (grid encode) ✅ · HDR gain-map carry through AVIF convert ✅ · HEIC decode = hybrid via the host platform (in-Rust interface optional later) | ✅ (hybrid HEIC) |
-| 6 | Live-app migration + golden CI ✅ · streamed decode for giant sources · animation | mostly done |
+The former stage checklist described implementation progress, not independent
+conformance. Current gates cover result/error semantics, preservation defects,
+backend evaluation, and device/resource tests. Follow the
+[bounded contract](../../docs/10-DARKLIB.md) and
+[stabilization plan](../../docs/12-STABILIZATION.md); do not mark the engine
+complete solely because its internal round-trip tests pass.
 
 ## License
 
