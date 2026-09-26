@@ -1,118 +1,166 @@
-# Hayn
+<p align="center">
+  <img src="docs/brand/hayn-icon.png" width="92" alt="">
+</p>
 
-> A free media studio for your phone. Compress, convert, trim, crop and clean your photos and videos — no subscriptions, no ads, no nagging.
+<h1 align="center">Hayn</h1>
 
-[![Flutter](https://img.shields.io/badge/Flutter-3.x-02569B?logo=flutter)](https://flutter.dev) [![Riverpod](https://img.shields.io/badge/Riverpod-2.6-3D5AFE)](https://riverpod.dev) [![Free](https://img.shields.io/badge/Free-forever-success)]() [![No ads](https://img.shields.io/badge/Ads-none-success)]()
+<p align="center">Compress, convert and clean the photos and videos on your phone. Everything runs on the device.</p>
 
----
+<p align="center">
+  <img alt="Version 0.1.0" src="https://img.shields.io/badge/version-0.1.0-1D4ED8">
+  <img alt="Flutter 3.44+" src="https://img.shields.io/badge/Flutter-3.44%2B-02569B?logo=flutter&logoColor=white">
+  <img alt="Dart 3.12+" src="https://img.shields.io/badge/Dart-3.12%2B-0175C2?logo=dart&logoColor=white">
+  <img alt="Rust image core" src="https://img.shields.io/badge/image%20core-Rust-B7410E?logo=rust&logoColor=white">
+  <img alt="iOS 15+ and Android 7+" src="https://img.shields.io/badge/platforms-iOS%2015%2B%20%C2%B7%20Android%207%2B-111111">
+  <img alt="GPL-3.0" src="https://img.shields.io/badge/licence-GPL--3.0-4F86F7">
+</p>
 
-## Why Hayn?
+## What it is
 
-Every free media tool on the store eventually wants something from you — a subscription, an ad-watch, a paywall on the format you actually need. Hayn is the opposite stance: do the job, get out of the way, and if you want to support it, the donate button is right there. No accounts, no upsell modals, no "premium" features hidden behind a card.
+Hayn is a free app for iOS and Android that works on the
+photos and videos already in the phone's library. It changes their format and
+size, crops them, removes their metadata, and handles a few jobs on video.
 
-It happens to run **entirely on your device** as a side effect of the design (no servers means no server bills means no subscription pressure), but the headline pitch is much simpler: it's free, and it stays free.
+Every result is saved as a new item in the library; the original is not
+touched. There is no network code, account, advertising or analytics, and the
+release Android build does not request the internet permission.
 
----
+## Status
 
-## Current status
+Pre-release, version 0.1.0.
 
-The `bedrock` branch contains working library browsing and image operations, a Rust image core (DarkLib), and limited FFmpeg tasks for removing audio, extracting frames and creating GIFs. Image preservation and error handling still have known gaps; this is not a release claim.
-
-| Area | Status |
+| Area | State |
 |---|---|
-| Library, settings, image conversion/crop/metadata tools | Implemented, with preservation defects under review |
-| DarkLib / AVIF / WebP / platform HEIC bridges | Experimental integration; independent compatibility tests required |
-| Remove audio / extract frames / video-to-GIF | Implemented tasks; failure-state handling needs repair |
-| Surgical replacement | Removed; its old design document is historical |
-| Other video/audio tools and source separation | Partial UI or planned; not complete engines |
+| Library, image conversion, crop, metadata removal | Working. Known defects in HDR, transparency, colour profiles and orientation are listed in [docs/12-STABILIZATION.md](docs/12-STABILIZATION.md). |
+| Remove audio, extract frames, video to GIF | Working, on FFmpeg. |
+| Trim, video crop, photos to animation, voice and music separation | Screens only; no engine yet. |
 
-Read [the stabilization plan](docs/12-STABILIZATION.md) for measured results and known defects, [DarkLib's bounded contract](docs/10-DARKLIB.md) for scope, and [the HDR research](docs/11-HDR-RESEARCH.md) before changing image preservation. Earlier design documents describe intended features, not completion evidence.
+## Features
 
----
+### Library
 
-## Running locally
+The device's photos and videos in one grid, filtered by album, type or sort
+order. Each item shows its size, and each video its length.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/library-dark.png">
+    <img src="docs/screenshots/library-light.png" width="300" alt="The library grid">
+  </picture>
+</p>
+
+### Working on a selection
+
+Select photos or videos and the bar at the bottom offers the tools for them.
+A selection holds one media type at a time, and shows the expected saving
+before anything runs. A photo or video opened on its own offers the same
+tools, plus crop.
+
+- **Convert and compress** — to AVIF, HEIC (HEIF on Android), WebP, JPEG or
+  PNG at a chosen quality. **Auto** takes the first format the device can
+  encode, in the order AVIF, HEIC, WebP, and falls back to PNG to keep
+  transparency.
+- **Crop** — free or fixed aspect ratio.
+- **Metadata** — remove EXIF, GPS and other metadata.
+- **Video** — remove the audio track without re-encoding the picture, extract
+  frames, or turn a clip into a GIF.
+- **Share or delete** the selection.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/selection-dark.png">
+    <img src="docs/screenshots/selection-light.png" width="300" alt="Four photos selected, with the tools for them and the expected saving">
+  </picture>
+</p>
+
+Long jobs run in a queue off the UI thread, with progress and cancel.
+
+### Settings
+
+Arabic or English, with the layout direction following the language;
+Arabic-Indic or Latin numerals; light, dark or the system appearance; and the
+default format and quality for new jobs.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/settings-dark.png">
+    <img src="docs/screenshots/settings-light.png" width="300" alt="Settings">
+  </picture>
+</p>
+
+## Built with
+
+| | |
+|---|---|
+| Image core | DarkLib, Rust (`native/darklib`), bound with `flutter_rust_bridge` 2.12 and built by Cargokit |
+| Video | `ffmpeg_kit_flutter_new_min` 3.6.2 — LGPL build, without x264 or x265 |
+| Other codecs | `flutter_image_compress`, `flutter_avif`, platform HEIC bridges |
+| Library access | `photo_manager` |
+| State and routing | Riverpod 2, `go_router` |
+| Storage | Drift (media index), `shared_preferences` |
+| Localisation | `flutter_localizations`, `intl`, ARB |
+| Typeface | IBM Plex Sans Arabic, bundled |
+
+## Layout
+
+```
+lib/app/              Bootstrap, theme, localisation, routing, tab shell
+lib/core/             Capabilities, isolates, task runner, results
+lib/data/             Media index (Drift)
+lib/features/         One folder per feature: library, image_ops, video_ops, …
+lib/src/rust/         Generated Dart bindings for DarkLib
+native/darklib/       DarkLib, the Rust image core
+rust_builder/         Cargokit plugin that builds DarkLib for each platform
+ios/  android/        Platform projects and native bridges
+tool/app_icon/        App icon generator for iOS and Android
+tool/screenshots/     README screenshot generator and its photos
+docs/                 Product, architecture and status documents
+```
+
+## Running
 
 ```bash
 flutter pub get
-flutter gen-l10n
-flutter run
+flutter analyze
+flutter test                          # 158 tests
+(cd native/darklib && cargo test)     # 74 tests
+
+flutter run                           # on a connected device or simulator
+flutter build apk --release
+flutter build ios --release
+
+# After editing the icon geometry in the script
+python3 tool/app_icon/generate.py
+
+# After a UI change: rebuilds docs/screenshots/ from a fresh iOS simulator
+tool/screenshots/generate.sh
 ```
 
-Android and iOS native channels exist. Host tests do not certify device compatibility; see the stabilization plan for verification limits.
+Building needs a Rust toolchain; Cargokit adds each platform's target. iOS
+builds also need the iOS platform in Xcode (Settings → Components). Local
+setup on this project's machine is in
+[docs/13-DEVELOPMENT.md](docs/13-DEVELOPMENT.md).
 
----
+Documentation and project rules are in Arabic; code is in English. Start with
+[CLAUDE.md](CLAUDE.md), then [docs/12-STABILIZATION.md](docs/12-STABILIZATION.md)
+for the current state.
 
-## Stack
+## Licence
 
-| Layer | Choice |
-|---|---|
-| Framework | Flutter (latest stable) + Dart 3 |
-| State | Riverpod 2 (no `setState` for non-trivial flows) |
-| Routing | `go_router` 14 with a `StatefulShellRoute` for the bottom tabs |
-| Library access | `photo_manager` (offline album/asset reads) |
-| Video playback | `video_player` |
-| Localisation | Flutter intl + ARB (Arabic / English) with full RTL |
-| Theming | Material 3 + a `HaynColors` `ThemeExtension` for tokens we own |
-| Persistence | `shared_preferences` (prefs) and Drift (media index) |
-
-The current dependency is `ffmpeg_kit_flutter_new_min`; DarkLib uses Rust codecs and platform bridges. Dependency names and versions are recorded in `pubspec.yaml`, Cargo manifests and their lockfiles. Package licensing and distribution requirements must be reviewed for the actual shipped binaries; system codecs are not a blanket legal guarantee.
-
----
-
-## Documentation map
-
-The docs are split between the contributor guide (root) and the design + feature specs (in `docs/`).
-
-| File | What's inside |
-|---|---|
-| [CLAUDE.md](CLAUDE.md) | The agent / contributor handbook. Read this first. Current scope, modular rules, documentation and verification requirements. |
-| [docs/10-DARKLIB.md](docs/10-DARKLIB.md) | Bounded library contract, fallback and preservation policies |
-| [docs/11-HDR-RESEARCH.md](docs/11-HDR-RESEARCH.md) | HDR, grids, gain maps and primary sources |
-| [docs/12-STABILIZATION.md](docs/12-STABILIZATION.md) | Actual status, defects and acceptance gates |
-| [docs/13-DEVELOPMENT.md](docs/13-DEVELOPMENT.md) | External development tools and local setup |
-| [docs/01-PRD.md](docs/01-PRD.md) | Product scope, principles, success criteria |
-| [docs/02-ARCHITECTURE.md](docs/02-ARCHITECTURE.md) | Layers, isolates, task queue, capabilities |
-| [docs/03-FORMATS.md](docs/03-FORMATS.md) | Format decision trees + licensing reasoning |
-| [docs/04-DESIGN.md](docs/04-DESIGN.md) | Design philosophy, RTL/LTR, theming, patterns |
-| [docs/05-ROADMAP.md](docs/05-ROADMAP.md) | Phase plan + exit criteria |
-| [docs/06-TESTING.md](docs/06-TESTING.md) | Test strategy + per-phase cases |
-| [docs/07-DESIGN-SYSTEM.md](docs/07-DESIGN-SYSTEM.md) | Tokens, type, motion |
-| [docs/08-COMPONENTS.md](docs/08-COMPONENTS.md) | Component catalog |
-| [docs/09-SCREENS.md](docs/09-SCREENS.md) | Screen catalog + flows |
-| [docs/features/F1-image-ops.md](docs/features/F1-image-ops.md) | Compress / crop / strip metadata |
-| [docs/features/F2-surgical-replace.md](docs/features/F2-surgical-replace.md) | Historical design for removed surgical replacement |
-| [docs/features/F3-video-editing.md](docs/features/F3-video-editing.md) | Trim, crop, compress video |
-| [docs/features/F4-animated-images.md](docs/features/F4-animated-images.md) | GIF / WebP / AVIF animated |
-| [docs/features/F5-audio-separation.md](docs/features/F5-audio-separation.md) | ⚠️ Music / voice separation |
-
----
-
-## The four non-negotiable rules
-
-1. **Offline. Always.** No `http`, no socket, no analytics, no telemetry. Works in airplane mode.
-2. **Explicit preservation.** Avoid unnecessary re-encoding; identify and validate any loss in precision, color, HDR, alpha or dimensions.
-3. **User data is sacred.** Anything that touches the original goes through a verified, reversible transaction with a trash safety net.
-4. **Heavy work off the main isolate.** The UI stays at 60 / 120 fps no matter what.
-
-These are requirements; known gaps and their exit criteria are tracked in [the stabilization plan](docs/12-STABILIZATION.md). See [CLAUDE.md](CLAUDE.md) for the contributor rules.
-
----
-
-## Contributing
-
-Read [CLAUDE.md](CLAUDE.md) end-to-end. Then read the feature doc for the area you want to touch. Then write the tests and the feature together. The current exit criteria in [docs/12-STABILIZATION.md](docs/12-STABILIZATION.md) gate completion. Keep behavior, documentation and tests in the same change.
-
-```bash
-flutter analyze   # must be clean
-flutter test      # must be green
+```
+Hayn
+Copyright (C) 2026  m7md-d
 ```
 
----
+Free software under the **GNU General Public License, version 3**, including
+DarkLib (`native/darklib`). Distributed in the hope that it will be useful, but
+**with no warranty** — without even the implied warranty of merchantability or
+fitness for a particular purpose. Full text in [`LICENSE`](LICENSE).
 
-## License
+### Third party
 
-[GNU General Public License v3.0](LICENSE).
-
-This is a strong copyleft license: you're free to run, study, modify, redistribute and even commercially use Hayn, but any redistributed version — including modified forks — must stay under the same GPL-3.0 license and ship its complete source. Contributors grant patent rights as part of the licence; there is no warranty.
-
-The project policy avoids bundling x264/x265. This is a packaging policy, not a guarantee about patents or every downstream distribution.
+| | Licence |
+|---|---|
+| **IBM Plex Sans Arabic** — bundled typeface | SIL Open Font License 1.1, text in [`assets/fonts/OFL.txt`](assets/fonts/OFL.txt) |
+| **FFmpeg** — through `ffmpeg_kit_flutter_new_min` | LGPL-3.0 |
+| Dart and Flutter packages | Listed in the app under Settings → About → Open-source licenses |

@@ -33,6 +33,7 @@ Hayn تطبيق Flutter لمعالجة الميديا محليًا، مجاني 
 | [media.md](.claude/rules/media.md) | الصورة والميتاداتا وHDR وسياسات الفقد |
 | [native.md](.claude/rules/native.md) | Rust وFFI والجسور الأصلية والتحقق على المنصات |
 | [flutter.md](.claude/rules/flutter.md) | Dart والواجهة وحالة المهام |
+| [presentation.md](.claude/rules/presentation.md) | README واللقطات الحقيقية والأيقونة وأدوات توليدها |
 
 ## شكل التسليم
 

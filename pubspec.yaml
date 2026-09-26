@@ -41,8 +41,10 @@ dependencies:
   # only operations are stream-copy (remove-audio, lossless trim) + decode.
   # Re-encoding video uses the platform codecs (MediaCodec/VideoToolbox), never
   # ffmpeg's encoders, so the LGPL min build is sufficient. Requires Android
-  # minSdk 24.
-  ffmpeg_kit_flutter_new_min: ^3.1.0
+  # minSdk 24. Pinned exactly (CLAUDE.md §6): 3.6.2 ships an arm64 iOS-simulator
+  # slice (iOS 26 simulators need it), drops the arm64e device slice App Store
+  # rejects, and carries FFmpeg 8.1.2 (CVE-2026-8461 fix).
+  ffmpeg_kit_flutter_new_min: 3.6.2
   drift: ^2.33.0
   sqlite3_flutter_libs: ^0.6.0+eol
   path_provider: ^2.1.5

@@ -19,6 +19,9 @@ analyzer:
     # Generated FFI bindings (flutter_rust_bridge codegen) — regenerated, never
     # hand-edited.
     - lib/src/rust/**
+    - build/**
+    - android/**
+    - ios/**
 
 linter:
   # The lint rules applied to this project can be customized in the

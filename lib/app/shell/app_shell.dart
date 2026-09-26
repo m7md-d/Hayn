@@ -383,11 +383,14 @@ class _NavTab extends StatelessWidget {
           AnimatedDefaultTextStyle(
             duration: AppDuration.fast,
             curve: AppCurves.standard,
-            style: TextStyle(
+            // From the theme, so the labels keep the app's typeface — a bare
+            // TextStyle here falls back to the platform font.
+            style: theme.textTheme.labelSmall!.copyWith(
               fontSize: 10,
               fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
               color: selected ? hc.accent : hc.text3,
               height: 1.2,
+              letterSpacing: 0,
             ),
             child: Text(dest.label),
           ),

@@ -7,9 +7,7 @@ description = "Offline, royalty-free image core — lossless metadata surgery (s
 keywords = ["image", "avif", "metadata", "exif", "icc"]
 categories = ["multimedia::images", "encoding"]
 readme = "README.md"
-# license: intentionally unset until the standalone repo is published. The app
-# embedding DarkLib is GPL-3.0; every DarkLib dependency is permissively licensed
-# (BSD/MIT/Apache), so any license is still possible. See README → "License".
+license = "GPL-3.0-only"
 # repository / homepage: set when the standalone repo is created.
 
 [lib]

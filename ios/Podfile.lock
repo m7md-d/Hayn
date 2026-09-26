@@ -1,11 +1,6 @@
 PODS:
   - darklib (0.0.1):
     - Flutter
-  - ffmpeg_kit_flutter_new_min (7.1.1):
-    - ffmpeg_kit_flutter_new_min/min (= 7.1.1)
-    - Flutter
-  - ffmpeg_kit_flutter_new_min/min (7.1.1):
-    - Flutter
   - Flutter (1.0.0)
   - flutter_avif_ios (0.0.1):
     - Flutter
@@ -38,7 +33,6 @@ PODS:
 
 DEPENDENCIES:
   - darklib (from `.symlinks/plugins/darklib/ios`)
-  - ffmpeg_kit_flutter_new_min (from `.symlinks/plugins/ffmpeg_kit_flutter_new_min/ios`)
   - Flutter (from `Flutter`)
   - flutter_avif_ios (from `.symlinks/plugins/flutter_avif_ios/ios`)
   - flutter_image_compress_common (from `.symlinks/plugins/flutter_image_compress_common/ios`)
@@ -53,8 +47,6 @@ SPEC REPOS:
 EXTERNAL SOURCES:
   darklib:
     :path: ".symlinks/plugins/darklib/ios"
-  ffmpeg_kit_flutter_new_min:
-    :path: ".symlinks/plugins/ffmpeg_kit_flutter_new_min/ios"
   Flutter:
     :path: Flutter
   flutter_avif_ios:
@@ -64,7 +56,6 @@ EXTERNAL SOURCES:
 
 SPEC CHECKSUMS:
   darklib: 801d8a06a7c4d530ebcb1f065fc0b39292adb7ee
-  ffmpeg_kit_flutter_new_min: 85493896be79f45e846b5c9b23a3bf73eb284c4a
   Flutter: 71a624a5bc0c04062bf19101d501e466baf2fb47
   flutter_avif_ios: 2553d2aafda56339cf924e943da89ad3f40af2dd
   flutter_image_compress_common: 1697a328fd72bfb335507c6bca1a65fa5ad87df1

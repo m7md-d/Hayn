@@ -12,6 +12,8 @@ Outputs, overwritten in place:
       adaptive icon: vector background + foreground; the white-only
       foreground doubles as the Android 13 monochrome layer
       legacy PNG mipmaps for API 24-25 (minSdk 24)
+  docs/brand/hayn-icon.png
+      the README header mark, clipped to iOS's icon shape
 
 Needs Google Chrome (renders the SVGs) and Xcode's swift (png_tool.swift).
 Usage: python3 tool/app_icon/generate.py
@@ -119,9 +121,10 @@ def render(svg, out_png, work):
         raise SystemExit(f"Chrome did not render {out_png.name}")
 
 
-def png_tool(src, dst, size, opaque):
+def png_tool(src, dst, size, mode):
+    """mode: opaque (no alpha channel), alpha, or ios-mask (iOS icon shape)."""
     subprocess.run(["xcrun", "swift", str(HERE / "png_tool.swift"),
-                    str(src), str(dst), str(size), "1" if opaque else "0"], check=True)
+                    str(src), str(dst), str(size), mode], check=True)
 
 
 def generate_ios(work):
@@ -136,7 +139,7 @@ def generate_ios(work):
     for name, (appearance, svg, opaque) in variants.items():
         raw = work / f"ios-{name}"
         render(svg, raw, work)
-        png_tool(raw, iconset / name, 1024, opaque)
+        png_tool(raw, iconset / name, 1024, "opaque" if opaque else "alpha")
         entry = {"filename": name, "idiom": "universal", "platform": "ios", "size": "1024x1024"}
         if appearance:
             entry = {"appearances": [{"appearance": "luminosity", "value": appearance}], **entry}
@@ -222,7 +225,15 @@ def generate_android(work):
     raw = work / "android-legacy.png"
     render(icon_svg(plate=PLATE, fg="#FFFFFF", frame_color="#FFFFFF", clip_rx=210), raw, work)
     for density, size in LEGACY_SIZES.items():
-        png_tool(raw, res / f"mipmap-{density}/ic_launcher.png", size, opaque=False)
+        png_tool(raw, res / f"mipmap-{density}/ic_launcher.png", size, "alpha")
+
+
+def generate_readme_mark(work):
+    # The light icon in iOS's own shape, for the README header (shown at 92pt).
+    raw = work / "readme.png"
+    render(icon_svg(plate=PLATE, fg="#FFFFFF", frame_color="#FFFFFF"), raw, work)
+    (ROOT / "docs/brand").mkdir(parents=True, exist_ok=True)
+    png_tool(raw, ROOT / "docs/brand/hayn-icon.png", 276, "ios-mask")
 
 
 def main():
@@ -232,6 +243,7 @@ def main():
     try:
         generate_ios(work)
         generate_android(work)
+        generate_readme_mark(work)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     print("App icon generated for iOS and Android.")

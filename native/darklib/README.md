@@ -128,9 +128,8 @@ complete solely because its internal round-trip tests pass.
 
 ## License
 
-**To be decided** before the standalone release. DarkLib currently lives inside
-a GPL-3.0 project, but every dependency is permissively licensed (BSD/MIT/Apache),
-so the final choice is open. Until then, treat it as part of the parent project.
+GNU General Public License, version 3 (`GPL-3.0-only`), the same licence as
+Hayn. Full text in [LICENSE](LICENSE).
 
 ## Documentation
 
