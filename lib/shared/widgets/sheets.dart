@@ -266,8 +266,9 @@ class _PickerSheetBodyState<T> extends State<_PickerSheetBody<T>> {
                           ],
                         ),
                       ),
-                      AnimatedOpacity(
-                        duration: AppDuration.fast,
+                      // Instant, like a native iOS list. A fade would also be
+                      // frozen half-drawn by the theme/locale reveal snapshot.
+                      Opacity(
                         opacity:
                             widget.options[i].value == _selected ? 1 : 0,
                         child: Icon(Icons.check_rounded,

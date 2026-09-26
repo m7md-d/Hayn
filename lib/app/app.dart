@@ -35,7 +35,8 @@ class _HaynAppState extends ConsumerState<HaynApp> {
 
   @override
   Widget build(BuildContext context) {
-    final themeMode = ref.watch(themeProvider);
+    final preferredTheme = ref.watch(themeProvider);
+    final themeMode = ref.watch(appliedThemeProvider) ?? preferredTheme;
     final locale = ref.watch(localeProvider);
     final router = ref.watch(appRouterProvider);
 

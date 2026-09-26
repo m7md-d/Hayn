@@ -48,6 +48,8 @@ class _SmoothSwitchState extends ConsumerState<SmoothSwitch>
 
   static const _localeDuration = Duration(milliseconds: 700);
 
+  bool _themeRevealScheduled = false;
+
   @override
   void initState() {
     super.initState();
@@ -107,10 +109,33 @@ class _SmoothSwitchState extends ConsumerState<SmoothSwitch>
     }
   }
 
+  // A user pick arrives with the previous look still applied (see
+  // ThemeNotifier.setTheme), so the next frame paints the new selection in the
+  // current theme. Right after that one frame, freeze it and let the new theme
+  // through under the reveal — no waiting beyond the frame itself.
+  void _revealAfterSelectionFrame() {
+    if (_themeRevealScheduled) return;
+    _themeRevealScheduled = true;
+    WidgetsBinding.instance
+      ..addPostFrameCallback((_) {
+        _themeRevealScheduled = false;
+        if (!mounted) return;
+        _captureAndReveal(_RevealKind.theme);
+        ref.read(appliedThemeProvider.notifier).release();
+      })
+      ..ensureVisualUpdate();
+  }
+
   @override
   Widget build(BuildContext context) {
     ref.listen<ThemeMode>(themeProvider, (prev, next) {
-      if (prev != next) _captureAndReveal(_RevealKind.theme);
+      if (prev == next) return;
+      if (ref.read(appliedThemeProvider) != null) {
+        _revealAfterSelectionFrame();
+      } else {
+        // Restored from prefs at launch — no picker on screen to wait for.
+        _captureAndReveal(_RevealKind.theme);
+      }
     });
     ref.listen<Locale?>(localeProvider, (prev, next) {
       if (prev != next) _captureAndReveal(_RevealKind.locale);

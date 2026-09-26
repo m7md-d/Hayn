@@ -19,7 +19,13 @@ class ThemeNotifier extends Notifier<ThemeMode> {
     }
   }
 
+  /// A user pick. The choice is live at once (pickers show the new selection),
+  /// and the app keeps its current look for the one frame that paints it;
+  /// SmoothSwitch freezes that frame for the reveal and releases
+  /// [appliedThemeProvider].
   Future<void> setTheme(ThemeMode mode) async {
+    if (mode == state) return;
+    ref.read(appliedThemeProvider.notifier).hold(state);
     state = mode;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kThemeKey, _toString(mode));
@@ -40,4 +46,23 @@ class ThemeNotifier extends Notifier<ThemeMode> {
 
 final themeProvider = NotifierProvider<ThemeNotifier, ThemeMode>(
   ThemeNotifier.new,
+);
+
+/// The mode MaterialApp renders when it differs from [themeProvider]: the
+/// previous look, pinned between a user pick and its reveal. null = follow
+/// the user's choice.
+class AppliedThemeNotifier extends Notifier<ThemeMode?> {
+  @override
+  ThemeMode? build() => null;
+
+  /// Pin [current] unless a pick is already pending — rapid picks keep the
+  /// look that is actually on screen.
+  void hold(ThemeMode current) => state ??= current;
+
+  void release() => state = null;
+}
+
+final appliedThemeProvider =
+    NotifierProvider<AppliedThemeNotifier, ThemeMode?>(
+  AppliedThemeNotifier.new,
 );
