@@ -238,7 +238,25 @@ fn encode_avif_grid(img: &Decoded, quality: u8, tile: u32) -> Result<Vec<u8>> {
 
 /// Decode → (optional resize) → encode to `target`.
 pub fn transcode(bytes: &[u8], target: Target, max_edge: Option<u32>) -> Result<Vec<u8>> {
+    reject_direct_hdr(bytes)?;
+    if crate::engine::metadata::isobmff::has_gainmap(bytes) {
+        return Err(DarkError::PreservationRequired(
+            "gainmap_requires_preserving_path",
+        ));
+    }
     encode(&decode(bytes, max_edge)?, target)
+}
+
+// This engine decodes to RGBA8 and has no validated HDR tone mapper. Refuse
+// known PQ/HLG rather than recoding their samples with SDR transfer metadata.
+fn reject_direct_hdr(bytes: &[u8]) -> Result<()> {
+    if matches!(
+        crate::engine::metadata::isobmff::extract_nclx(bytes),
+        Some((_, 16 | 18))
+    ) {
+        return Err(DarkError::PreservationRequired("hdr_transfer_unsupported"));
+    }
+    Ok(())
 }
 
 /// [`transcode`] that also carries the source's metadata (EXIF/XMP/ICC, with
@@ -250,19 +268,23 @@ pub fn transcode_keep_metadata(
     target: Target,
     max_edge: Option<u32>,
 ) -> Result<Vec<u8>> {
+    reject_direct_hdr(bytes)?;
     let meta = crate::engine::metadata::extract(bytes);
 
-    // HDR AVIF → AVIF at full size: re-encode base AND gain map, rebuild the
-    // tmap structure (metadata included in the same from-scratch build). Any
-    // failure falls through to the plain SDR path — never a failed convert.
-    if max_edge.is_none() {
-        if let Target::Avif { quality } = target {
-            if crate::engine::format::detect(bytes) == crate::engine::format::ImageFormat::Avif {
-                if let Some(out) = transcode_hdr_avif(bytes, quality, &meta) {
-                    return Ok(out);
-                }
+    // Absence of a gain map and failure to process a present map are distinct.
+    // Metadata removal, a different target, or resize do not authorize HDR loss.
+    if crate::engine::metadata::isobmff::has_gainmap(bytes) {
+        if max_edge.is_none()
+            && crate::engine::format::detect(bytes) == crate::engine::format::ImageFormat::Avif
+        {
+            if let Target::Avif { quality } = target {
+                return transcode_hdr_avif(bytes, quality, &meta)
+                    .ok_or(DarkError::PreservationRequired("gainmap_processing_failed"));
             }
         }
+        return Err(DarkError::PreservationRequired(
+            "gainmap_target_or_resize_unsupported",
+        ));
     }
 
     let out = transcode(bytes, target, max_edge)?;
@@ -272,7 +294,7 @@ pub fn transcode_keep_metadata(
 /// Carry an ISO 21496-1 gain map through an AVIF→AVIF re-encode: decode + encode
 /// the base and the gain-map image separately, copy the tmap metadata verbatim,
 /// and build the output container from scratch. `None` when the source has no
-/// tmap or any step fails (the caller falls back to the SDR path).
+/// tmap or any step fails. The caller must treat failure as a terminal veto.
 fn transcode_hdr_avif(
     bytes: &[u8],
     quality: u8,
@@ -281,8 +303,8 @@ fn transcode_hdr_avif(
     use crate::engine::metadata::isobmff;
     let tmap = isobmff::read_tmap(bytes)?;
     // An irot/imir transform would be baked into the BASE pixels by `decode` but
-    // not into the gain map — they'd misalign. Rare in stills; bail to SDR.
-    if isobmff::read_orientation(bytes).is_some() {
+    // not into the gain map — they'd misalign. EXIF rotation has the same risk.
+    if meta.orientation != 1 || isobmff::read_orientation(bytes).is_some() {
         return None;
     }
 
@@ -605,10 +627,11 @@ mod tests {
             grgba[0]
         );
 
-        // A downscaled (preview) convert takes the SDR path — no tmap.
-        let preview =
-            transcode_keep_metadata(&src, Target::Avif { quality: 85 }, Some(16)).unwrap();
-        assert!(!isobmff::has_gainmap(&preview), "preview path stays SDR");
+        // This API also feeds saved outputs: a resize is not permission for SDR.
+        assert!(matches!(
+            transcode_keep_metadata(&src, Target::Avif { quality: 85 }, Some(16)),
+            Err(DarkError::PreservationRequired(_))
+        ));
     }
 
     fn crc32(data: &[u8]) -> u32 {

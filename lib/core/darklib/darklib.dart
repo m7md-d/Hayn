@@ -8,7 +8,8 @@ import '../../src/rust/frb_generated.dart';
 /// Encode targets DarkLib can produce (mirrors the Rust `CodecFormat`).
 typedef DarkLibFormat = rust_codec.CodecFormat;
 
-/// Thin, lazily initialized bridge. Null means fallback is needed; a bounded
+/// Thin, lazily initialized bridge. Operational errors return null; a preservation
+/// veto throws DarkLibPreservationFailure and must never trigger fallback. A bounded
 /// diagnostic records why in release too. Non-empty bytes are NOT a verified
 /// preservation result: Rust-side colour/HDR validation remains phase B work.
 abstract final class DarkLibCore {
@@ -53,6 +54,22 @@ abstract final class DarkLibCore {
         return null;
       }
       return result;
+    } on String catch (error) {
+      // The generated Result<Vec<u8>, String> decoder throws a Dart String.
+      if (error.startsWith('preservation_required:')) {
+        MediaDiagnostics.record(
+          MediaBackend.darklib,
+          operation,
+          MediaDiagnosticCode.preservationRejected,
+        );
+        throw const DarkLibPreservationFailure();
+      }
+      MediaDiagnostics.record(
+        MediaBackend.darklib,
+        operation,
+        MediaDiagnosticCode.exception,
+      );
+      return null;
     } catch (_) {
       MediaDiagnostics.record(
         MediaBackend.darklib,
@@ -107,4 +124,11 @@ abstract final class DarkLibCore {
     MediaOperation.transplant,
     () => rust.transplantMetadata(source: source, target: target),
   );
+}
+
+/// Terminal veto from the current String-error FFI. No source data is retained.
+class DarkLibPreservationFailure implements Exception {
+  const DarkLibPreservationFailure();
+  @override
+  String toString() => 'Image preservation requirements could not be met';
 }

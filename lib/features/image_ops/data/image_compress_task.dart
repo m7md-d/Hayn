@@ -125,6 +125,7 @@ class ImageCompressTask extends MediaTask {
             encoded = await ImageEncoder.encode(
               source: src,
               target: target.format,
+              allowFormatFallback: format == DefaultFormat.auto,
               quality: quality,
               hasAlpha: hasAlpha,
               keepMetadata: keepMetadata,

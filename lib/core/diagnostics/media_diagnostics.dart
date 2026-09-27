@@ -33,6 +33,10 @@ enum MediaDiagnosticCode {
   emptyOutput,
   formatFallback,
   preservationUnverified,
+  preservationRejected,
+  outputFormatMismatch,
+  alphaUnverified,
+  alphaLost,
   incompleteBatch,
   missingResult,
 }

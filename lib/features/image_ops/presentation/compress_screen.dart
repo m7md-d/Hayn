@@ -83,7 +83,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   int _beforeSize = 0;
   int _activeW = 0; // source dimensions (for the huge-image encode cap)
   int _activeH = 0;
-  bool _hasAlpha = false;
+  bool? _hasAlpha;
   NativeImageInfo? _info; // real bit depth / alpha / HDR of the source
   int _bitDepth = 0; // target: 0 = match source (preserves HDR), 8 = SDR
   EncodedImage? _encoded;
@@ -136,11 +136,12 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
     final id = _ids[_activeAssetIndex];
     final entity = await AssetEntityCache.load(id);
     if (entity == null || !mounted) return;
-    final thumb =
-        await entity.thumbnailDataWithSize(const ThumbnailSize.square(1080));
+    final thumb = await entity.thumbnailDataWithSize(
+      const ThumbnailSize.square(1080),
+    );
     final origin = await entity.originBytes;
     if (!mounted) return;
-    final alpha = origin == null ? false : await ImageProbe.hasAlpha(origin);
+    final alpha = origin == null ? null : await ImageProbe.hasAlpha(origin);
     final info = origin == null ? null : await NativeImageProbe.probe(origin);
     if (!mounted) return;
     setState(() {
@@ -183,6 +184,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
       final result = await ImageEncoder.encode(
         source: src,
         target: target.format,
+        allowFormatFallback: _format == DefaultFormat.auto,
         quality: q,
         hasAlpha: _hasAlpha,
         keepMetadata: _keepMetadata,
@@ -199,7 +201,9 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
         _encoding = false;
         _encodedSig = _sig(q, _isSingle ? _bitDepth : 0);
       });
-      if (!_isSingle) _runEstimate(); // refine the batch estimate with the anchor
+      if (!_isSingle) {
+        _runEstimate(); // refine the batch estimate with the anchor
+      }
     } catch (_) {
       if (!mounted || seq != _encodeSeq) return;
       setState(() => _encoding = false);
@@ -230,11 +234,13 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
       anchorMs: anchored ? _encodeMs : null,
     );
     if (!mounted) return;
-    setState(() => _estimate = EstimateResult(
-          size: res.size,
-          refining: _encoding, // still computing the anchor
-          etaSeconds: res.etaSeconds,
-        ));
+    setState(
+      () => _estimate = EstimateResult(
+        size: res.size,
+        refining: _encoding, // still computing the anchor
+        etaSeconds: res.etaSeconds,
+      ),
+    );
   }
 
   /// The "after" pane: the REAL full-resolution encode (single AND multi now —
@@ -252,8 +258,11 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
           if (_previewBytes != null)
             Opacity(
               opacity: 0.3,
-              child: Image.memory(_previewBytes!,
-                  fit: BoxFit.contain, gaplessPlayback: true),
+              child: Image.memory(
+                _previewBytes!,
+                fit: BoxFit.contain,
+                gaplessPlayback: true,
+              ),
             ),
           Center(
             child: Column(
@@ -263,14 +272,17 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
                   width: 22,
                   height: 22,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2.4, color: hc.accent),
+                    strokeWidth: 2.4,
+                    color: hc.accent,
+                  ),
                 ),
                 const SizedBox(height: AppSpacing.s3),
-                Text(l.compressComputing,
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(color: hc.text2)),
+                Text(
+                  l.compressComputing,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(color: hc.text2),
+                ),
               ],
             ),
           ),
@@ -310,14 +322,18 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
             : const SizedBox.shrink(),
       );
     }
-    return Image.memory(_previewBytes!, fit: BoxFit.contain, gaplessPlayback: true);
+    return Image.memory(
+      _previewBytes!,
+      fit: BoxFit.contain,
+      gaplessPlayback: true,
+    );
   }
 
   /// True when the user forced an opaque format (JPEG) on a transparent image —
   /// the encode will flatten the alpha, so we warn first.
   bool _flattensAlpha(FormatCapabilities caps) =>
       _isSingle &&
-      _hasAlpha &&
+      _hasAlpha != false &&
       ImageFormatPolicy.resolve(
         choice: _format,
         hasAlpha: _hasAlpha,
@@ -351,14 +367,15 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
     // For a single image that means the save is instant; for a batch it spares
     // the previewed image a second pass. A pending/changed encode → null, so we
     // never save stale bytes.
-    final canReuse = !_encoding &&
-        _encoded != null &&
-        _encodedSig == _sig(q, bitDepth);
+    final canReuse =
+        !_encoding && _encoded != null && _encodedSig == _sig(q, bitDepth);
     final activeId = _ids[_activeAssetIndex];
     // Enqueue the real engine — it encodes each id + saves a new gallery asset,
     // surfacing in the floating Tasks badge with progress/cancel.
     unawaited(
-      ref.read(taskRunnerProvider.notifier).enqueue(
+      ref
+          .read(taskRunnerProvider.notifier)
+          .enqueue(
             ImageCompressTask(
               assetIds: _ids,
               format: _format,
@@ -401,7 +418,11 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
           // ── Fixed: comparison preview ─────────────────────────────────
           Padding(
             padding: const EdgeInsets.fromLTRB(
-                AppSpacing.md, AppSpacing.s2, AppSpacing.md, 0),
+              AppSpacing.md,
+              AppSpacing.s2,
+              AppSpacing.md,
+              0,
+            ),
             child: AspectRatio(
               aspectRatio: 4 / 3,
               child: _previewBytes == null
@@ -427,7 +448,11 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
           if (isBatch)
             Padding(
               padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.md, AppSpacing.s2, AppSpacing.md, 0),
+                AppSpacing.md,
+                AppSpacing.s2,
+                AppSpacing.md,
+                0,
+              ),
               child: SizedBox(
                 height: 56,
                 child: ListView.separated(
@@ -447,7 +472,11 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
           // ── Fixed: Auto/Advanced toggle ───────────────────────────────
           Padding(
             padding: const EdgeInsets.fromLTRB(
-                AppSpacing.md, AppSpacing.s3, AppSpacing.md, AppSpacing.s3),
+              AppSpacing.md,
+              AppSpacing.s3,
+              AppSpacing.md,
+              AppSpacing.s3,
+            ),
             child: HaynSegmentedPill<_Mode>(
               value: _mode,
               onChanged: (m) {
@@ -458,7 +487,9 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
               items: [
                 HaynSegmentItem(value: _Mode.auto, label: l.compressModeAuto),
                 HaynSegmentItem(
-                    value: _Mode.advanced, label: l.compressModeAdvanced),
+                  value: _Mode.advanced,
+                  label: l.compressModeAdvanced,
+                ),
               ],
             ),
           ),
@@ -467,97 +498,107 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
           Expanded(
             child: ListView(
               padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.md, 0, AppSpacing.md, 120),
+                AppSpacing.md,
+                0,
+                AppSpacing.md,
+                120,
+              ),
               children: [
-          // ── Mode content ───────────────────────────────────────────────
-          AnimatedSwitcher(
-            duration: AppDuration.normal,
-            switchInCurve: AppCurves.decelerate,
-            transitionBuilder: fadeScaleTransition,
-            child: _mode == _Mode.auto
-                ? HaynInlineBanner(
-                    key: const ValueKey('auto'),
-                    tone: HaynBannerTone.info,
-                    icon: Icons.auto_awesome_rounded,
-                    message: l.compressAutoChose(
-                      DefaultFormat.labelFor(
-                        autoFormat,
-                        supportsHeic: caps.supportsHeic,
-                        supportsHeif: caps.supportsHeif,
-                      ),
-                    ),
-                  )
-                : HaynAdvancedSettingsCard(
-                    key: const ValueKey('advanced'),
-                    format: _format,
-                    quality: _quality,
-                    keepMetadata: _keepMetadata,
-                    bitDepth: _isSingle ? _bitDepth : null,
-                    sourceBitDepth: _info?.bitDepth,
-                    onBitDepthChanged: (v) {
-                      setState(() => _bitDepth = v);
-                      _scheduleEncode();
-                    },
-                    onFormatChanged: (v) {
-                      setState(() => _format = v);
-                      _scheduleEncode();
-                      _scheduleEstimate();
-                    },
-                    onQualityChanged: (v) {
-                      setState(() => _quality = v);
-                      _scheduleEncode();
-                      _scheduleEstimate();
-                    },
-                    onKeepMetaChanged: (v) {
-                      setState(() => _keepMetadata = v);
-                      _scheduleEncode();
-                    },
-                    keepOriginalTime: _keepOriginalTime,
-                    onKeepOriginalTimeChanged: (v) =>
-                        setState(() => _keepOriginalTime = v),
-                  ),
-          ),
-          const SizedBox(height: AppSpacing.md),
-
-          // ── Result (single = real) / estimate (multi = heuristic) ──────
-          if (_isSingle)
-            _RealResultCard(
-              encoding: _encoding,
-              beforeBytes: _beforeSize,
-              encoded: _encoded,
-              flattensAlpha: _flattensAlpha(caps),
-            )
-          else
-            CompressEstimateCard(
-              originalBytes: _originalBytes,
-              estimate: _estimate,
-            ),
-          const SizedBox(height: AppSpacing.lg),
-
-          // ── Compress button ────────────────────────────────────────────
-          HaynPrimaryButton(
-            label: isBatch
-                ? '${l.compressTitle} (${_ids.length})'
-                : l.compressTitle,
-            icon: Icons.compress_rounded,
-            onPressed: _apply,
-            size: HaynButtonSize.large,
-          ),
-          const SizedBox(height: AppSpacing.s3),
-
-          Center(
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.lock_outline_rounded, size: 12, color: hc.text3),
-                const SizedBox(width: 4),
-                Text(
-                  l.settingsPrivacy,
-                  style: theme.textTheme.labelSmall?.copyWith(color: hc.text3),
+                // ── Mode content ───────────────────────────────────────────────
+                AnimatedSwitcher(
+                  duration: AppDuration.normal,
+                  switchInCurve: AppCurves.decelerate,
+                  transitionBuilder: fadeScaleTransition,
+                  child: _mode == _Mode.auto
+                      ? HaynInlineBanner(
+                          key: const ValueKey('auto'),
+                          tone: HaynBannerTone.info,
+                          icon: Icons.auto_awesome_rounded,
+                          message: l.compressAutoChose(
+                            DefaultFormat.labelFor(
+                              autoFormat,
+                              supportsHeic: caps.supportsHeic,
+                              supportsHeif: caps.supportsHeif,
+                            ),
+                          ),
+                        )
+                      : HaynAdvancedSettingsCard(
+                          key: const ValueKey('advanced'),
+                          format: _format,
+                          quality: _quality,
+                          keepMetadata: _keepMetadata,
+                          bitDepth: _isSingle ? _bitDepth : null,
+                          sourceBitDepth: _info?.bitDepth,
+                          onBitDepthChanged: (v) {
+                            setState(() => _bitDepth = v);
+                            _scheduleEncode();
+                          },
+                          onFormatChanged: (v) {
+                            setState(() => _format = v);
+                            _scheduleEncode();
+                            _scheduleEstimate();
+                          },
+                          onQualityChanged: (v) {
+                            setState(() => _quality = v);
+                            _scheduleEncode();
+                            _scheduleEstimate();
+                          },
+                          onKeepMetaChanged: (v) {
+                            setState(() => _keepMetadata = v);
+                            _scheduleEncode();
+                          },
+                          keepOriginalTime: _keepOriginalTime,
+                          onKeepOriginalTimeChanged: (v) =>
+                              setState(() => _keepOriginalTime = v),
+                        ),
                 ),
-              ],
-            ),
-          ),
+                const SizedBox(height: AppSpacing.md),
+
+                // ── Result (single = real) / estimate (multi = heuristic) ──────
+                if (_isSingle)
+                  _RealResultCard(
+                    encoding: _encoding,
+                    beforeBytes: _beforeSize,
+                    encoded: _encoded,
+                    flattensAlpha: _flattensAlpha(caps),
+                  )
+                else
+                  CompressEstimateCard(
+                    originalBytes: _originalBytes,
+                    estimate: _estimate,
+                  ),
+                const SizedBox(height: AppSpacing.lg),
+
+                // ── Compress button ────────────────────────────────────────────
+                HaynPrimaryButton(
+                  label: isBatch
+                      ? '${l.compressTitle} (${_ids.length})'
+                      : l.compressTitle,
+                  icon: Icons.compress_rounded,
+                  onPressed: _apply,
+                  size: HaynButtonSize.large,
+                ),
+                const SizedBox(height: AppSpacing.s3),
+
+                Center(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.lock_outline_rounded,
+                        size: 12,
+                        color: hc.text3,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        l.settingsPrivacy,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: hc.text3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),
@@ -565,7 +606,6 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
       ),
     );
   }
-
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -637,8 +677,9 @@ class _RealResultCard extends StatelessWidget {
     final loading = encoding || encoded == null || beforeBytes == 0;
     final after = encoded?.bytes.length ?? 0;
     final grew = after > beforeBytes && beforeBytes > 0;
-    final pct =
-        beforeBytes == 0 ? 0 : (((beforeBytes - after).abs() / beforeBytes) * 100).round();
+    final pct = beforeBytes == 0
+        ? 0
+        : (((beforeBytes - after).abs() / beforeBytes) * 100).round();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -664,12 +705,17 @@ class _RealResultCard extends StatelessWidget {
                       width: 18,
                       height: 18,
                       child: CircularProgressIndicator(
-                          strokeWidth: 2, color: hc.text3),
+                        strokeWidth: 2,
+                        color: hc.text3,
+                      ),
                     ),
                     const SizedBox(width: AppSpacing.s3),
-                    Text(l.compressComputing,
-                        style: theme.textTheme.bodyMedium
-                            ?.copyWith(color: hc.text2)),
+                    Text(
+                      l.compressComputing,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: hc.text2,
+                      ),
+                    ),
                   ],
                 )
               : Row(
@@ -685,7 +731,7 @@ class _RealResultCard extends StatelessWidget {
                                 color: hc.text3,
                                 decoration: TextDecoration.lineThrough,
                                 fontFeatures: const [
-                                  FontFeature.tabularFigures()
+                                  FontFeature.tabularFigures(),
                                 ],
                               ),
                             ),
@@ -701,7 +747,7 @@ class _RealResultCard extends StatelessWidget {
                                 color: grew ? hc.warningColor : hc.successColor,
                                 fontWeight: FontWeight.w800,
                                 fontFeatures: const [
-                                  FontFeature.tabularFigures()
+                                  FontFeature.tabularFigures(),
                                 ],
                               ),
                             ),
@@ -713,19 +759,26 @@ class _RealResultCard extends StatelessWidget {
                     // Actual format produced (surfaces any fallback).
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: AppSpacing.s2, vertical: 3),
+                        horizontal: AppSpacing.s2,
+                        vertical: 3,
+                      ),
                       decoration: BoxDecoration(
                         color: hc.surface2,
                         borderRadius: BorderRadius.circular(AppRadius.sm),
                       ),
-                      child: Text(encoded!.format.techName,
-                          style: theme.textTheme.labelSmall
-                              ?.copyWith(color: hc.text2)),
+                      child: Text(
+                        encoded!.format.techName,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: hc.text2,
+                        ),
+                      ),
                     ),
                     const SizedBox(width: AppSpacing.s2),
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: AppSpacing.s2, vertical: 3),
+                        horizontal: AppSpacing.s2,
+                        vertical: 3,
+                      ),
                       decoration: BoxDecoration(
                         color: grew ? hc.warningColor : hc.successColor,
                         borderRadius: BorderRadius.circular(AppRadius.full),

@@ -564,8 +564,16 @@ private enum ImageProbeNative {
       return nil
     }
     let depth = (props[kCGImagePropertyDepth] as? NSNumber)?.intValue ?? 8
+    let decoded = CGImageSourceCreateImageAtIndex(source, 0, nil)
+    // Some opaque files omit HasAlpha. A decoded image can establish absence;
+    // a missing property plus a failed decode must stay unknown.
     let hasAlpha = (props[kCGImagePropertyHasAlpha] as? NSNumber)?.boolValue
-      ?? false
+      ?? decoded.map { image in
+        switch image.alphaInfo {
+        case .none, .noneSkipFirst, .noneSkipLast: return false
+        default: return true
+        }
+      }
     let colorModel = (props[kCGImagePropertyColorModel] as? String) ?? ""
 
     // HDR (dynamic range) is a gain map OR an HDR transfer function — NOT bit
@@ -582,16 +590,17 @@ private enum ImageProbeNative {
     }
     var hdrTransfer = false
     if #available(iOS 14.0, *),
-       let cs = CGImageSourceCreateImageAtIndex(source, 0, nil)?.colorSpace {
+       let cs = decoded?.colorSpace {
       hdrTransfer = CGColorSpaceUsesITUR_2100TF(cs)
     }
     let isHdr = hasGainMap || hdrTransfer
-    return [
+    var result: [String: Any] = [
       "bitDepth": depth,
-      "hasAlpha": hasAlpha,
       "isHdr": isHdr,
       "colorModel": colorModel,
     ]
+    if let hasAlpha = hasAlpha { result["hasAlpha"] = hasAlpha }
+    return result
   }
 }
 

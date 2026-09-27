@@ -109,6 +109,8 @@ class ImageCropTask extends MediaTask {
     final encoded = await ImageEncoder.encode(
       source: cropped,
       target: target.format,
+      allowFormatFallback:
+          true, // This task explicitly uses Auto format policy.
       quality: quality,
       hasAlpha: hasAlpha,
       keepMetadata: false, // cropped → original EXIF dims are stale

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'support/encoded_headers.dart';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
@@ -36,7 +37,7 @@ class _RejectingEncoder extends FlutterImageCompressPlatform {
     if (rejectAll || format == CompressFormat.jpeg) {
       throw PlatformException(code: 'encode_failure');
     }
-    return Uint8List.fromList([1, 2, 3]);
+    return encodedHeader(DefaultFormat.webp);
   }
 
   @override
@@ -106,6 +107,7 @@ void main() {
     final encoded = await ImageEncoder.encode(
       source: Uint8List.fromList([1, 2, 3]),
       target: DefaultFormat.jpeg,
+      allowFormatFallback: true,
       quality: 80,
       hasAlpha: false,
       keepMetadata: false,
@@ -144,6 +146,7 @@ void main() {
           ImageEncoder.encode(
             source: Uint8List(3),
             target: DefaultFormat.jpeg,
+            allowFormatFallback: true,
             quality: 80,
             hasAlpha: false,
             keepMetadata: false,

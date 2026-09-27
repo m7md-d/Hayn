@@ -17,10 +17,7 @@ import '../../settings/providers/preferences_providers.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 
 class ResolvedImageFormat {
-  const ResolvedImageFormat(
-    this.format, {
-    this.requiresAlphaFlatten = false,
-  });
+  const ResolvedImageFormat(this.format, {this.requiresAlphaFlatten = false});
 
   /// The concrete output format — never [DefaultFormat.auto].
   final DefaultFormat format;
@@ -56,11 +53,11 @@ abstract final class ImageFormatPolicy {
   ///   caller can warn before flattening (we never drop alpha silently).
   static ResolvedImageFormat resolve({
     required DefaultFormat choice,
-    required bool hasAlpha,
+    required bool? hasAlpha,
     required FormatCapabilities caps,
   }) {
     if (choice != DefaultFormat.auto) {
-      final flattens = hasAlpha && !keepsAlpha(choice);
+      final flattens = hasAlpha != false && !keepsAlpha(choice);
       return ResolvedImageFormat(choice, requiresAlphaFlatten: flattens);
     }
 
@@ -77,20 +74,20 @@ abstract final class ImageFormatPolicy {
       return const ResolvedImageFormat(DefaultFormat.webp);
     }
     return ResolvedImageFormat(
-      hasAlpha ? DefaultFormat.png : DefaultFormat.jpeg,
+      hasAlpha != false ? DefaultFormat.png : DefaultFormat.jpeg,
     );
   }
 
   /// Whether a format can carry an alpha channel. JPEG is the only common
   /// output that cannot.
   static bool keepsAlpha(DefaultFormat f) => switch (f) {
-        DefaultFormat.avif => true,
-        DefaultFormat.heic => true,
-        DefaultFormat.webp => true,
-        DefaultFormat.png => true,
-        DefaultFormat.jpeg => false,
-        // "auto" is resolved before this is asked; treat as alpha-safe so a
-        // stray call can never green-light flattening.
-        DefaultFormat.auto => true,
-      };
+    DefaultFormat.avif => true,
+    DefaultFormat.heic => true,
+    DefaultFormat.webp => true,
+    DefaultFormat.png => true,
+    DefaultFormat.jpeg => false,
+    // "auto" is resolved before this is asked; treat as alpha-safe so a
+    // stray call can never green-light flattening.
+    DefaultFormat.auto => true,
+  };
 }

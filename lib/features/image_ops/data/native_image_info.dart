@@ -1,5 +1,7 @@
 import 'package:flutter/services.dart';
 
+import '../../../core/diagnostics/media_diagnostics.dart';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // NativeImageProbe — reads an image's REAL bit depth, alpha-channel presence and
 // HDR status straight from ImageIO (iOS). This is accurate for HEIC (which
@@ -22,8 +24,8 @@ class NativeImageInfo {
   /// A real alpha channel is present (from ImageIO, not the container type).
   final bool hasAlpha;
 
-  /// The photo carries HDR — an Apple gain map is attached, or the pixels are
-  /// deeper than 8-bit.
+  /// HDR reported by the native gain-map / transfer-function probe. Bit depth
+  /// alone does not imply HDR.
   final bool isHdr;
 
   /// "RGB", "Gray", … (informational).
@@ -33,21 +35,43 @@ class NativeImageInfo {
 abstract final class NativeImageProbe {
   static const MethodChannel channel = MethodChannel('hayn/metadata');
 
+  /// Read just this fact; a partial response does not imply opaque pixels.
+  static Future<bool?> probeAlpha(Uint8List bytes) async {
+    final value = (await _read(bytes))?['hasAlpha'];
+    return value is bool ? value : null;
+  }
+
   static Future<NativeImageInfo?> probe(Uint8List bytes) async {
+    final res = await _read(bytes);
+    final depth = res?['bitDepth'];
+    final alpha = res?['hasAlpha'];
+    final hdr = res?['isHdr'];
+    if (depth is! num || depth <= 0 || alpha is! bool || hdr is! bool) {
+      return null;
+    }
+    return NativeImageInfo(
+      bitDepth: depth.toInt(),
+      hasAlpha: alpha,
+      isHdr: hdr,
+      colorModel: res?['colorModel'] as String? ?? '',
+    );
+  }
+
+  static Future<Map<String, dynamic>?> _read(Uint8List bytes) async {
     if (bytes.isEmpty) return null;
     try {
-      final res = await channel.invokeMapMethod<String, dynamic>(
+      return await channel.invokeMapMethod<String, dynamic>(
         'probeImage',
         <String, dynamic>{'bytes': bytes},
       );
-      if (res == null) return null;
-      return NativeImageInfo(
-        bitDepth: (res['bitDepth'] as num?)?.toInt() ?? 8,
-        hasAlpha: (res['hasAlpha'] as bool?) ?? false,
-        isHdr: (res['isHdr'] as bool?) ?? false,
-        colorModel: (res['colorModel'] as String?) ?? '',
-      );
+    } on MissingPluginException {
+      return null; // A platform without this probe has unknown facts.
     } catch (_) {
+      MediaDiagnostics.record(
+        MediaBackend.imageIO,
+        MediaOperation.probe,
+        MediaDiagnosticCode.exception,
+      );
       return null;
     }
   }

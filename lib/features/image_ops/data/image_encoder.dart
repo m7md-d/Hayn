@@ -9,6 +9,7 @@ import '../../../core/darklib/darklib.dart';
 import '../../settings/providers/preferences_providers.dart';
 import 'native_avif_encoder.dart';
 import 'native_image_encoder.dart';
+import 'image_probe.dart';
 
 // Coordinates the existing backends. Non-empty output is NOT proof that HDR,
 // colour, orientation or metadata survived: see docs/12-STABILIZATION.md.
@@ -62,19 +63,34 @@ class EncodedImage {
 abstract final class ImageEncoder {
   /// Encode [source] to [target] at [quality] (0–100). On encoder failure walks
   /// [fallbackChain]. Returns the bytes + the format actually produced. Throws
-  /// if all attempted encoders fail. Diagnostics accompany success or failure.
+  /// if all permitted encoders fail. Format changes require explicit permission;
+  /// backend recovery within the requested format remains allowed. A preservation
+  /// rejection is terminal. Diagnostics accompany success or failure.
   static Future<EncodedImage> encode({
     required Uint8List source,
     required DefaultFormat target,
     required int quality,
-    required bool hasAlpha,
+    required bool? hasAlpha,
     required bool keepMetadata,
+    bool allowFormatFallback = false,
     bool keepOriginalTime = true,
     int bitDepth = 0,
     int? maxWidth,
     int? maxHeight,
   }) => MediaDiagnostics.trace((trace) async {
-    for (final fmt in fallbackChain(target, hasAlpha)) {
+    if (target == DefaultFormat.auto ||
+        (target == DefaultFormat.jpeg && hasAlpha != false)) {
+      MediaDiagnostics.record(
+        MediaBackend.imageEncoder,
+        MediaOperation.encode,
+        MediaDiagnosticCode.preservationRejected,
+      );
+      throw ImageEncodingFailure(target, trace.events);
+    }
+    final candidates = allowFormatFallback
+        ? fallbackChain(target, hasAlpha)
+        : [target];
+    for (final fmt in candidates) {
       if (fmt != target) {
         MediaDiagnostics.record(
           MediaBackend.imageEncoder,
@@ -82,17 +98,51 @@ abstract final class ImageEncoder {
           MediaDiagnosticCode.formatFallback,
         );
       }
-      final encoded = await _tryEncode(
-        source: source,
-        format: fmt,
-        quality: quality,
-        keepMetadata: keepMetadata,
-        keepOriginalTime: keepOriginalTime,
-        bitDepth: bitDepth,
-        maxWidth: maxWidth,
-        maxHeight: maxHeight,
-      );
+      EncodedImage? encoded;
+      try {
+        encoded = await _tryEncode(
+          source: source,
+          format: fmt,
+          quality: quality,
+          hasAlpha: hasAlpha,
+          keepMetadata: keepMetadata,
+          keepOriginalTime: keepOriginalTime,
+          bitDepth: bitDepth,
+          maxWidth: maxWidth,
+          maxHeight: maxHeight,
+        );
+      } on DarkLibPreservationFailure {
+        // Retrying another codec must not turn a preservation veto into success.
+        throw ImageEncodingFailure(target, trace.events);
+      }
       if (encoded != null) {
+        if (!_matchesFormat(encoded.bytes, fmt)) {
+          MediaDiagnostics.record(
+            encoded.backend ?? MediaBackend.imageEncoder,
+            MediaOperation.encode,
+            MediaDiagnosticCode.outputFormatMismatch,
+          );
+          continue;
+        }
+        if (hasAlpha == true) {
+          final outputAlpha = await ImageProbe.hasAlpha(encoded.bytes);
+          if (outputAlpha != true) {
+            MediaDiagnostics.record(
+              encoded.backend ?? MediaBackend.imageEncoder,
+              MediaOperation.encode,
+              outputAlpha == false
+                  ? MediaDiagnosticCode.alphaLost
+                  : MediaDiagnosticCode.alphaUnverified,
+            );
+            continue;
+          }
+        } else if (hasAlpha == null) {
+          MediaDiagnostics.record(
+            MediaBackend.imageEncoder,
+            MediaOperation.probe,
+            MediaDiagnosticCode.alphaUnverified,
+          );
+        }
         return EncodedImage(
           encoded.bytes,
           encoded.format,
@@ -110,12 +160,12 @@ abstract final class ImageEncoder {
   /// alpha image never lists JPEG. Pure + unit-testable.
   static List<DefaultFormat> fallbackChain(
     DefaultFormat target,
-    bool hasAlpha,
+    bool? hasAlpha,
   ) {
     final out = <DefaultFormat>[];
     void add(DefaultFormat f) {
       if (f == DefaultFormat.auto) return;
-      if (hasAlpha && f == DefaultFormat.jpeg) {
+      if (hasAlpha != false && f == DefaultFormat.jpeg) {
         return; // never flatten on fallback
       }
       if (!out.contains(f)) out.add(f);
@@ -123,7 +173,7 @@ abstract final class ImageEncoder {
 
     add(target);
     add(DefaultFormat.webp); // mid fallback (cheap, wide support on Android)
-    if (hasAlpha) {
+    if (hasAlpha != false) {
       add(DefaultFormat.png); // alpha-safe floor, always available
     } else {
       add(DefaultFormat.jpeg); // opaque floor, always available
@@ -136,6 +186,7 @@ abstract final class ImageEncoder {
     required Uint8List source,
     required DefaultFormat format,
     required int quality,
+    required bool? hasAlpha,
     required bool keepMetadata,
     bool keepOriginalTime = true,
     int bitDepth = 0,
@@ -147,10 +198,10 @@ abstract final class ImageEncoder {
       if (format == DefaultFormat.avif) {
         // Hardware output is followed by a best-effort metadata transplant.
         // This path still needs independent preservation verification.
-        final hw = await NativeAvifEncoder.encode(
-          source: source,
-          quality: quality,
-        );
+        // Android's current bitmap/YUV path has no alpha plane.
+        final hw = hasAlpha == false
+            ? await NativeAvifEncoder.encode(source: source, quality: quality)
+            : null;
         if (hw != null && hw.isNotEmpty) {
           if (!keepMetadata) return EncodedImage(hw, format, backend: backend);
           final withMetadata = await DarkLibCore.transplantMetadata(
@@ -320,6 +371,8 @@ abstract final class ImageEncoder {
         keepExif: keepMetadata && _supportsKeepExif(format),
       );
       return _result(out, format, backend);
+    } on DarkLibPreservationFailure {
+      rethrow;
     } catch (_) {
       MediaDiagnostics.record(
         backend,
@@ -329,6 +382,18 @@ abstract final class ImageEncoder {
       return null;
     }
   }
+
+  // Container identity only, not proof of complete decoding or HDR fidelity.
+  static bool _matchesFormat(Uint8List bytes, DefaultFormat format) =>
+      ImageProbe.sniff(bytes) ==
+      switch (format) {
+        DefaultFormat.avif => SniffedFormat.avif,
+        DefaultFormat.heic => SniffedFormat.heic,
+        DefaultFormat.webp => SniffedFormat.webp,
+        DefaultFormat.png => SniffedFormat.png,
+        DefaultFormat.jpeg => SniffedFormat.jpeg,
+        DefaultFormat.auto => SniffedFormat.unknown,
+      };
 
   static EncodedImage? _result(
     Uint8List bytes,

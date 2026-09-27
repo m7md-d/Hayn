@@ -1,0 +1,225 @@
+# 14 — سجل العيوب والمتابعة
+
+آخر تحديث: 2026-09-27. المرجع الملتزم به `bedrock: ddc06a8`؛ توجد فوقه **تعديلات محلية مختبرة دون commit** لدفعة حماية التحويل. هذا السجل هو نقطة التسليم لمن يكمل العمل، ويفصل العيب المثبت عن المخاطرة وعن الميزة غير المنفذة. راجع حالة Git قبل أي تطبيق؛ لا تنسخ ملفات من نسخ الفحص القديمة فوق المشروع.
+
+**قرار المستخدم:** DarkLib باقية. الهدف تصحيحها وضبط حدودها؛ إزالة المكتبة أو العودة إلى main ليست مهمة مطروحة. الاستبدال الجراحي أزيل عمدًا ولا يعاد ضمن هذه الإصلاحات. العقد في [10-DARKLIB](10-DARKLIB.md)، وبحث الحاويات في [11-HDR-RESEARCH](11-HDR-RESEARCH.md)، والتاريخ والقياسات في [12-STABILIZATION](12-STABILIZATION.md)، والبيئة في [13-DEVELOPMENT](13-DEVELOPMENT.md).
+
+## طريقة استخدام السجل
+
+- الأرقام ثابتة حتى بعد الإصلاح. حدّث الحالة والدليل ومعيار الإغلاق في التغيير نفسه.
+- «مثبت» = إعادة إنتاج أو تعارض واضح بين التنفيذ وعقده. «يحتاج قياسًا» لا يعني أن عطل جهاز أو OOM قد أُعيد فعليًا.
+- «حماية جزئية» تعني منع حالة فقد معينة، ولا تعني أن المسار أصبح يحفظ الخاصية. لا تغلق مشكلة HDR أو اللون بمجرد نجاح build أو round-trip داخلي.
+- المواضع أدناه أسماء ملفات ودوال، لا أرقام سطور قابلة للتغير. جميع الروابط من هذا المستودع؛ السجلات المحلية أدلة إضافية وليست شرطًا لفهم المشكلة.
+- الأولوية P1 لسلامة المخرجات، P2 للموثوقية والبناء، P3 لعدم اتساق التوثيق أو ميزات خارج نطاق التثبيت. لا commit أو push أو تثبيت على هاتف دون طلب.
+
+## الدفعة الجارية: حماية التحويل
+
+النطاق: `unknown` للشفافية؛ إذن صريح لتغيير الصيغة؛ فحص هوية صيغة الناتج وقناته الشفافة؛ رفض سقوط HDR المعروف داخل Rust؛ إيصال رفض الحفظ إلى Dart كرفض نهائي. **ليس تنفيذًا كاملًا لـSourceFacts/Plan/ConversionResult أو ضمانًا لجميع backends.**
+
+قبل الإصلاح فشلت الحالات الخمس في `test/preservation_regression_test.dart` والحالات الخمس في `native/darklib/tests/preservation.rs` بالسلوك المتوقع من العيوب. عينتا HDR مستقلتان في `native/darklib/tests/fixtures/`. النتائج: **174 اختبار Flutter + 79 Rust (74 وحدة و5 انحدار) + 3 اختبارات جسر حقيقي** ناجحة؛ التحليل وfmt وclippy ناجحة. ImageIO المستقل قرأ عينة PQ بعمق 10 ووجد ISO gain map في العينة الثانية. بناء Android debug للمعماريتين وبناء iOS release بلا توقيع نجحا مجددًا بعد آخر تصحيح للجسر (21.7 ثانية و36.5 ثانية محليًا، بناء incremental لا benchmark أداء). لم يجر اختبار هاتف.
+
+تفصيل مهم لإعادة الإنتاج: أول اختبار دوران لم يحقن EXIF بالفعل لأن inject يحافظ على عنصر Exif موجود؛ كان فشل إعداد اختبار لا دليل عطل. صُحح بتبديل خانة TIFF دون تحريك offsets، ثم أعيدت الحالات الخمس على نسخة `ddc06a8` المعزولة وفشلت كلها في توقع رفض التحويل. السجل المعتمد `preservation-red-rust-corrected.log`. كذلك أثبت الجسر الحقيقي أن أخطاء `Result<_, String>` ترمى كنص، وصُحح الالتقاط والـmock بدل الاعتماد على نوع Anyhow غير مطابق.
+
+## سلامة الصورة وعقد التحويل
+
+### IMG-01 · P1 · الشفافية المجهولة تتحول إلى false
+
+- **الحالة:** حماية الفحص/اختيار المحرك مختبرة محليًا؛ فك alpha للشبكات ما زال IMG-02، والمصدر المجهول يصدر تحذيرًا ولا يعد حفظه مثبتًا.
+- **المواضع:** [ImageProbe.hasAlpha](../lib/features/image_ops/data/image_probe.dart)، [NativeImageProbe](../lib/features/image_ops/data/native_image_info.dart)، `ImageProbeNative.probe` في [جسر iOS](../ios/Runner/AppDelegate.swift)، [سياسة الصيغة](../lib/features/image_ops/domain/image_format_policy.dart)، [ImageEncoder](../lib/features/image_ops/data/image_encoder.dart).
+- **السبب والأثر:** اسم HEIC/AVIF اعتُبر دليلًا على غياب الشفافية، والحقول الغائبة من الجسر لها قيم افتراضية؛ يسمح هذا بـJPEG أو AVIF العتادي الذي يحول إلى I420 بلا alpha. فشل فك PNG كان يتحول إلى جواب مؤكد أيضًا.
+- **معيار الإغلاق:** إبقاء unknown، عدم إجازة JPEG عند present/unknown، استبعاد backend الذي لا يحفظ alpha، والتحقق من الناتج؛ اختبارات مصدر شفاف ومعتم وفحص ناقص/فاشل. مجرد اختيار صيغة تدعم alpha لا يثبت أن المحرك حفظها.
+
+### IMG-02 · P1 · فقد شفافية AVIF المبلط أو تجاهل فشل ألفا
+
+- **الحالة:** مثبت؛ غير مصلح.
+- **المواضع:** `decode`/`decode_item` في [avif_dav1d.rs](../native/darklib/src/engine/codec/avif_dav1d.rs)، و`alpha_item_id` في [isobmff.rs](../native/darklib/src/engine/metadata/isobmff.rs).
+- **السبب والأثر:** تجميع اللون من البلاطات ثم البحث عن مساعد alpha على المستوى الأساسي فقط؛ فشل فك ألفا أو اختلاف أبعادها يترك الصورة معتمة. عينة libavif `color_grid_alpha_nogrid.avif` أصبحت بلا بكسل شفاف في الفحص المستقل.
+- **معيار الإغلاق:** احترام علاقات alpha لكل عنصر/بلاطة وترتيب التحويلات، رفض فشل ألفا، ومقارنة قناة ألفا بقارئ مستقل للشبكات والصورة المفردة. حماية Dart في IMG-01 لا تصلح decoder نفسه.
+
+### IMG-03 · P1 · HDR مباشر يفقد الدقة ودالة النقل
+
+- **الحالة:** حماية رفض PQ/HLG المعروف داخل Rust مختبرة؛ الحفظ الفعلي وفحص جميع المحركات غير منفذين.
+- **المواضع:** `Decoded`/`transcode` في [codec/mod.rs](../native/darklib/src/engine/codec/mod.rs)، تحويل العينات في [avif_dav1d.rs](../native/darklib/src/engine/codec/avif_dav1d.rs)، [color.rs](../native/darklib/src/engine/color.rs).
+- **السبب والأثر:** وسيط RGBA8 يخفض الدقة ولا يحمل transfer/range؛ `seine_hdr_rec2020.avif` بدأ Rec.2020/PQ `(9,16)` وخرج بتفسير sRGB عند ImageIO. رفع عمق ملف الناتج لا يستعيد المعلومات.
+- **معيار الإغلاق:** مسار يحفظ العينات واللون أو tone mapping مسموح صراحة، وإلا رفض مصنف. corpus مستقل PQ وHLG وICC، بما يشمل غياب nclx أو تعقيد graph. رفض transfer المعروف ليس كشفًا شاملًا لكل HDR.
+
+### IMG-04 · P1 · فشل gain map قد يمر كتحويل SDR ناجح
+
+- **الحالة:** أُصلح السقوط الداخلي في الحالات المغطاة؛ رفض نهائي عبر FFI الفعلية مختبر. IMG-05 وIMG-10 ما زالا مفتوحين.
+- **المواضع:** `transcode_keep_metadata`/`transcode_hdr_avif` في [codec/mod.rs](../native/darklib/src/engine/codec/mod.rs)، `read_tmap`/`has_gainmap` في [isobmff.rs](../native/darklib/src/engine/metadata/isobmff.rs)، [_call](../lib/core/darklib/darklib.dart)، [_tryEncode](../lib/features/image_ops/data/image_encoder.dart).
+- **السبب والأثر:** `None` تعني غياب خريطة أو فشل معالجتها معًا، وبعدها ينفذ SDR. تغيير الهدف/التصغير يتجاوز مسار الخريطة. EXIF rotation كان يغير الأساس وحده، وirot/imir يسقطان إلى SDR. `keepMetadata=false` لا يعد إذنًا لحذف جزء HDR من الصورة.
+- **معيار الإغلاق:** الفصل بين الغياب والفشل؛ عدم استبدال الرفض بـbackend آخر؛ اختبارات graph ناقص، transform، resize، هدف مختلف، وحالات نجاح المسار الأساسي. إضافة فحص موحد **قبل جميع المحركات** ما زالت IMG-05؛ التحذير بعد Rust لا يرى مسار hardware سبق Rust.
+
+### IMG-05 · P1 · عقد الحفظ الشامل والتخطيط قبل الترميز غير مكتملين
+
+- **الحالة:** فجوة تنفيذ مؤكدة؛ غير مكتمل.
+- **المواضع:** [ImageEncoder](../lib/features/image_ops/data/image_encoder.dart)، [DarkLibCore](../lib/core/darklib/darklib.dart)، [NativeImageEncoder](../lib/features/image_ops/data/native_image_encoder.dart)، `ImageEncoderNative`/`bakeUpright` في [AppDelegate.swift](../ios/Runner/AppDelegate.swift)، [عقد التصميم](10-DARKLIB.md).
+- **السبب والأثر:** الصيغة النظرية وقدرة `keepMetadata` لا تثبت الحفظ. HEIC→PNG→RGBA8→AVIF قد يفقد HDR/اللون. hardware قد ينجح قبل فحص Rust؛ transplant قد يعيد target كما هو ويعد نجاحًا. حقول ConversionLoss النظرية ليست متصلة بجميع المسارات. `EncodedImage` يحمل المحرك والصيغة والتشخيص، وليس تقرير حفظ كاملًا.
+- **المطلوب التالي:** SourceFacts موثوقة مع unknown، سياسة preserveRequired وفقد مسموح محدد، تخطيط قدرات كل backend، تحقق قبل الحفظ وتقرير نتيجة. لا تستخدم علمًا عامًا باسم «حفظ» بينما تفحص alpha وحدها.
+
+### IMG-06 · P1 · MPF في JPEG Ultra HDR يصبح غير صالح بعد التنظيف
+
+- **الحالة:** مثبت؛ غير مصلح.
+- **المواضع:** `strip_bytes` في [metadata/jpeg.rs](../native/darklib/src/engine/metadata/jpeg.rs)، [تنظيف Dart](../lib/features/image_ops/data/metadata.dart).
+- **السبب والأثر:** بقاء APP2/MPF مع حذف/اختصار EXIF/XMP يترك offsets والأحجام القديمة. في `seine_sdr_gainmap_srgb.jpg`: 142972→74701 بايت؛ المؤشر الثاني لم يعد يصل إلى FF D8. بقاء حمولة الخريطة لا يثبت إمكانية العثور عليها.
+- **معيار الإغلاق:** إعادة بناء offsets والأحجام والتحقق بقارئ MPF مستقل وHDR، أو رفض هذه العملية إلى حين دعمها. اختبر الخصوصية أيضًا؛ لا ترجع الأصل على أنه منظف.
+
+### IMG-07 · P1 · التنظيف يحذف اتجاه العرض
+
+- **الحالة:** مثبت على main وbedrock؛ غير مصلح.
+- **المواضع:** [metadata/jpeg.rs](../native/darklib/src/engine/metadata/jpeg.rs)، `OrientationPolicy::Keep` في [metadata/mod.rs](../native/darklib/src/engine/metadata/mod.rs)، [metadata.dart](../lib/features/image_ops/data/metadata.dart).
+- **السبب والأثر:** حذف APP1/EXIF كاملًا دون حفظ orientation أو baking؛ JPEG بأبعاد تخزين 40×24 واتجاه 6 عُرض بعد التنظيف 40×24 بدل 24×40، خلاف السياسة المعلنة.
+- **معيار الإغلاق:** اتجاهات 1–8 وصورة غير مربعة؛ EXIF مصغر آمن أو تحويل بكسلات معلن، مع حذف البيانات الخاصة فعلًا. وسّع الاختبار لبقية الحاويات بدل افتراض اشتراكها في السلوك الصحيح.
+
+### IMG-08 · P1 · خيار الخصوصية يحذف ICC دون تحويل لون
+
+- **الحالة:** مثبت؛ غير مصلح.
+- **المواضع:** [DarkLibCore.transcode](../lib/core/darklib/darklib.dart)، [codec/mod.rs](../native/darklib/src/engine/codec/mod.rs)، [metadata/inject.rs](../native/darklib/src/engine/metadata/inject.rs).
+- **السبب والأثر:** `keepMetadata=false` يختار إعادة ترميز بلا ICC؛ PNG P3→WebP lossless يحفظ أرقام البكسلات ويغير معناها اللوني. stripIcc العشوائي له الخطر نفسه.
+- **معيار الإغلاق:** فصل بيانات الكاميرا/الموقع عن ICC/CICP والاتجاه؛ إبقاء اللون أو تحويله صحيحًا. قارن بقارئ يدير اللون، لا بمطابقة RGBA وحدها.
+
+### IMG-09 · P2 · pixi لا يطابق عمق AV1 الفعلي
+
+- **الحالة:** مثبت للشبكة؛ writer الخاص بـHDR يستعمل الثابت نفسه ويحتاج التغطية أيضًا.
+- **المواضع:** `build_grid_avif` و`build_hdr_avif` في [isobmff.rs](../native/darklib/src/engine/metadata/isobmff.rs)، `encode_avif_single`/`encode_avif_grid` في [codec/mod.rs](../native/darklib/src/engine/codec/mod.rs).
+- **السبب والأثر:** pixi يعلن 8 بت بينما ravif قد يشحن AV1/av1C بعمق 10. قبول decoder الداخلي أو ImageIO للملف لا يزيل تناقض الحاوية.
+- **معيار الإغلاق:** اشتقاق العمق من الإعداد/الحمولة الفعلية، تطابق av1C وpixi والتيار لكل عنصر، وقارئ مستقل. يشمل المسار الصور فوق 16×1024×1024 بكسل؛ لا يقتصر على 200MP.
+
+### IMG-10 · P1 · صلاحية gain map بعد تغيير الأساس لم تثبت
+
+- **الحالة:** مخاطرة دلالية وغياب تحقق؛ لا تعمم فساد كل صورة.
+- **المواضع:** `transcode_hdr_avif` في [codec/mod.rs](../native/darklib/src/engine/codec/mod.rs)، `read_tmap`/`build_hdr_avif` في [isobmff.rs](../native/darklib/src/engine/metadata/isobmff.rs)، نقل auxiliary في [AppDelegate.swift](../ios/Runner/AppDelegate.swift).
+- **السبب:** إعادة ترميز/تغيير اللون أو الهندسة للأساس ثم نقل الخريطة ومعاملاتها لا يثبت أنهما متوافقان. اختبار Rust القديم يحمل نصًا اصطناعيًا كمعاملات tmap؛ يفحص نقل بايتات وليس دلالة الإضاءة. قراءة graph وprimary والبدائل وترتيب dimg تحتاج تحققًا أدق؛ لا يكفي إيجاد أول tmap.
+- **معيار الإغلاق:** Apple gain map وISO gain map منفصلان؛ مقارنة إعادة البناء في فضاء خطي وعند headroom معلوم وقارئ مستقل؛ رفض الحالات التي لم تثبت. لا تحذف grid: هي تركيب مكاني وليست gain map.
+
+### IMG-11 · P2 · تغيير الصيغة تلقائيًا وقبول ناتج بلا فحص
+
+- **الحالة:** قيد الصيغة وفحص هويتها مختبران محليًا؛ تحقق الملف الكامل ضمن IMG-05.
+- **المواضع:** `encode`/`fallbackChain` في [ImageEncoder](../lib/features/image_ops/data/image_encoder.dart)، [ImageCompressTask](../lib/features/image_ops/data/image_compress_task.dart)، [compress_screen.dart](../lib/features/image_ops/presentation/compress_screen.dart).
+- **السبب والأثر:** المستخدم يطلب JPEG أو AVIF، وبعد فشل المحرك تقبل صيغة أخرى. تسمية الناتج تتبع format المطلوب من backend دون فحص البايتات. السجل السابق حذّر من fallback لكنه لم يشترط الإذن.
+- **معيار الإغلاق:** الصيغة المحددة لا تتغير؛ Auto يجيز اختيار صيغة أخرى مع تشخيص، ورفض هوية ناتج خاطئة. فحص signature ليس تحققًا كاملًا من صلاحية decode أو اللون/HDR؛ يرتبط بـIMG-05.
+
+### IMG-12 · P2 · تاريخ EXIF والعمق المطلوب غير موحدين بين المحركات
+
+- **الحالة:** فجوة مثبتة بتتبع المعاملات؛ تحتاج عينات إخراج.
+- **المواضع:** [ImageEncoder._tryEncode](../lib/features/image_ops/data/image_encoder.dart)، [ImageCompressTask](../lib/features/image_ops/data/image_compress_task.dart)، [GallerySaver](../lib/features/image_ops/data/gallery_saver.dart)، [Rust codec API](../native/darklib/src/api/codec.rs).
+- **السبب والأثر:** `keepOriginalTime` لا يصل إلى Rust كما يصل إلى ImageIO؛ قد يختلف وقت الأصل في المعرض عن EXIF في الملف المشترك. `bitDepth` لا يصل إلى AVIF software؛ «match source» في الواجهة لا يثبت حفظ HDR/العمق.
+- **معيار الإغلاق:** سياسة واضحة لكل حقل، نتيجة فيها العمق الفعلي، وفحص EXIF/وقت الأصل على iOS وAndroid. لا تفسر bit depth وحده بأنه HDR.
+
+## الموارد والتشغيل والأجهزة
+
+### RUN-01 · P1 · ذاكرة بلا ميزانية وفقد أبعاد ضمني
+
+- **الحالة:** ترتيب الحجز والتصغير مثبت في الكود؛ OOM/ذروة الجهاز لم تقاس.
+- **المواضع:** `decode`/`finish`/`encode_avif_grid` في [codec/mod.rs](../native/darklib/src/engine/codec/mod.rs)، canvas في [avif_dav1d.rs](../native/darklib/src/engine/codec/avif_dav1d.rs)، `encodeCapFor` في [ImageEncoder](../lib/features/image_ops/data/image_encoder.dart)، `MAX_EDGE` في [AvifHwEncoder.kt](../android/app/src/main/kotlin/app/naqaa/hayn/AvifHwEncoder.kt).
+- **السبب والأثر:** فك كامل ثم تصغير؛ التبليط يحتفظ بالمصدر الكامل. 200MP RGBA8 نحو 800MB قبل النسخ. سقف 8192 يصغّر المحفوظ ضمنيًا ولا يمنع تخصيص decoder الأول.
+- **معيار الإغلاق:** ميزانية قبل الحجز وحدود أبعاد/عناصر/overflow؛ معاينة تفك مصغرًا فعليًا؛ رفض صريح عند شرط حفظ الأبعاد. لا ترفع السقف وحده ولا تصف التبليط بأنه ذاكرة محدودة من المصدر.
+
+### RUN-02 · P2 · تزامن العمل الثقيل وإلغاء الصور غير محدودين
+
+- **الحالة:** ترتيب إلغاء TaskRunner أُصلح، إيقاف native والتزامن ما زالا غير مكتملين.
+- **المواضع:** [TaskRunner.enqueue](../lib/core/isolates/task_runner.dart)، [compress_screen.dart](../lib/features/image_ops/presentation/compress_screen.dart)، [ImageCompressTask](../lib/features/image_ops/data/image_compress_task.dart)، [ImageCropTask](../lib/features/image_ops/data/image_crop_task.dart)، [Rust codec API](../native/darklib/src/api/codec.rs).
+- **السبب والأثر:** المهام تبدأ مباشرة، ومعاينة أحدث تتجاهل نتيجة القديمة دون وقف عملها؛ علم الإلغاء يفحص بين الخطوات ولا يقطع الترميز الجاري.
+- **معيار الإغلاق:** بوابة مشتركة للمهام والمعاينات، حد ذاكرة/تزامن، وإلغاء native قابل للاختبار أو تصريح واضح بنقاط الإلغاء. قياس ذروة العمل المتداخل على جهاز.
+
+### RUN-03 · P2 · الإكمال الأصلي لجلسة FFmpeg شرط للتنظيف
+
+- **الحالة:** الإصلاح السابق ينتظر completion بعد طلب cancel؛ سلوك غياب callback يحتاج اختبار منصة.
+- **المواضع:** `FfmpegRunner` في [ffmpeg_runner.dart](../lib/features/video_ops/data/ffmpeg_runner.dart)، [اختبار العمر](../test/ffmpeg_lifecycle_test.dart).
+- **المطلوب:** اختبار إلغاء حقيقي وفشل بدء/نهاية العملية مع FFmpeg 3.6.2. لا تضف timeout يحذف الملفات فيما native لا يزال يكتب إليها.
+
+### RUN-04 · P2 · الاستئناف والخلفية ليسا منفذين
+
+- **الحالة:** فجوة نطاق، لا عطل codec جديد.
+- **المواضع:** [TaskRunner](../lib/core/isolates/task_runner.dart)، [MediaTask](../lib/core/isolates/media_task.dart).
+- **السبب:** حالة الطابور في الذاكرة؛ لا checkpoint/resume مكتمل بعد قتل التطبيق ولا ضمان خلفية. يلزم تحديد وعد المنتج قبل بناء طابور دائم أو خدمات منصة.
+
+### DEV-01 · P2 · مجال جودة AVIF العتادي واتجاهه مفترضان
+
+- **الحالة:** تعارض مع عقد API مثبت؛ أثره وحجمه على الهواتف غير مقاسين.
+- **الموضع:** `encodeAv1` في [AvifHwEncoder.kt](../android/app/src/main/kotlin/app/naqaa/hayn/AvifHwEncoder.kt).
+- **السبب:** تحويل جودة 0–100 إلى KEY_QUALITY متناقص 63–10، دون `getQualityRange()`، كأنه quantizer. [Android](https://developer.android.com/reference/android/media/MediaCodecInfo.EncoderCapabilities#getQualityRange()) يعرّف المجال بحسب التنفيذ، والأعلى عمومًا أجود.
+- **معيار الإغلاق:** المجال الفعلي وتحقق CQ/VBR وفشل المحرك، ثم قياس جهاز يدعم AV1 العتادي. لا تنسب اختلاف أحجام الجهازين كله لهذه النقطة ولا تعد بتساوي أحجام «جودة 80».
+
+### DEV-02 · P2 · القدرات المقدرة ليست فحصًا للمحرك الفعلي
+
+- **الحالة:** فجوة مؤكدة؛ ضبط قياسات الأداء والحجم لم يكتمل.
+- **المواضع:** [FormatCapabilities](../lib/core/capabilities/format_capabilities.dart)، ملفات `lib/core/capabilities/`، [NativeAvifEncoder](../lib/features/image_ops/data/native_avif_encoder.dart).
+- **السبب:** أجزاء من القدرات تعتمد المنصة أو قيمًا مؤقتة؛ سجل backend الحالي لا يشمل الاسم الأصلي/الإصدار/subsampling/rate-control. AVIF له hardware وravif وflutter_avif؛ المسار يغير الحجم والسرعة. assembly معطل وفك AVIF محدود الخيوط؛ أثر ذلك غير مقاس.
+- **معيار الإغلاق:** نفس bytes/hash للمصدر، المحرك وإصداره وإعداداته، الأبعاد/العمق/alpha/اللون، الزمن/الذاكرة/الحجم، وجودة بصرية متقاربة. أي مقارنة backend مستقبلية تجربة محدودة داخل DarkLib؛ لا قرار بإزالة المكتبة.
+
+## البناء والتغليف
+
+### BUILD-01 · P2 · CI لا يطابق البيئة ولا يختبر الجسر الحقيقي
+
+- **الحالة:** مفتوح.
+- **المواضع:** [ci.yml](../.github/workflows/ci.yml)، [اختبار المضيف](../test_native/darklib_host_test.dart).
+- **السبب:** CI يثبت Flutter 3.44.0 مقابل 3.47.2 محليًا، pub get بلا enforce-lockfile وCargo بلا locked؛ اختبارات Flutter العادية تسمح بغياب native. لا بناء Android/iOS في CI.
+- **معيار الإغلاق:** تثبيت إصدارات منسجمة دون ترقية جانبية؛ بناء وتحميل DarkLib في اختبار منفصل لا يتخطى الفشل؛ تحقق تغليف المنصتين والـABIs المدعومة. أعداد unit لا تثبت التكامل.
+
+### BUILD-02 · P2 · MSRV المعلن غير صحيح مع القفل
+
+- **الحالة:** مفتوح، مثبت: Rust 1.79 معلن و`image 0.25.10` يتطلب 1.88.
+- **المواضع:** [Cargo.toml](../native/darklib/Cargo.toml)، [Cargo.lock](../native/darklib/Cargo.lock)، [BUILD.md](../native/darklib/docs/BUILD.md)، [SUPPORT.md](../native/darklib/docs/SUPPORT.md).
+- **معيار الإغلاق:** اعتماد حد مختبر مع القفل أو قفل متوافق؛ تحقق MSRV فعلًا وتحديث جميع الوثائق. لا تسمِّ 1.79 مدعومًا لمجرد وجوده في manifest.
+
+### BUILD-03 · P2 · فصل APK يتعارض مع abiFilters وتجميع غير لازم
+
+- **الحالة:** تعارض split-per-abi أُعيد سابقًا ولم يتغير الملف؛ سجل Android الأخير يؤكد تجميع i686 وتكرار x64.
+- **المواضع:** [app/build.gradle.kts](../android/app/build.gradle.kts)، [cargokit/plugin.gradle](../rust_builder/cargokit/gradle/plugin.gradle).
+- **السبب:** filters ثابتة arm64/x64 مع إعداد splits، وdebug يضيف x86/x64 بلا إزالة التكرار. دعم Rust لمعماريات معينة لا يثبت محتويات APK من مكتبات plugins الأخرى.
+- **معيار الإغلاق:** اختبار universal وsplit للمقاصد المدعومة، فحص libs المعبأة فعلًا، وإزالة ABI غير مشحون/التكرار. لا تستخدم nightly لحل ABI غير مطلوب.
+
+### BUILD-04 · P2 · قياس release قديم والتوقيع للنشر غير مجهز
+
+- **الحالة:** يحتاج إعادة قياس بعد FFmpeg 3.6.2؛ ليس مانع debug.
+- **المواضع:** [pubspec.yaml](../pubspec.yaml)، [app/build.gradle.kts](../android/app/build.gradle.kts)، [قياسات الاستقرار](12-STABILIZATION.md).
+- **التفصيل:** baseline APK 98.88MiB يسبق تحديث FFmpeg؛ لا يعاد عرضه كحجم حالي. release Android يستخدم debug signing حاليًا؛ يلزم إعداد نشر منفصل عند طلب النشر. تحذيرات ثلاث plugins عن SPM/CocoaPods ليست فشل البناء الحالي.
+- **معيار الإغلاق:** قياس package/installed لكل ABI وإصدار، فصلها عن build/cache؛ لا نشر أو تغيير مفاتيح بلا طلب.
+
+### BUILD-05 · P2 · تحذيرات توافق أدوات البناء المستقبلية
+
+- **الحالة:** ظهرت في بناء الدفعة الناجح، وليست مانعًا حاليًا.
+- **المواضع:** [gradle-wrapper.properties](../android/gradle/wrapper/gradle-wrapper.properties)، [settings.gradle.kts](../android/settings.gradle.kts)، [pubspec.yaml](../pubspec.yaml)، وlogs `preservation-android-build.log`/`preservation-ios-build.log`.
+- **التفصيل:** Flutter يحذر من دعم قادم يتجاوز Gradle 8.14.3 وAGP 8.11.1 وKotlin 2.2.20؛ تحذير SDK XML 3/4 أيضًا. ثلاث plugins لا تدعم SPM بعد. لم نرفع اعتماديات أو نتجاوز فحص التوافق ضمن تصحيح الصور.
+- **معيار الإغلاق:** دفعة ترقية مستقلة بإصدارات متوافقة وبناء الهاتفين، لا تغيير أرقام تلقائيًا لمجرد إزالة التحذير.
+
+## التوثيق والمنتج
+
+### DOC-01 · P3 · التاريخ القديم يمكن أن يُقرأ كحالة حالية
+
+- **الحالة:** أضيف هذا السجل وملخص حالي إلى docs/10 وdocs/12 وdocs/13، مع حفظ المقاطع التاريخية وتسميتها. تستمر مراجعة الادعاءات القديمة عند لمس المسار.
+- **المواضع:** [12-STABILIZATION](12-STABILIZATION.md)، [13-DEVELOPMENT](13-DEVELOPMENT.md)، [BUILD.md](../native/darklib/docs/BUILD.md)، والخطط `docs/01` إلى `docs/09`.
+- **التفصيل:** مقاطع تقول إن إصلاحات الدفعة الأولى غير ملتزم بها أو iOS متعذر؛ لاحقًا التزمت في `d514063` وجهز المحاكي واعتمد iOS 15. README حُدّث في `ddc06a8`؛ لا تكرر حكم README القديم. الخطط القديمة ليست دليل اكتمال.
+- **معيار الإغلاق:** حالة حالية بارزة مع تاريخ كل baseline؛ روابط هذا السجل من Claude؛ كل إصلاح يحدّث سجله والاختبار/القيد بدل دفنها في محادثة.
+
+### PROD-01 · P3 · شاشات لا تزال خططًا أو موصولة جزئيًا
+
+- **الحالة:** نقص معروف خارج دفعة المكتبة؛ يلزم إعادة فحص كل flow قبل إصدار.
+- **المواضع:** [قص الفيديو](../lib/features/video_ops/presentation/trim_video_screen.dart)، [تحرير الفيديو](../lib/features/video_ops/presentation/video_editor_screen.dart)، [crop_video_screen](../lib/features/video_ops/presentation/crop_video_screen.dart)، [التحريك من صور](../lib/features/animated/presentation/animate_from_photos_screen.dart)، [فصل الصوت](../lib/features/audio/presentation/separate_audio_screen.dart).
+- **المطلوب:** لا تعرض نجاحًا لعملية غير منفذة، واتساق أدوات Coming Soon مع المداخل المنفذة. لا توسع DarkLib إلى محركات فيديو/صوت لإغلاق هذا البند؛ حدودها موثقة.
+
+## أمور أُصلحت أو استُبعدت — لا تُفتح من جديد بلا دليل
+
+| الملاحظة | الحالة والدليل | المتبقي المنفصل |
+|---|---|---|
+| Future مرفوض يغادر try دون await | أُصلح في `d514063`؛ `test/stability_regression_test.dart` | سياسات الإذن في IMG-11 |
+| إغلاق stream يُعلن النجاح دون ناتج، وفشل الفيديو/الدفعة يختفي | TaskEvent وIncompleteBatch ونتيجة نهائية واحدة في `d514063`؛ اختبارات task/batch/lifecycle | RUN-02/03/04 |
+| cancel ينتظر subscription قبل إيقاف المنتج | أُصلح في `d514063` مع اختبار يمنع الرجوع | إلغاء native أثناء الترميز غير منفذ |
+| تشخيص fallback debug فقط أو غير موجود | سجل 100 حدث في release وtrace للعملية وbackend في النتيجة؛ `d514063` | لا يثبت HDR/اللون، IMG-05 |
+| غياب Android SDK / iOS runtime وتعذر البناء | عولج؛ doctor بلا ملاحظات وبناء المحاكي وiOS release وAndroid مسجل بعد FFmpeg 3.6.2 | آخر إعادة بناء بعد تصحيح الجسر نجحت للمنصتين |
+| نقل أدوات التطوير يستهلك الداخلي | معظم الأدوات والكاشات على `/Volumes/CUSU/Development`؛ التفاصيل في docs/13 | runtime/CoreSimulator تبقى داخلية: خدمة النظام رفضت النقل بصلاحياتها؛ لا تعيد نقلها بلا حل مثبت |
+| اشتباه عدم تزامن التبويب أثناء انتقال سريع | اختبار إعادة الإنتاج في المراجعة مرّ؛ **ليس عيبًا مثبتًا** | لا تذكره كخلل ولا تصلحه افتراضيًا |
+| الاستبدال الجراحي | أزيل عمدًا بسبب قيود ومشاكل سابقة | ليس بندًا مطلوبًا لإعادة التنفيذ |
+
+## الأدلة وكيف يكمل المراجع التالي
+
+آخر baseline قبل الدفعة الجارية: **158 Flutter + 74 Rust**، والتحليل وdoctor ناجحان عند `ddc06a8`. السجلات: `/Volumes/CUSU/Development/logs/review-20260927-*`. سجلات الأحمر المعتمدة: `preservation-red-flutter.log` و`preservation-red-rust-corrected.log` في المجلد نفسه (5 حالات فشلت في كل مجموعة).
+
+الفحص الأول محفوظ خارجيًا في `/Volumes/CUSU/Development/verification/Hayn-audit-20260925/`: `results/` للسجلات والعينات، و`bedrock/native/darklib/tests/audit_regressions.rs` لحالات اللون/MPF/grid/الاتجاه القديمة. هذه نسخة قديمة للفحص فقط، لا شجرة عمل تُنسخ على المشروع. التقرير التاريخي الكامل موجود محليًا في مشروع Codex بعنوان `Hayn-review-2026-09-25.md`؛ جميع المشاكل القابلة للمتابعة منه ملخصة هنا فلا يعتمد التسليم على توفره.
+
+1. اقرأ Git وCLAUDE ثم هذه الوثيقة وdocs/10 وdocs/11.
+2. تحقق من النتائج الموثقة للدفعة ومن أي تغيير أحدث قبل فتح IMG-02/06/07/08/09. لا تعد الأخضر على mocks إثباتًا لـnative.
+3. Dart: format + analyze + جميع `flutter test --no-pub`. Rust: fmt + clippy all-targets locked + test locked. اختبار `test_native` يحمّل مكتبة مبنية حقيقية.
+4. لأن Swift/Rust تأثرا، أعد بناء Android للـABIs المدعومة وiOS بلا توقيع. لا تثبت على الهاتف ضمن التحقق دون طلب.
+5. حدّث هذا السجل وdocs/12 بنتائج الفحوص وحدودها، ثم خذ أقرب عيب P1 قابل للإثبات في دفعة محدودة. نجاح الحماية الحالية لا يغلق عقد الحفظ الشامل.

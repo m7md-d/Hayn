@@ -1,4 +1,5 @@
 import 'package:flutter/services.dart';
+import 'support/encoded_headers.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hayn/core/diagnostics/media_diagnostics.dart';
 import 'package:hayn/core/darklib/darklib.dart';
@@ -11,6 +12,7 @@ class _Api extends Fake implements DarkLibApi {
   int calls = 0;
   bool empty = false;
   bool reject = false;
+  bool veto = false;
   @override
   Future<Uint8List> crateApiCodecTranscode({
     required List<int> bytes,
@@ -19,8 +21,13 @@ class _Api extends Fake implements DarkLibApi {
     required int maxEdge,
   }) async {
     calls++;
+    if (veto) {
+      return Future<Uint8List>.error(
+        'preservation_required:gainmap_processing_failed',
+      );
+    }
     if (reject) throw StateError('secret filename');
-    return Uint8List.fromList(empty ? [] : [9, 8, 7]);
+    return empty ? Uint8List(0) : encodedHeader(DefaultFormat.webp);
   }
 }
 
@@ -37,6 +44,7 @@ void main() {
     messenger.setMockMethodCallHandler(avifChannel, null);
     api.empty = false;
     api.reject = false;
+    api.veto = false;
   });
 
   test('primary DarkLib succeeds without touching plugin fallback', () async {
@@ -95,7 +103,7 @@ void main() {
     () async {
       messenger.setMockMethodCallHandler(imageChannel, (call) async {
         expect(call.method, 'encodeImage');
-        return Uint8List.fromList([3, 2, 1]);
+        return encodedHeader(DefaultFormat.jpeg);
       });
       final result = await ImageEncoder.encode(
         source: Uint8List(3),
@@ -119,7 +127,7 @@ void main() {
           if (probes == 1) throw PlatformException(code: 'transient');
           return true;
         }
-        return Uint8List.fromList([1]);
+        return encodedHeader(DefaultFormat.avif);
       });
       expect(await NativeAvifEncoder.isAvailable(), isFalse);
       expect(MediaDiagnostics.recent.last.operation, MediaOperation.probe);
@@ -133,6 +141,35 @@ void main() {
         keepMetadata: false,
       );
       expect(result.backend, MediaBackend.androidAvif);
+    },
+  );
+  test(
+    'Rust preservation veto is terminal even with permitted format recovery',
+    () async {
+      api.veto = true;
+      var nativeCalls = 0;
+      messenger.setMockMethodCallHandler(imageChannel, (_) async {
+        nativeCalls++;
+        return encodedHeader(DefaultFormat.jpeg);
+      });
+      await expectLater(
+        ImageEncoder.encode(
+          source: Uint8List(3),
+          target: DefaultFormat.webp,
+          quality: 80,
+          hasAlpha: false,
+          keepMetadata: false,
+          allowFormatFallback: true,
+        ),
+        throwsA(
+          isA<ImageEncodingFailure>().having(
+            (e) => e.diagnostics.map((d) => d.code),
+            'terminal diagnosis',
+            contains(MediaDiagnosticCode.preservationRejected),
+          ),
+        ),
+      );
+      expect(nativeCalls, 0);
     },
   );
 }

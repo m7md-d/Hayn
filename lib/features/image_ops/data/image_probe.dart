@@ -3,46 +3,37 @@ import 'dart:typed_data';
 
 import 'package:image/image.dart' as img;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ImageProbe — answers the one question the format policy needs: does this
-// image carry transparency? Getting it right is a safety matter (an alpha
-// image must never be flattened to JPEG — CLAUDE.md §2).
-//
-// Strategy:
-//   • Sniff the container by magic bytes first. JPEG can never hold alpha, so
-//     we answer instantly without decoding.
-//   • For alpha-capable raster containers (PNG/WebP/GIF/BMP/TIFF) decode in a
-//     background isolate and report whether an alpha channel is present
-//     (channel-presence, not a full pixel scan — cheaper and conservatively
-//     safe: an opaque PNG simply takes the alpha-safe path, losing nothing).
-//   • HEIC/AVIF aren't decodable by package:image; camera shots in those
-//     containers are opaque, so we report false (treating every iPhone HEIC as
-//     "maybe alpha" would wrongly block JPEG for the whole library). True alpha
-//     HEIC/AVIF is rare and still encodes fine via the alpha-safe auto tree.
-// ─────────────────────────────────────────────────────────────────────────────
+import 'native_image_info.dart';
+
+// Alpha inspection is tri-state: true = present, false = confirmed absent,
+// null = unknown. Unknown must never authorize an opaque target or fallback.
+// Channel presence is conservative; it does not prove per-pixel equivalence.
 
 enum SniffedFormat { jpeg, png, webp, gif, bmp, tiff, heic, avif, unknown }
 
 abstract final class ImageProbe {
-  /// True if the image has (or, for undecodable alpha-capable containers, may
-  /// have) transparency. Decodes off the main isolate.
-  static Future<bool> hasAlpha(Uint8List bytes) async {
+  /// Inspect alpha off the UI isolate. Unavailable or failed probes stay null.
+  static Future<bool?> hasAlpha(Uint8List bytes) async {
     switch (sniff(bytes)) {
       case SniffedFormat.jpeg:
+        return false;
       case SniffedFormat.heic:
       case SniffedFormat.avif:
-        return false;
+        return NativeImageProbe.probeAlpha(bytes);
       case SniffedFormat.unknown:
-        return false;
+        return null;
       case SniffedFormat.png:
       case SniffedFormat.webp:
       case SniffedFormat.gif:
       case SniffedFormat.bmp:
       case SniffedFormat.tiff:
         return Isolate.run(() {
-          final decoded = img.decodeImage(bytes);
-          // Undecodable but alpha-capable container → assume alpha (safe).
-          return decoded?.hasAlpha ?? true;
+          try {
+            return img.decodeImage(bytes)?.hasAlpha;
+          } catch (_) {
+            // The caller retains unknown rather than inventing source facts.
+            return null;
+          }
         });
     }
   }
@@ -79,17 +70,24 @@ abstract final class ImageProbe {
         b[11] == 0x50) {
       return SniffedFormat.webp;
     }
-    // ISO-BMFF "ftyp" box at offset 4; brand at 8..11 distinguishes HEIC/AVIF.
+    // A generic HEIF major brand can advertise AVIF in compatible brands.
     if (b[4] == 0x66 && b[5] == 0x74 && b[6] == 0x79 && b[7] == 0x70) {
-      final brand = String.fromCharCodes(b.sublist(8, 12));
-      if (brand.startsWith('avif') || brand.startsWith('avis')) {
+      if (b.length < 16) return SniffedFormat.unknown;
+      final size = ByteData.sublistView(b).getUint32(0);
+      final end = size == 0 ? b.length : size;
+      if (end < 16 || end > 4096 || end > b.length || (end - 16) % 4 != 0) {
+        return SniffedFormat.unknown;
+      }
+      final brands = <String>{String.fromCharCodes(b.sublist(8, 12))};
+      for (var at = 16; at < end; at += 4) {
+        brands.add(String.fromCharCodes(b.sublist(at, at + 4)));
+      }
+      if (brands.contains('avif') || brands.contains('avis')) {
         return SniffedFormat.avif;
       }
-      if (brand.startsWith('heic') ||
-          brand.startsWith('heix') ||
-          brand.startsWith('mif1') ||
-          brand.startsWith('hevc') ||
-          brand.startsWith('msf1')) {
+      if (brands.any(
+        const {'heic', 'heix', 'hevc', 'hevx', 'mif1', 'msf1'}.contains,
+      )) {
         return SniffedFormat.heic;
       }
     }

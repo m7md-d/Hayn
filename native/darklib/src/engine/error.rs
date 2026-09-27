@@ -10,11 +10,14 @@ pub enum DarkError {
     UnsupportedFormat,
     /// The bytes are malformed for their detected container.
     Malformed(&'static str),
+    /// A supported pixel path would violate a source preservation requirement.
+    PreservationRequired(&'static str),
 }
 
 impl fmt::Display for DarkError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            DarkError::PreservationRequired(why) => write!(f, "preservation_required:{why}"),
             DarkError::UnsupportedFormat => write!(f, "unsupported image format"),
             DarkError::Malformed(why) => write!(f, "malformed image: {why}"),
         }
