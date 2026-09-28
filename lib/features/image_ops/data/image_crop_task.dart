@@ -8,6 +8,7 @@ import 'package:image/image.dart' as img;
 import 'package:photo_manager/photo_manager.dart';
 
 import '../../../core/capabilities/format_capabilities.dart';
+import '../../../core/diagnostics/media_diagnostics.dart';
 import '../../../core/isolates/media_task.dart';
 import '../../../core/isolates/task_progress.dart';
 import '../../settings/providers/preferences_providers.dart';
@@ -15,7 +16,9 @@ import '../domain/image_format_policy.dart';
 import 'gallery_saver.dart';
 import 'image_encoder.dart';
 import 'image_probe.dart';
+import 'native_image_encoder.dart';
 import 'output_name.dart';
+import 'source_facts.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ImageCropTask — applies the editor's rotate/flip/crop to the FULL-resolution
@@ -71,12 +74,41 @@ class ImageCropTask extends MediaTask {
     }
     if (_cancelled) return;
 
+    // The crop is 8-bit SDR. For an HDR original, ImageIO's SDR rendition is
+    // the input (upright, like the preview). PQ/HLG without it is refused; a
+    // gain map without it decodes its SDR base below. Not surfaced to the user.
+    final facts = await SourceInspector.inspect(src);
+    var pixels = src;
+    if (facts.hasHdr) {
+      final sdr = await NativeImageEncoder.bakeUpright(
+        source: src,
+        keepMetadata: false,
+        keepOriginalTime: true,
+        toSdr: true,
+      );
+      if (sdr == null && facts.directHdr == true) {
+        MediaDiagnostics.record(
+          MediaBackend.imageEncoder,
+          MediaOperation.encode,
+          MediaDiagnosticCode.hdrToneMapUnavailable,
+        );
+        throw StateError('Crop source has no SDR rendition');
+      }
+      MediaDiagnostics.record(
+        MediaBackend.imageEncoder,
+        MediaOperation.encode,
+        MediaDiagnosticCode.hdrToSdr,
+      );
+      pixels = sdr ?? src;
+    }
+    if (_cancelled) return;
+
     // Decode through the PLATFORM ENGINE (ui.instantiateImageCodec), which on
     // iOS natively decodes HEIC/HEIF (and JPEG/PNG/WebP) — package:image can't.
     // It also bakes EXIF orientation into the pixels, so the transform below
     // works in upright coordinates that match the on-screen preview. We get
     // raw RGBA + dimensions and hand those to the isolate for the pixel work.
-    final decoded = await _decodeRgba(src);
+    final decoded = await _decodeRgba(pixels);
     if (decoded == null) throw StateError('Crop failed to decode');
     if (_cancelled) return;
 
@@ -112,7 +144,7 @@ class ImageCropTask extends MediaTask {
       allowFormatFallback:
           true, // This task explicitly uses Auto format policy.
       quality: quality,
-      hasAlpha: hasAlpha,
+      facts: SourceFacts.sdr(alpha: hasAlpha),
       keepMetadata: false, // cropped → original EXIF dims are stale
     );
     if (_cancelled) return;

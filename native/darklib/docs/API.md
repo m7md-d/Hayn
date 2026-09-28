@@ -158,23 +158,46 @@ pub enum Target {
     Avif { quality: u8 },                   // software (rav1e)
 }
 
+pub enum HdrOutcome { None, GainMapKept, GainMapDropped, GainMapKeepFailed }
+pub struct Transcoded { pub bytes: Vec<u8>, pub hdr: HdrOutcome }
+
 pub fn decode(bytes: &[u8], max_edge: Option<u32>) -> Result<Decoded>;
 pub fn encode(img: &Decoded, target: Target) -> Result<Vec<u8>>;
-pub fn transcode(bytes: &[u8], target: Target, max_edge: Option<u32>) -> Result<Vec<u8>>;
-pub fn transcode_keep_metadata(bytes: &[u8], target: Target, max_edge: Option<u32>) -> Result<Vec<u8>>;
+pub fn transcode(bytes: &[u8], target: Target, max_edge: Option<u32>,
+                 keep_metadata: bool) -> Result<Transcoded>;
 ```
 `decode` handles PNG/JPEG/WebP/AVIF (EXIF orientation baked into pixels); **HEIC is
 not software-decoded** → `Err` (use a hardware/platform decoder). `max_edge`
 downscales for **previews only** — `None` keeps full resolution; never downscale a
-saved output. `transcode` = `decode → optional downscale → encode`.
-`transcode_keep_metadata` additionally carries EXIF/XMP/ICC into the output — and
-through a full-resolution AVIF→AVIF convert it carries the ISO 21496-1 HDR gain
-map too (curve metadata verbatim, gain-map image re-encoded; falls back to SDR on
-any failure rather than failing the convert).
+saved output. `transcode` = `decode → optional downscale → encode`; with
+`keep_metadata` it carries EXIF/XMP/ICC. HDR policy (Hayn, 2026-09-28): a
+gain-map source is encoded as its SDR base → `GainMapDropped`, AVIF→AVIF
+included. `GainMapKept`/`GainMapKeepFailed` are reserved: the gain map rebuilt by
+`isobmff::build_hdr_avif` is not recognised by ImageIO (no `tmap` brand, no
+`pixi`/`colr` on the `tmap` item, pixi ≠ av1C depth), so keeping stays off
+until it is fixed and independently verified (Hayn IMG-09/IMG-10). A PQ/HLG
+primary is refused with `preservation_required:hdr_transfer_unsupported`: RGBA8
+has no tone mapper, and relabelled PQ samples would be a wrong image.
 
 ```rust
-let webp = codec::transcode(src, codec::Target::Webp { quality: 80, lossless: false }, None)?;
+let out = codec::transcode(src, codec::Target::Webp { quality: 80, lossless: false }, None, true)?;
+assert_eq!(out.hdr, codec::HdrOutcome::None); // an SDR source
 ```
+
+### Inspect (`engine::inspect`)
+
+```rust
+pub enum Transfer { Unknown, NoHdrSignal, Pq, Hlg }
+pub enum Presence { Unknown, Absent, Present }
+pub struct Facts { pub transfer: Transfer, pub gain_map: Presence }
+pub fn inspect(bytes: &[u8]) -> Facts;
+```
+Container scan, no pixel decode. AVIF/HEIC: the PRIMARY item's `colr` nclx (a
+grid falls back to its first tile; a `tmap` item's own `colr` is ignored) and
+`tmap` or a gain-map `auxC`. PNG: `cICP` before `IDAT`. JPEG: `hdrgm`/Apple
+`HDRGainMap` XMP or an ISO 21496-1 APP2; MPF alone is `Unknown`. WebP has no HDR
+signalling. `NoHdrSignal`/`Absent` mean no known signal was found, not proof of
+SDR; an unreadable container is `Unknown`.
 
 ---
 
@@ -213,13 +236,18 @@ powers a "what will be removed" preview and works cross-platform incl. HEIC/AVIF
 ### `api::codec`
 ```rust
 enum CodecFormat { Jpeg, Png, Webp, WebpLossless, Avif }
-fn transcode(bytes, format: CodecFormat, quality: u32, max_edge: u32) -> Result<Vec<u8>, String>
-fn transcode_keep_metadata(bytes, format, quality, max_edge) -> Result<Vec<u8>, String>
+fn transcode(bytes, format: CodecFormat, quality: u32, max_edge: u32,
+             keep_metadata: bool) -> Result<Transcoded, String>
 ```
-`max_edge == 0` means keep original size. `transcode_keep_metadata` carries the
-source's EXIF/XMP/ICC into the output where supported. Both throw on a container
-the codec layer can't decode yet (notably **HEIC** — decode it on the platform
-side and feed pixels in until hardware decode lands).
+`max_edge == 0` means keep original size. The result carries the bytes and the
+`HdrOutcome`. It throws on a container the codec layer can't decode yet (notably
+**HEIC** — decode it on the platform side and feed pixels in), and throws
+`preservation_required:hdr_transfer_unsupported` for PQ/HLG.
+
+### `api::inspect`
+```rust
+fn inspect_image(bytes) -> Facts   // async; see engine::inspect above
+```
 
 ---
 
@@ -232,12 +260,10 @@ side and feed pixels in until hardware decode lands).
   Orientation (`irot`/`imir`), transparency (the alpha auxiliary item) and
   **ImageGrid (tiled) images** are all handled — grid tiles decode one at a time,
   so peak memory ≈ canvas + one tile.
-- **HDR carry through a re-encode**: a full-resolution AVIF→AVIF
-  `transcode_keep_metadata` carries the ISO 21496-1 gain map (tmap curve
-  verbatim, gain-map image re-encoded). Converts to other targets, downscaled
-  previews, and Apple's HEIC flavour (hardware-decode territory) still produce
-  SDR; sources with `irot`/`imir` fall back to SDR to avoid base/gain-map
-  misalignment.
+- **HDR carry through a re-encode**: none yet. Every gain-map source produces
+  its SDR base and reports it in `HdrOutcome`; `build_hdr_avif` needs the fixes
+  above before keeping returns. A gain map whose base is HDR but not signalled
+  by nclx is not detected.
 - **Very large images**: AVIF tiles in BOTH directions — grid decode, and grid
   *encode* (opaque images above 16 MP encode tile-by-tile as an ImageGrid at full
   resolution; transparency or other targets use the single-pass path). JPEG/PNG/

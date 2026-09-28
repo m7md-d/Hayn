@@ -1481,7 +1481,7 @@ abstract class AppLocalizations {
   /// No description provided for @compressBitDepthDesc.
   ///
   /// In en, this message translates to:
-  /// **'Colour precision per channel — HDR is kept either way'**
+  /// **'Colour precision per channel'**
   String get compressBitDepthDesc;
 
   /// No description provided for @compressBitDepthMatch.

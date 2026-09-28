@@ -4,11 +4,14 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/codec.dart';
+import 'api/inspect.dart';
 import 'api/metadata.dart';
 import 'api/simple.dart';
 import 'dart:async';
 import 'dart:convert';
+import 'engine/codec.dart';
 import 'engine/format.dart';
+import 'engine/inspect.dart';
 import 'frb_generated.dart';
 import 'frb_generated.io.dart'
     if (dart.library.js_interop) 'frb_generated.web.dart';
@@ -69,7 +72,7 @@ class DarkLib extends BaseEntrypoint<DarkLibApi, DarkLibApiImpl, DarkLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 1635397244;
+  int get rustContentHash => 844787946;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -93,6 +96,8 @@ abstract class DarkLibApi extends BaseApi {
 
   Future<void> crateApiSimpleInitApp();
 
+  Future<Facts> crateApiInspectInspectImage({required List<int> bytes});
+
   MetadataSummary crateApiMetadataReadMetadataSummary({
     required List<int> bytes,
   });
@@ -102,18 +107,12 @@ abstract class DarkLibApi extends BaseApi {
     required bool stripIcc,
   });
 
-  Future<Uint8List> crateApiCodecTranscode({
+  Future<Transcoded> crateApiCodecTranscode({
     required List<int> bytes,
     required CodecFormat format,
     required int quality,
     required int maxEdge,
-  });
-
-  Future<Uint8List> crateApiCodecTranscodeKeepMetadata({
-    required List<int> bytes,
-    required CodecFormat format,
-    required int quality,
-    required int maxEdge,
+    required bool keepMetadata,
   });
 
   Future<Uint8List> crateApiMetadataTransplantMetadata({
@@ -272,6 +271,34 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
       const TaskConstMeta(debugName: "init_app", argNames: []);
 
   @override
+  Future<Facts> crateApiInspectInspectImage({required List<int> bytes}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(bytes, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 7,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_facts,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiInspectInspectImageConstMeta,
+        argValues: [bytes],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiInspectInspectImageConstMeta =>
+      const TaskConstMeta(debugName: "inspect_image", argNames: ["bytes"]);
+
+  @override
   MetadataSummary crateApiMetadataReadMetadataSummary({
     required List<int> bytes,
   }) {
@@ -280,7 +307,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(bytes, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 7)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 8)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_metadata_summary,
@@ -313,7 +340,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 8,
+            funcId: 9,
             port: port_,
           );
         },
@@ -335,11 +362,12 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
       );
 
   @override
-  Future<Uint8List> crateApiCodecTranscode({
+  Future<Transcoded> crateApiCodecTranscode({
     required List<int> bytes,
     required CodecFormat format,
     required int quality,
     required int maxEdge,
+    required bool keepMetadata,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -349,44 +377,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           sse_encode_codec_format(format, serializer);
           sse_encode_u_32(quality, serializer);
           sse_encode_u_32(maxEdge, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 9,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_list_prim_u_8_strict,
-          decodeErrorData: sse_decode_String,
-        ),
-        constMeta: kCrateApiCodecTranscodeConstMeta,
-        argValues: [bytes, format, quality, maxEdge],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiCodecTranscodeConstMeta => const TaskConstMeta(
-    debugName: "transcode",
-    argNames: ["bytes", "format", "quality", "maxEdge"],
-  );
-
-  @override
-  Future<Uint8List> crateApiCodecTranscodeKeepMetadata({
-    required List<int> bytes,
-    required CodecFormat format,
-    required int quality,
-    required int maxEdge,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_list_prim_u_8_loose(bytes, serializer);
-          sse_encode_codec_format(format, serializer);
-          sse_encode_u_32(quality, serializer);
-          sse_encode_u_32(maxEdge, serializer);
+          sse_encode_bool(keepMetadata, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -395,21 +386,20 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           );
         },
         codec: SseCodec(
-          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeSuccessData: sse_decode_transcoded,
           decodeErrorData: sse_decode_String,
         ),
-        constMeta: kCrateApiCodecTranscodeKeepMetadataConstMeta,
-        argValues: [bytes, format, quality, maxEdge],
+        constMeta: kCrateApiCodecTranscodeConstMeta,
+        argValues: [bytes, format, quality, maxEdge, keepMetadata],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kCrateApiCodecTranscodeKeepMetadataConstMeta =>
-      const TaskConstMeta(
-        debugName: "transcode_keep_metadata",
-        argNames: ["bytes", "format", "quality", "maxEdge"],
-      );
+  TaskConstMeta get kCrateApiCodecTranscodeConstMeta => const TaskConstMeta(
+    debugName: "transcode",
+    argNames: ["bytes", "format", "quality", "maxEdge", "keepMetadata"],
+  );
 
   @override
   Future<Uint8List> crateApiMetadataTransplantMetadata({
@@ -465,6 +455,18 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   }
 
   @protected
+  Facts dco_decode_facts(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return Facts(
+      transfer: dco_decode_transfer(arr[0]),
+      gainMap: dco_decode_presence(arr[1]),
+    );
+  }
+
+  @protected
   FormatInfo dco_decode_format_info(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -479,6 +481,12 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
       hdrCapable: dco_decode_bool(arr[5]),
       canStrip: dco_decode_bool(arr[6]),
     );
+  }
+
+  @protected
+  HdrOutcome dco_decode_hdr_outcome(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return HdrOutcome.values[raw as int];
   }
 
   @protected
@@ -521,6 +529,30 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
       orientation: dco_decode_u_16(arr[6]),
       tagCount: dco_decode_u_32(arr[7]),
     );
+  }
+
+  @protected
+  Presence dco_decode_presence(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return Presence.values[raw as int];
+  }
+
+  @protected
+  Transcoded dco_decode_transcoded(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return Transcoded(
+      bytes: dco_decode_list_prim_u_8_strict(arr[0]),
+      hdr: dco_decode_hdr_outcome(arr[1]),
+    );
+  }
+
+  @protected
+  Transfer dco_decode_transfer(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return Transfer.values[raw as int];
   }
 
   @protected
@@ -568,6 +600,14 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   }
 
   @protected
+  Facts sse_decode_facts(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_transfer = sse_decode_transfer(deserializer);
+    var var_gainMap = sse_decode_presence(deserializer);
+    return Facts(transfer: var_transfer, gainMap: var_gainMap);
+  }
+
+  @protected
   FormatInfo sse_decode_format_info(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_format = sse_decode_image_format(deserializer);
@@ -586,6 +626,13 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
       hdrCapable: var_hdrCapable,
       canStrip: var_canStrip,
     );
+  }
+
+  @protected
+  HdrOutcome sse_decode_hdr_outcome(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return HdrOutcome.values[inner];
   }
 
   @protected
@@ -639,6 +686,28 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   }
 
   @protected
+  Presence sse_decode_presence(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return Presence.values[inner];
+  }
+
+  @protected
+  Transcoded sse_decode_transcoded(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_bytes = sse_decode_list_prim_u_8_strict(deserializer);
+    var var_hdr = sse_decode_hdr_outcome(deserializer);
+    return Transcoded(bytes: var_bytes, hdr: var_hdr);
+  }
+
+  @protected
+  Transfer sse_decode_transfer(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return Transfer.values[inner];
+  }
+
+  @protected
   int sse_decode_u_16(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint16();
@@ -680,6 +749,13 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   }
 
   @protected
+  void sse_encode_facts(Facts self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_transfer(self.transfer, serializer);
+    sse_encode_presence(self.gainMap, serializer);
+  }
+
+  @protected
   void sse_encode_format_info(FormatInfo self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_image_format(self.format, serializer);
@@ -689,6 +765,12 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
     sse_encode_bool(self.supportsIptc, serializer);
     sse_encode_bool(self.hdrCapable, serializer);
     sse_encode_bool(self.canStrip, serializer);
+  }
+
+  @protected
+  void sse_encode_hdr_outcome(HdrOutcome self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected
@@ -739,6 +821,25 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
     sse_encode_bool(self.hasCamera, serializer);
     sse_encode_u_16(self.orientation, serializer);
     sse_encode_u_32(self.tagCount, serializer);
+  }
+
+  @protected
+  void sse_encode_presence(Presence self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_transcoded(Transcoded self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_list_prim_u_8_strict(self.bytes, serializer);
+    sse_encode_hdr_outcome(self.hdr, serializer);
+  }
+
+  @protected
+  void sse_encode_transfer(Transfer self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected

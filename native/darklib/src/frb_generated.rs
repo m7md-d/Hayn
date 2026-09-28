@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1635397244;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 844787946;
 
 // Section: executor
 
@@ -232,6 +232,40 @@ fn wire__crate__api__simple__init_app_impl(
         },
     )
 }
+fn wire__crate__api__inspect__inspect_image_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "inspect_image",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_bytes = <Vec<u8>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok =
+                        Result::<_, ()>::Ok(crate::api::inspect::inspect_image(api_bytes))?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__metadata__read_metadata_summary_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -323,6 +357,7 @@ fn wire__crate__api__codec__transcode_impl(
             let api_format = <crate::api::codec::CodecFormat>::sse_decode(&mut deserializer);
             let api_quality = <u32>::sse_decode(&mut deserializer);
             let api_max_edge = <u32>::sse_decode(&mut deserializer);
+            let api_keep_metadata = <bool>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, String>((move || {
@@ -331,47 +366,7 @@ fn wire__crate__api__codec__transcode_impl(
                         api_format,
                         api_quality,
                         api_max_edge,
-                    )?;
-                    Ok(output_ok)
-                })())
-            }
-        },
-    )
-}
-fn wire__crate__api__codec__transcode_keep_metadata_impl(
-    port_: flutter_rust_bridge::for_generated::MessagePort,
-    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
-    rust_vec_len_: i32,
-    data_len_: i32,
-) {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "transcode_keep_metadata",
-            port: Some(port_),
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_bytes = <Vec<u8>>::sse_decode(&mut deserializer);
-            let api_format = <crate::api::codec::CodecFormat>::sse_decode(&mut deserializer);
-            let api_quality = <u32>::sse_decode(&mut deserializer);
-            let api_max_edge = <u32>::sse_decode(&mut deserializer);
-            deserializer.end();
-            move |context| {
-                transform_result_sse::<_, String>((move || {
-                    let output_ok = crate::api::codec::transcode_keep_metadata(
-                        api_bytes,
-                        api_format,
-                        api_quality,
-                        api_max_edge,
+                        api_keep_metadata,
                     )?;
                     Ok(output_ok)
                 })())
@@ -448,6 +443,18 @@ impl SseDecode for crate::api::codec::CodecFormat {
     }
 }
 
+impl SseDecode for crate::engine::inspect::Facts {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_transfer = <crate::engine::inspect::Transfer>::sse_decode(deserializer);
+        let mut var_gainMap = <crate::engine::inspect::Presence>::sse_decode(deserializer);
+        return crate::engine::inspect::Facts {
+            transfer: var_transfer,
+            gain_map: var_gainMap,
+        };
+    }
+}
+
 impl SseDecode for crate::api::metadata::FormatInfo {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -466,6 +473,20 @@ impl SseDecode for crate::api::metadata::FormatInfo {
             supports_iptc: var_supportsIptc,
             hdr_capable: var_hdrCapable,
             can_strip: var_canStrip,
+        };
+    }
+}
+
+impl SseDecode for crate::engine::codec::HdrOutcome {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::engine::codec::HdrOutcome::None,
+            1 => crate::engine::codec::HdrOutcome::GainMapKept,
+            2 => crate::engine::codec::HdrOutcome::GainMapDropped,
+            3 => crate::engine::codec::HdrOutcome::GainMapKeepFailed,
+            _ => unreachable!("Invalid variant for HdrOutcome: {}", inner),
         };
     }
 }
@@ -532,6 +553,45 @@ impl SseDecode for crate::api::metadata::MetadataSummary {
     }
 }
 
+impl SseDecode for crate::engine::inspect::Presence {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::engine::inspect::Presence::Unknown,
+            1 => crate::engine::inspect::Presence::Absent,
+            2 => crate::engine::inspect::Presence::Present,
+            _ => unreachable!("Invalid variant for Presence: {}", inner),
+        };
+    }
+}
+
+impl SseDecode for crate::engine::codec::Transcoded {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_bytes = <Vec<u8>>::sse_decode(deserializer);
+        let mut var_hdr = <crate::engine::codec::HdrOutcome>::sse_decode(deserializer);
+        return crate::engine::codec::Transcoded {
+            bytes: var_bytes,
+            hdr: var_hdr,
+        };
+    }
+}
+
+impl SseDecode for crate::engine::inspect::Transfer {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::engine::inspect::Transfer::Unknown,
+            1 => crate::engine::inspect::Transfer::NoHdrSignal,
+            2 => crate::engine::inspect::Transfer::Pq,
+            3 => crate::engine::inspect::Transfer::Hlg,
+            _ => unreachable!("Invalid variant for Transfer: {}", inner),
+        };
+    }
+}
+
 impl SseDecode for u16 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -568,11 +628,9 @@ fn pde_ffi_dispatcher_primary_impl(
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
         6 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
-        8 => wire__crate__api__metadata__strip_metadata_impl(port, ptr, rust_vec_len, data_len),
-        9 => wire__crate__api__codec__transcode_impl(port, ptr, rust_vec_len, data_len),
-        10 => {
-            wire__crate__api__codec__transcode_keep_metadata_impl(port, ptr, rust_vec_len, data_len)
-        }
+        7 => wire__crate__api__inspect__inspect_image_impl(port, ptr, rust_vec_len, data_len),
+        9 => wire__crate__api__metadata__strip_metadata_impl(port, ptr, rust_vec_len, data_len),
+        10 => wire__crate__api__codec__transcode_impl(port, ptr, rust_vec_len, data_len),
         11 => {
             wire__crate__api__metadata__transplant_metadata_impl(port, ptr, rust_vec_len, data_len)
         }
@@ -593,7 +651,7 @@ fn pde_ffi_dispatcher_sync_impl(
         3 => wire__crate__api__metadata__describe_format_impl(ptr, rust_vec_len, data_len),
         4 => wire__crate__api__metadata__detect_format_impl(ptr, rust_vec_len, data_len),
         5 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
-        7 => wire__crate__api__metadata__read_metadata_summary_impl(ptr, rust_vec_len, data_len),
+        8 => wire__crate__api__metadata__read_metadata_summary_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -625,6 +683,24 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::codec::CodecFormat>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::engine::inspect::Facts {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.transfer.into_into_dart().into_dart(),
+            self.gain_map.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::engine::inspect::Facts {}
+impl flutter_rust_bridge::IntoIntoDart<crate::engine::inspect::Facts>
+    for crate::engine::inspect::Facts
+{
+    fn into_into_dart(self) -> crate::engine::inspect::Facts {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::metadata::FormatInfo {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -647,6 +723,29 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::metadata::FormatInfo>
     for crate::api::metadata::FormatInfo
 {
     fn into_into_dart(self) -> crate::api::metadata::FormatInfo {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::engine::codec::HdrOutcome {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::None => 0.into_dart(),
+            Self::GainMapKept => 1.into_dart(),
+            Self::GainMapDropped => 2.into_dart(),
+            Self::GainMapKeepFailed => 3.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::engine::codec::HdrOutcome
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::engine::codec::HdrOutcome>
+    for crate::engine::codec::HdrOutcome
+{
+    fn into_into_dart(self) -> crate::engine::codec::HdrOutcome {
         self
     }
 }
@@ -705,6 +804,72 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::metadata::MetadataSummary>
         self
     }
 }
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::engine::inspect::Presence {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::Unknown => 0.into_dart(),
+            Self::Absent => 1.into_dart(),
+            Self::Present => 2.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::engine::inspect::Presence
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::engine::inspect::Presence>
+    for crate::engine::inspect::Presence
+{
+    fn into_into_dart(self) -> crate::engine::inspect::Presence {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::engine::codec::Transcoded {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.bytes.into_into_dart().into_dart(),
+            self.hdr.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::engine::codec::Transcoded
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::engine::codec::Transcoded>
+    for crate::engine::codec::Transcoded
+{
+    fn into_into_dart(self) -> crate::engine::codec::Transcoded {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::engine::inspect::Transfer {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::Unknown => 0.into_dart(),
+            Self::NoHdrSignal => 1.into_dart(),
+            Self::Pq => 2.into_dart(),
+            Self::Hlg => 3.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::engine::inspect::Transfer
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::engine::inspect::Transfer>
+    for crate::engine::inspect::Transfer
+{
+    fn into_into_dart(self) -> crate::engine::inspect::Transfer {
+        self
+    }
+}
 
 impl SseEncode for String {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -739,6 +904,14 @@ impl SseEncode for crate::api::codec::CodecFormat {
     }
 }
 
+impl SseEncode for crate::engine::inspect::Facts {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <crate::engine::inspect::Transfer>::sse_encode(self.transfer, serializer);
+        <crate::engine::inspect::Presence>::sse_encode(self.gain_map, serializer);
+    }
+}
+
 impl SseEncode for crate::api::metadata::FormatInfo {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -749,6 +922,24 @@ impl SseEncode for crate::api::metadata::FormatInfo {
         <bool>::sse_encode(self.supports_iptc, serializer);
         <bool>::sse_encode(self.hdr_capable, serializer);
         <bool>::sse_encode(self.can_strip, serializer);
+    }
+}
+
+impl SseEncode for crate::engine::codec::HdrOutcome {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::engine::codec::HdrOutcome::None => 0,
+                crate::engine::codec::HdrOutcome::GainMapKept => 1,
+                crate::engine::codec::HdrOutcome::GainMapDropped => 2,
+                crate::engine::codec::HdrOutcome::GainMapKeepFailed => 3,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
     }
 }
 
@@ -803,6 +994,49 @@ impl SseEncode for crate::api::metadata::MetadataSummary {
         <bool>::sse_encode(self.has_camera, serializer);
         <u16>::sse_encode(self.orientation, serializer);
         <u32>::sse_encode(self.tag_count, serializer);
+    }
+}
+
+impl SseEncode for crate::engine::inspect::Presence {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::engine::inspect::Presence::Unknown => 0,
+                crate::engine::inspect::Presence::Absent => 1,
+                crate::engine::inspect::Presence::Present => 2,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
+    }
+}
+
+impl SseEncode for crate::engine::codec::Transcoded {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <Vec<u8>>::sse_encode(self.bytes, serializer);
+        <crate::engine::codec::HdrOutcome>::sse_encode(self.hdr, serializer);
+    }
+}
+
+impl SseEncode for crate::engine::inspect::Transfer {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::engine::inspect::Transfer::Unknown => 0,
+                crate::engine::inspect::Transfer::NoHdrSignal => 1,
+                crate::engine::inspect::Transfer::Pq => 2,
+                crate::engine::inspect::Transfer::Hlg => 3,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
     }
 }
 

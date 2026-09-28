@@ -16,6 +16,7 @@ import 'package:hayn/features/image_ops/data/gallery_saver.dart';
 import 'package:hayn/features/image_ops/data/image_encoder.dart';
 import 'package:hayn/features/image_ops/data/native_image_encoder.dart';
 import 'package:hayn/features/image_ops/data/native_image_info.dart';
+import 'package:hayn/features/image_ops/data/source_facts.dart';
 import 'package:hayn/features/library/presentation/library_screen.dart';
 import 'package:hayn/features/onboarding/providers/onboarding_provider.dart';
 import 'package:hayn/features/settings/presentation/settings_screen.dart';
@@ -59,32 +60,102 @@ void main() {
       expect(info!.isHdr, isTrue);
       expect(info.hasAlpha, isFalse);
     });
-    testWidgets('Rust preservation veto crosses iOS FFI for $name', (_) async {
+  }
+
+  // HDR policy (user decision 2026-09-28): keep where the path exists,
+  // otherwise a correct SDR rendition without asking; PQ/HLG via ImageIO.
+  // The ImageIO SDR request is platform-dependent (the iOS 26.3 simulator
+  // ignores it). Either way no PQ-labelled file may come out, and the PQ
+  // original must never reach an engine.
+  testWidgets('PQ is refused early or becomes ImageIO SDR', (_) async {
+    final source = await _fixture('seine_hdr_rec2020.avif');
+    final facts = await SourceInspector.inspect(source);
+    expect((facts.directHdr, facts.gainMap), (true, false));
+    // The original itself is still refused by Rust across the real FFI.
+    await expectLater(
+      DarkLibCore.transcode(source, format: DarkLibFormat.webp, quality: 80),
+      throwsA(isA<DarkLibPreservationFailure>()),
+    );
+    final rendition = await NativeImageEncoder.bakeUpright(
+      source: source,
+      keepMetadata: false,
+      keepOriginalTime: true,
+      toSdr: true,
+    );
+    if (rendition == null) {
       await expectLater(
         ImageEncoder.encode(
-          source: await _fixture(name),
+          source: source,
           target: DefaultFormat.webp,
-          quality: 80,
-          hasAlpha: false,
+          quality: 90,
+          facts: facts,
           keepMetadata: true,
-          allowFormatFallback: true,
         ),
         throwsA(
-          isA<ImageEncodingFailure>()
-              .having(
-                (e) => e.diagnostics.map((d) => d.code),
-                'terminal veto',
-                contains(MediaDiagnosticCode.preservationRejected),
-              )
-              .having(
-                (e) => e.diagnostics.map((d) => d.code),
-                'no format retry',
-                isNot(contains(MediaDiagnosticCode.formatFallback)),
-              ),
+          isA<ImageEncodingFailure>().having(
+            (e) => e.diagnostics.map((d) => d.code),
+            'refused before any engine',
+            allOf(
+              contains(MediaDiagnosticCode.hdrToneMapUnavailable),
+              isNot(contains(MediaDiagnosticCode.preservationRejected)),
+            ),
+          ),
         ),
       );
-    });
-  }
+      return;
+    }
+    await _artifact('pq-imageio-sdr.png', rendition);
+    expect((await NativeImageProbe.probeHdr(rendition))!.hdrTransfer, isFalse);
+    final result = await ImageEncoder.encode(
+      source: source,
+      target: DefaultFormat.webp,
+      quality: 90,
+      facts: facts,
+      keepMetadata: true,
+    );
+    expect(
+      result.diagnostics.map((d) => d.code),
+      contains(MediaDiagnosticCode.hdrToSdr),
+    );
+    await _artifact('pq-to-webp.webp', result.bytes);
+    expect((await NativeImageProbe.probe(result.bytes))!.isHdr, isFalse);
+    _expectSameImage(img.decodePng(rendition)!, img.decodeWebP(result.bytes)!);
+  });
+
+  testWidgets('Gain map: SDR base to WebP and AVIF', (_) async {
+    final source = await _fixture('seine_sdr_gainmap_srgb.avif');
+    final facts = await SourceInspector.inspect(source);
+    expect((facts.directHdr, facts.gainMap), (false, true));
+
+    final webp = await ImageEncoder.encode(
+      source: source,
+      target: DefaultFormat.webp,
+      quality: 90,
+      facts: facts,
+      keepMetadata: true,
+    );
+    expect(webp.hdr, HdrOutcome.gainMapDropped);
+    expect(
+      webp.diagnostics.map((d) => d.code),
+      contains(MediaDiagnosticCode.hdrToSdr),
+    );
+    await _artifact('gainmap-to-webp.webp', webp.bytes);
+    expect((await NativeImageProbe.probe(webp.bytes))!.isHdr, isFalse);
+
+    final avif = await ImageEncoder.encode(
+      source: source,
+      target: DefaultFormat.avif,
+      quality: 80,
+      facts: facts,
+      keepMetadata: true,
+    );
+    // No verified keeping path yet: our rebuilt map was invisible to ImageIO
+    // (IMG-10), so AVIF gets the SDR base too.
+    expect(avif.hdr, HdrOutcome.gainMapDropped);
+    await _artifact('gainmap-to-avif.avif', avif.bytes);
+    final after = await NativeImageProbe.probeHdr(avif.bytes);
+    expect(after!.gainMap, isFalse);
+  });
 
   for (final target in [
     DefaultFormat.png,
@@ -96,11 +167,17 @@ void main() {
       _,
     ) async {
       final alpha = target == DefaultFormat.png || target == DefaultFormat.webp;
+      final source = _png(alpha: alpha);
+      final facts = await SourceInspector.inspect(source);
+      expect(
+        (facts.alpha, facts.directHdr, facts.gainMap),
+        (alpha, false, false),
+      );
       final result = await ImageEncoder.encode(
-        source: _png(alpha: alpha),
+        source: source,
         target: target,
         quality: 90,
-        hasAlpha: alpha,
+        facts: facts,
         keepMetadata: false,
       );
       expect(result.format, target);
@@ -154,7 +231,7 @@ void main() {
           source: _png(alpha: true),
           target: DefaultFormat.jpeg,
           quality: 80,
-          hasAlpha: alpha,
+          facts: SourceFacts.sdr(alpha: alpha),
           keepMetadata: false,
         ),
         throwsA(isA<ImageEncodingFailure>()),
@@ -244,6 +321,25 @@ Future<void> _checkPixels(
   expect(pixel.rNormalized, closeTo(80 / 255, 8 / 255));
   expect(pixel.gNormalized, closeTo(120 / 255, 8 / 255));
   expect(pixel.bNormalized, closeTo(160 / 255, 8 / 255));
+}
+
+/// Same size and near-identical pixels (a lossy re-encode of one rendition).
+void _expectSameImage(img.Image a, img.Image b) {
+  expect((b.width, b.height), (a.width, a.height));
+  var total = 0.0;
+  var samples = 0;
+  for (var y = 0; y < a.height; y += 7) {
+    for (var x = 0; x < a.width; x += 7) {
+      final p = a.getPixel(x, y);
+      final q = b.getPixel(x, y);
+      total +=
+          (p.rNormalized - q.rNormalized).abs() +
+          (p.gNormalized - q.gNormalized).abs() +
+          (p.bNormalized - q.bNormalized).abs();
+      samples += 3;
+    }
+  }
+  expect(total / samples, lessThan(4 / 255));
 }
 
 Future<void> _artifact(String name, List<int> bytes) async {

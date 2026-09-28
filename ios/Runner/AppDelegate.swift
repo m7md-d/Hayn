@@ -92,12 +92,13 @@ import UIKit
           // 0 = match the source's depth; 8 = re-encode the base at 8-bit
           // (colour precision only — HDR is governed separately).
           let bitDepth = (args?["bitDepth"] as? NSNumber)?.intValue ?? 0
+          let toSdr = (args?["toSdr"] as? Bool) ?? false
           let data = typed.data
           DispatchQueue.global(qos: .userInitiated).async {
             let out = ImageEncoderNative.encode(
               data, format: format, quality: quality,
               keepMetadata: keepMetadata, keepOriginalTime: keepTime,
-              targetDepth: bitDepth)
+              targetDepth: bitDepth, toSdr: toSdr)
             DispatchQueue.main.async {
               result(out.map { FlutterStandardTypedData(bytes: $0) })
             }
@@ -119,10 +120,12 @@ import UIKit
           }
           let keepMeta = (args?["keepMetadata"] as? Bool) ?? true
           let keepTime2 = (args?["keepOriginalTime"] as? Bool) ?? true
+          let toSdr = (args?["toSdr"] as? Bool) ?? false
           let data = typed.data
           DispatchQueue.global(qos: .userInitiated).async {
             let out = ImageBaker.bakeUprightPng(
-              data, keepMetadata: keepMeta, keepOriginalTime: keepTime2)
+              data, keepMetadata: keepMeta, keepOriginalTime: keepTime2,
+              toSdr: toSdr)
             DispatchQueue.main.async {
               result(out.map { FlutterStandardTypedData(bytes: $0) })
             }
@@ -325,14 +328,14 @@ private enum MetadataStripper {
 private enum ImageEncoderNative {
   static func encode(
     _ data: Data, format: String, quality: Int, keepMetadata: Bool,
-    keepOriginalTime: Bool, targetDepth: Int
+    keepOriginalTime: Bool, targetDepth: Int, toSdr: Bool
   ) -> Data? {
     guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
       NSLog("hayn/encode: source create failed")
       return nil
     }
     guard CGImageSourceGetCount(source) > 0,
-          var image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+          var image = SdrDecode.primary(source, toSdr: toSdr) else {
       NSLog("hayn/encode: decode failed")
       return nil
     }
@@ -374,8 +377,8 @@ private enum ImageEncoderNative {
     // tied to keepMetadata: Photos needs the maker-note HDR headroom — which we
     // only keep then — to actually RENDER HDR. Copying the gain map without that
     // metadata would make the file CLAIM HDR yet look flat, so we keep them
-    // together. Independent of bit depth.
-    if keepMetadata {
+    // together. Independent of bit depth. An SDR rendition never gets one.
+    if keepMetadata && !toSdr {
       var auxTypes: [CFString] = []
       if #available(iOS 14.1, *) {
         auxTypes.append(kCGImageAuxiliaryDataTypeHDRGainMap)
@@ -476,11 +479,11 @@ private enum ImageEncoderNative {
 /// PNG is lossless, so this never degrades the image (no quality hack).
 private enum ImageBaker {
   static func bakeUprightPng(
-    _ data: Data, keepMetadata: Bool, keepOriginalTime: Bool
+    _ data: Data, keepMetadata: Bool, keepOriginalTime: Bool, toSdr: Bool
   ) -> Data? {
     guard let source = CGImageSourceCreateWithData(data as CFData, nil),
           CGImageSourceGetCount(source) > 0,
-          let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+          let image = SdrDecode.primary(source, toSdr: toSdr) else {
       NSLog("hayn/bake: decode failed")
       return nil
     }
@@ -550,6 +553,32 @@ private enum ImageBaker {
   }
 }
 
+/// Decodes the primary image. `toSdr` asks ImageIO for its SDR rendition
+/// (tone-mapped PQ/HLG, or a gain-map image's SDR look), available from iOS 17.
+/// The result is checked, not trusted: the iOS 26.3 simulator ignores the
+/// request and returns PQ (macOS 15 honours it). Below iOS 17, or when the
+/// request is ignored, a gain-map image still decodes its SDR base, but PQ/HLG
+/// has no correct SDR rendition, so it returns nil rather than a mislabeled
+/// image.
+private enum SdrDecode {
+  static func primary(_ source: CGImageSource, toSdr: Bool) -> CGImage? {
+    guard toSdr else { return CGImageSourceCreateImageAtIndex(source, 0, nil) }
+    var options: [CFString: Any] = [:]
+    if #available(iOS 17.0, *) {
+      options[kCGImageSourceDecodeRequest] = kCGImageSourceDecodeToSDR
+    }
+    guard let image = CGImageSourceCreateImageAtIndex(
+      source, 0, options as CFDictionary) else {
+      return nil
+    }
+    if let space = image.colorSpace, CGColorSpaceUsesITUR_2100TF(space) {
+      NSLog("hayn/sdr: no SDR rendition for this PQ/HLG image")
+      return nil
+    }
+    return image
+  }
+}
+
 /// Read-only inspection of an image's real bit depth, alpha-channel presence and
 /// HDR status — straight from ImageIO, so it's accurate for HEIC (which
 /// package:image can't even decode). We report what the file ACTUALLY contains,
@@ -598,8 +627,11 @@ private enum ImageProbeNative {
       "bitDepth": depth,
       "isHdr": isHdr,
       "colorModel": colorModel,
+      "hasGainMap": hasGainMap,
     ]
     if let hasAlpha = hasAlpha { result["hasAlpha"] = hasAlpha }
+    // The transfer is only known when the primary decoded.
+    if decoded != nil { result["hdrTransfer"] = hdrTransfer }
     return result
   }
 }

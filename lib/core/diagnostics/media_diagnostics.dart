@@ -38,6 +38,19 @@ enum MediaDiagnosticCode {
   outputFormatMismatch,
   alphaUnverified,
   alphaLost,
+
+  /// HDR policy outcomes (user decision 2026-09-28): the saved file is a
+  /// correct SDR rendition; the user is not warned.
+  hdrToSdr,
+
+  /// The HDR-keeping path failed and the SDR base was saved instead.
+  hdrKeepFailed,
+
+  /// PQ/HLG source with no platform tone mapper: refused before any engine.
+  hdrToneMapUnavailable,
+
+  /// The source's HDR facts could not be established.
+  hdrUnverified,
   incompleteBatch,
   missingResult,
 }

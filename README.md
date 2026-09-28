@@ -31,7 +31,7 @@ Pre-release, version 0.1.0.
 
 | Area | State |
 |---|---|
-| Library, image conversion, crop, metadata removal | Working. Known defects in HDR, transparency, colour profiles and orientation are listed in [docs/12-STABILIZATION.md](docs/12-STABILIZATION.md). |
+| Library, image conversion, crop, metadata removal | Working. Known defects in HDR, transparency, colour profiles and orientation are listed in [docs/14-ISSUES.md](docs/14-ISSUES.md). |
 | Remove audio, extract frames, video to GIF | Working, on FFmpeg. |
 | Trim, video crop, photos to animation, voice and music separation | Screens only; no engine yet. |
 
@@ -122,8 +122,8 @@ docs/                 Product, architecture and status documents
 ```bash
 flutter pub get
 flutter analyze
-flutter test                          # 158 tests
-(cd native/darklib && cargo test)     # 74 tests
+flutter test                          # 189 tests
+(cd native/darklib && cargo test)     # 86 tests
 
 flutter run                           # on a connected device or simulator
 flutter build apk --release
@@ -142,8 +142,8 @@ setup on this project's machine is in
 [docs/13-DEVELOPMENT.md](docs/13-DEVELOPMENT.md).
 
 Documentation and project rules are in Arabic; code is in English. Start with
-[CLAUDE.md](CLAUDE.md), then [docs/12-STABILIZATION.md](docs/12-STABILIZATION.md)
-for the current state.
+[CLAUDE.md](CLAUDE.md); known defects and their state are in
+[docs/14-ISSUES.md](docs/14-ISSUES.md).
 
 ## Licence
 

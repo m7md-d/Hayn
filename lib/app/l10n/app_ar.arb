@@ -274,7 +274,7 @@
   "compressKeepTime": "الاحتفاظ بالوقت الأصلي",
   "compressKeepTimeDesc": "عند الإطفاء تُؤرَّخ النسخة بالوقت الحالي فتظهر بالأعلى",
   "compressBitDepth": "عمق البت",
-  "compressBitDepthDesc": "دقة الألوان لكل قناة — والـHDR يُحفظ في الحالتين",
+  "compressBitDepthDesc": "دقة الألوان لكل قناة",
   "compressBitDepthMatch": "مطابق",
   "compressBitDepthHigher": "أعلى من الأصل ({n}-بت) — بلا فائدة للجودة",
   "@compressBitDepthHigher": { "placeholders": { "n": { "type": "int" } } },

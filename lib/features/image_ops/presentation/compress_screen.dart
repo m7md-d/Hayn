@@ -19,8 +19,8 @@ import '../../settings/providers/preferences_providers.dart';
 import '../data/compress_estimate_controller.dart';
 import '../data/image_compress_task.dart';
 import '../data/image_encoder.dart';
-import '../data/image_probe.dart';
 import '../data/native_image_info.dart';
+import '../data/source_facts.dart';
 import '../domain/image_format_policy.dart';
 import 'widgets/compress_estimate_card.dart';
 
@@ -83,7 +83,8 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   int _beforeSize = 0;
   int _activeW = 0; // source dimensions (for the huge-image encode cap)
   int _activeH = 0;
-  bool? _hasAlpha;
+  SourceFacts? _facts; // alpha + HDR of the ORIGINAL, read once per image
+  bool? get _hasAlpha => _facts?.alpha;
   NativeImageInfo? _info; // real bit depth / alpha / HDR of the source
   int _bitDepth = 0; // target: 0 = match source (preserves HDR), 8 = SDR
   EncodedImage? _encoded;
@@ -141,7 +142,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
     );
     final origin = await entity.originBytes;
     if (!mounted) return;
-    final alpha = origin == null ? null : await ImageProbe.hasAlpha(origin);
+    final facts = origin == null ? null : await SourceInspector.inspect(origin);
     final info = origin == null ? null : await NativeImageProbe.probe(origin);
     if (!mounted) return;
     setState(() {
@@ -150,7 +151,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
       _beforeSize = origin?.length ?? 0;
       _activeW = entity.width;
       _activeH = entity.height;
-      _hasAlpha = alpha;
+      _facts = facts;
       _info = info;
     });
     _scheduleEncode();
@@ -186,7 +187,9 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
         target: target.format,
         allowFormatFallback: _format == DefaultFormat.auto,
         quality: q,
-        hasAlpha: _hasAlpha,
+        facts:
+            _facts ??
+            const SourceFacts(alpha: null, directHdr: null, gainMap: null),
         keepMetadata: _keepMetadata,
         keepOriginalTime: _keepOriginalTime,
         bitDepth: _bitDepth,

@@ -36,3 +36,32 @@ for name in ["avif-encoded.avif", "avif-imageio.png"] {
   }
 }
 print("Independent ImageIO: JPEG rendering unchanged; AVIF SDR pixels and opacity match")
+
+// HDR policy outputs (2026-09-28), present in runs from that date onwards.
+func hdrFacts(_ name: String) -> (transfer: Bool, gainMap: Bool)? {
+  let url = directory.appendingPathComponent(name)
+  guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+  guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+        let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+    fatalError("Cannot decode \(name)")
+  }
+  let transfer = image.colorSpace.map(CGColorSpaceUsesITUR_2100TF) ?? false
+  var gainMap = CGImageSourceCopyAuxiliaryDataInfoAtIndex(
+    source, 0, kCGImageAuxiliaryDataTypeHDRGainMap) != nil
+  if #available(macOS 15.0, *) {
+    gainMap = gainMap || CGImageSourceCopyAuxiliaryDataInfoAtIndex(
+      source, 0, kCGImageAuxiliaryDataTypeISOGainMap) != nil
+  }
+  print("\(name): \(image.width)x\(image.height) hdrTransfer=\(transfer) gainMap=\(gainMap)")
+  return (transfer, gainMap)
+}
+if let gm = hdrFacts("gainmap-to-webp.webp") {
+  precondition(!gm.transfer && !gm.gainMap, "WebP carries no gain map")
+  let avif = hdrFacts("gainmap-to-avif.avif")!
+  precondition(!avif.transfer && !avif.gainMap, "AVIF is the SDR base (IMG-10)")
+  // Present only where the platform produced an SDR rendition of PQ.
+  if let pq = hdrFacts("pq-to-webp.webp") {
+    precondition(!pq.transfer && !pq.gainMap, "PQ output must be SDR")
+  }
+  print("Independent ImageIO: HDR policy outputs are SDR without a gain map")
+}

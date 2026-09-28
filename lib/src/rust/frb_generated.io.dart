@@ -4,12 +4,15 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/codec.dart';
+import 'api/inspect.dart';
 import 'api/metadata.dart';
 import 'api/simple.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' as ffi;
+import 'engine/codec.dart';
 import 'engine/format.dart';
+import 'engine/inspect.dart';
 import 'frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated_io.dart';
 
@@ -31,7 +34,13 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   CodecFormat dco_decode_codec_format(dynamic raw);
 
   @protected
+  Facts dco_decode_facts(dynamic raw);
+
+  @protected
   FormatInfo dco_decode_format_info(dynamic raw);
+
+  @protected
+  HdrOutcome dco_decode_hdr_outcome(dynamic raw);
 
   @protected
   int dco_decode_i_32(dynamic raw);
@@ -47,6 +56,15 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
 
   @protected
   MetadataSummary dco_decode_metadata_summary(dynamic raw);
+
+  @protected
+  Presence dco_decode_presence(dynamic raw);
+
+  @protected
+  Transcoded dco_decode_transcoded(dynamic raw);
+
+  @protected
+  Transfer dco_decode_transfer(dynamic raw);
 
   @protected
   int dco_decode_u_16(dynamic raw);
@@ -70,7 +88,13 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   CodecFormat sse_decode_codec_format(SseDeserializer deserializer);
 
   @protected
+  Facts sse_decode_facts(SseDeserializer deserializer);
+
+  @protected
   FormatInfo sse_decode_format_info(SseDeserializer deserializer);
+
+  @protected
+  HdrOutcome sse_decode_hdr_outcome(SseDeserializer deserializer);
 
   @protected
   int sse_decode_i_32(SseDeserializer deserializer);
@@ -86,6 +110,15 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
 
   @protected
   MetadataSummary sse_decode_metadata_summary(SseDeserializer deserializer);
+
+  @protected
+  Presence sse_decode_presence(SseDeserializer deserializer);
+
+  @protected
+  Transcoded sse_decode_transcoded(SseDeserializer deserializer);
+
+  @protected
+  Transfer sse_decode_transfer(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_16(SseDeserializer deserializer);
@@ -109,7 +142,13 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   void sse_encode_codec_format(CodecFormat self, SseSerializer serializer);
 
   @protected
+  void sse_encode_facts(Facts self, SseSerializer serializer);
+
+  @protected
   void sse_encode_format_info(FormatInfo self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_hdr_outcome(HdrOutcome self, SseSerializer serializer);
 
   @protected
   void sse_encode_i_32(int self, SseSerializer serializer);
@@ -131,6 +170,15 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
     MetadataSummary self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_presence(Presence self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_transcoded(Transcoded self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_transfer(Transfer self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_16(int self, SseSerializer serializer);

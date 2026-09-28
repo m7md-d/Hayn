@@ -19,9 +19,18 @@
 | Java المستخدم لـFlutter/Android | `Development/jdks/temurin-21` |
 | `~/.cargo/registry` و`~/.cargo/git` | `Development/caches/cargo` |
 | `~/.dartServer` (ذاكرة محلل Dart) | `Development/caches/dartServer` |
+| `flutter_rust_bridge_codegen` 2.12.0 (مطابق للـruntime) و`cargo-expand` 1.0.126 الذي يحتاجه | `Development/tools/<الأداة>-<النسخة>/bin`؛ ليسا في PATH |
 | مجلدات Xcode وCocoaPods وSwiftPM | انظر [iOS وXcode](#ios-وxcode) |
 
-بقي `~/.cargo/bin` الصغير وملفات إعداد الطرفية داخليًا. `Xcode.app` نفسه والمتصفحات لم تُنقل. مجلدا build وRust target داخل المشروع موجودان أصلًا على القرص الخارجي.
+بقي `~/.cargo/bin` الصغير وملفات إعداد الطرفية داخليًا.
+
+توليد روابط DarkLib بعد تغيير API في `native/darklib/src/api`، من جذر المشروع. إن لم يجد المولّد `cargo expand` في PATH ثبّته وحده داخل `~/.cargo/bin`، لذلك يُمرَّر مساره الخارجي:
+
+```sh
+source ~/.config/hayn-development.zsh
+PATH="/Volumes/CUSU/Development/tools/cargo-expand-1.0.126/bin:$HOME/.cargo/bin:$PATH" \
+  /Volumes/CUSU/Development/tools/flutter_rust_bridge_codegen-2.12.0/bin/flutter_rust_bridge_codegen generate
+``` `Xcode.app` نفسه والمتصفحات لم تُنقل. مجلدا build وRust target داخل المشروع موجودان أصلًا على القرص الخارجي.
 
 ملف الإعداد الصغير `~/.config/hayn-development.zsh` يُقرأ من `.zprofile` و`.zshrc`. يحدد Android وJava ومسارات الأدوات، ويحتفظ Pub وGradle بالمسارات المعتادة عبر الروابط. ضبط Flutter يشير إلى SDK ورابط JDK نفسه. Java السابق لا يزال مثبتًا؛ بيئة تطوير الطرفية تستخدم Java 21 الآن.
 

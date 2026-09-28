@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:hayn/features/image_ops/data/image_probe.dart';
 import 'package:hayn/features/image_ops/data/image_encoder.dart';
+import 'package:hayn/features/image_ops/data/source_facts.dart';
 import 'package:hayn/features/settings/providers/preferences_providers.dart';
 
 class RecoveringEncoder extends FlutterImageCompressPlatform {
@@ -62,7 +63,7 @@ void main() {
         source: Uint8List(20),
         target: DefaultFormat.jpeg,
         quality: 80,
-        hasAlpha: false,
+        facts: const SourceFacts.sdr(alpha: false),
         keepMetadata: false,
       ),
       throwsA(isA<ImageEncodingFailure>()),
@@ -120,7 +121,7 @@ void main() {
         source: Uint8List(20),
         target: DefaultFormat.jpeg,
         quality: 80,
-        hasAlpha: null,
+        facts: const SourceFacts.sdr(alpha: null),
         keepMetadata: false,
       ),
       throwsA(isA<ImageEncodingFailure>()),
@@ -137,7 +138,7 @@ void main() {
         source: png,
         target: DefaultFormat.jpeg,
         quality: 80,
-        hasAlpha: false,
+        facts: const SourceFacts.sdr(alpha: false),
         keepMetadata: false,
       ),
       throwsA(
@@ -161,7 +162,7 @@ void main() {
           source: opaque,
           target: DefaultFormat.png,
           quality: 80,
-          hasAlpha: true,
+          facts: const SourceFacts.sdr(alpha: true),
           keepMetadata: false,
         ),
         throwsA(
@@ -183,7 +184,7 @@ void main() {
       source: png,
       target: DefaultFormat.png,
       quality: 80,
-      hasAlpha: true,
+      facts: const SourceFacts.sdr(alpha: true),
       keepMetadata: false,
     );
     expect(result.diagnostics, isEmpty);

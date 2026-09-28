@@ -2,8 +2,14 @@ import 'dart:typed_data';
 
 import '../diagnostics/media_diagnostics.dart';
 import '../../src/rust/api/codec.dart' as rust_codec;
+import '../../src/rust/api/inspect.dart' as rust_inspect;
 import '../../src/rust/api/metadata.dart' as rust;
+import '../../src/rust/engine/codec.dart';
+import '../../src/rust/engine/inspect.dart';
 import '../../src/rust/frb_generated.dart';
+
+export '../../src/rust/engine/codec.dart' show HdrOutcome, Transcoded;
+export '../../src/rust/engine/inspect.dart' show Facts, Presence, Transfer;
 
 /// Encode targets DarkLib can produce (mirrors the Rust `CodecFormat`).
 typedef DarkLibFormat = rust_codec.CodecFormat;
@@ -31,10 +37,11 @@ abstract final class DarkLibCore {
     }
   }
 
-  static Future<Uint8List?> _call(
+  static Future<T?> _call<T>(
     MediaOperation operation,
-    Future<Uint8List> Function() body,
-  ) async {
+    Future<T> Function() body, {
+    bool Function(T)? isEmpty,
+  }) async {
     if (!await ensureReady()) {
       MediaDiagnostics.record(
         MediaBackend.darklib,
@@ -45,7 +52,7 @@ abstract final class DarkLibCore {
     }
     try {
       final result = await body();
-      if (result.isEmpty) {
+      if (isEmpty?.call(result) ?? false) {
         MediaDiagnostics.record(
           MediaBackend.darklib,
           operation,
@@ -88,11 +95,13 @@ abstract final class DarkLibCore {
   }) => _call(
     MediaOperation.strip,
     () => rust.stripMetadata(bytes: bytes, stripIcc: stripIcc),
+    isEmpty: (b) => b.isEmpty,
   );
 
   /// Uses the existing Rust codecs. keepMetadata is a request, not proof of
   /// semantic preservation. maxEdge > 0 permits downscaling in that backend.
-  static Future<Uint8List?> transcode(
+  /// The result reports what happened to an HDR gain map.
+  static Future<Transcoded?> transcode(
     Uint8List bytes, {
     required DarkLibFormat format,
     required int quality,
@@ -100,19 +109,21 @@ abstract final class DarkLibCore {
     int maxEdge = 0,
   }) => _call(
     MediaOperation.encode,
-    () => keepMetadata
-        ? rust_codec.transcodeKeepMetadata(
-            bytes: bytes,
-            format: format,
-            quality: quality,
-            maxEdge: maxEdge,
-          )
-        : rust_codec.transcode(
-            bytes: bytes,
-            format: format,
-            quality: quality,
-            maxEdge: maxEdge,
-          ),
+    () => rust_codec.transcode(
+      bytes: bytes,
+      format: format,
+      quality: quality,
+      maxEdge: maxEdge,
+      keepMetadata: keepMetadata,
+    ),
+    isEmpty: (t) => t.bytes.isEmpty,
+  );
+
+  /// HDR facts read from the container, without decoding pixels. Null when
+  /// DarkLib is unavailable; unreadable containers come back as unknown.
+  static Future<Facts?> inspect(Uint8List bytes) => _call(
+    MediaOperation.probe,
+    () => rust_inspect.inspectImage(bytes: bytes),
   );
 
   /// Best-effort metadata transfer. Rust may return an unchanged target without
@@ -123,6 +134,7 @@ abstract final class DarkLibCore {
   }) => _call(
     MediaOperation.transplant,
     () => rust.transplantMetadata(source: source, target: target),
+    isEmpty: (b) => b.isEmpty,
   );
 }
 

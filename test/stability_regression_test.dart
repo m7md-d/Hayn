@@ -10,6 +10,7 @@ import 'package:hayn/core/isolates/media_task.dart';
 import 'package:hayn/core/isolates/task_progress.dart';
 import 'package:hayn/core/isolates/task_runner.dart';
 import 'package:hayn/features/image_ops/data/image_encoder.dart';
+import 'package:hayn/features/image_ops/data/source_facts.dart';
 import 'package:hayn/features/settings/providers/preferences_providers.dart';
 import 'package:hayn/features/video_ops/data/animate_gif_task.dart';
 import 'package:hayn/features/video_ops/data/extract_frames_task.dart';
@@ -109,7 +110,7 @@ void main() {
       target: DefaultFormat.jpeg,
       allowFormatFallback: true,
       quality: 80,
-      hasAlpha: false,
+      facts: const SourceFacts.sdr(alpha: false),
       keepMetadata: false,
     );
     expect(encoded.format, DefaultFormat.webp);
@@ -148,7 +149,7 @@ void main() {
             target: DefaultFormat.jpeg,
             allowFormatFallback: true,
             quality: 80,
-            hasAlpha: false,
+            facts: const SourceFacts.sdr(alpha: false),
             keepMetadata: false,
           ),
           throwsA(

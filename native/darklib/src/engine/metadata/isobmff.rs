@@ -121,6 +121,42 @@ pub fn extract_nclx(b: &[u8]) -> Option<(u16, u16)> {
     None
 }
 
+/// nclx `(colour_primaries, transfer_characteristics)` associated with the
+/// PRIMARY item (a grid falls back to its first tile). Unlike [`extract_nclx`],
+/// a `colr` on a gain-map or `tmap` item (which describes the alternate HDR
+/// rendition) is never mistaken for the primary's. Outer `None`: the item
+/// graph could not be read. Inner `None`: the primary carries no nclx.
+pub fn primary_nclx(b: &[u8]) -> Option<Option<(u16, u16)>> {
+    let mc = meta_children(b)?;
+    let primary = parse_pitm(b, *mc.iter().find(|x| x.typ == *b"pitm")?)?;
+    let iprp = *mc.iter().find(|x| x.typ == *b"iprp")?;
+    let ipc = boxes_in(b, iprp.body, iprp.end)?;
+    let ipco = *ipc.iter().find(|x| x.typ == *b"ipco")?;
+    let ipma = *ipc.iter().find(|x| x.typ == *b"ipma")?;
+    let props = boxes_in(b, ipco.body, ipco.end)?;
+    let assoc = parse_ipma(b, ipma)?;
+    let nclx_of = |id: u32| -> Option<Option<(u16, u16)>> {
+        let idxs = assoc.iter().find(|(item, _)| *item == id).map(|(_, i)| i);
+        for &idx in idxs.into_iter().flatten() {
+            let Some(p) = (idx as usize).checked_sub(1).and_then(|k| props.get(k)) else {
+                continue;
+            };
+            if p.typ == *b"colr" && b.get(p.body..p.body + 4) == Some(b"nclx") {
+                return Some(Some((be_u16(b, p.body + 4)?, be_u16(b, p.body + 6)?)));
+            }
+        }
+        Some(None)
+    };
+    match nclx_of(primary)? {
+        Some(found) => Some(Some(found)),
+        None if item_type(b, primary) == Some(*b"grid") => {
+            let first_tile = *dimg_targets(b, primary)?.first()?;
+            nclx_of(first_tile)
+        }
+        None => Some(None),
+    }
+}
+
 /// The `meta` box's child boxes — the shared entry point for the item readers.
 fn meta_children(b: &[u8]) -> Option<Vec<Bx>> {
     let top = boxes_in(b, 0, b.len())?;
@@ -801,6 +837,12 @@ pub fn read_orientation(b: &[u8]) -> Option<(u8, Option<u8>)> {
 /// first-class auxiliary asset that container ops must never silently drop.
 pub fn has_gainmap(b: &[u8]) -> bool {
     gainmap_inner(b).unwrap_or(false)
+}
+
+/// [`has_gainmap`] that keeps an unreadable container distinct: `None` when the
+/// item graph could not be read, so a caller never treats it as SDR.
+pub fn gainmap_presence(b: &[u8]) -> Option<bool> {
+    gainmap_inner(b)
 }
 
 fn gainmap_inner(b: &[u8]) -> Option<bool> {

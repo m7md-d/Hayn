@@ -10,10 +10,14 @@ import '../../settings/providers/preferences_providers.dart';
 import 'native_avif_encoder.dart';
 import 'native_image_encoder.dart';
 import 'image_probe.dart';
+import 'source_facts.dart';
 
-// Coordinates the existing backends. Non-empty output is NOT proof that HDR,
-// colour, orientation or metadata survived: see docs/12-STABILIZATION.md.
-// Backend and format fallback are recorded in bounded release diagnostics.
+// Coordinates the existing backends from facts about the ORIGINAL source, read
+// before any engine runs (IMG-05). HDR policy (user decision, 2026-09-28): keep
+// HDR where the path exists, otherwise save a correct SDR rendition without
+// asking; PQ/HLG needs the platform tone mapper or is refused. Non-empty output
+// is NOT proof that colour, orientation or metadata survived. Backend, format
+// and HDR outcomes are recorded in bounded release diagnostics.
 
 /// Longest output edge we encode. Decoding a ~200 MP image at full size is
 /// ~800 MB of RGBA → an instant OOM, and it also exceeds hardware encoder limits.
@@ -38,9 +42,13 @@ class EncodedImage {
     this.backend,
     this.requestedFormat,
     this.diagnostics = const [],
+    this.hdr,
   });
 
   final MediaBackend? backend;
+
+  /// What DarkLib reported about a gain map; null for other engines.
+  final HdrOutcome? hdr;
   final DefaultFormat? requestedFormat;
   final List<MediaDiagnostic> diagnostics;
 
@@ -70,7 +78,7 @@ abstract final class ImageEncoder {
     required Uint8List source,
     required DefaultFormat target,
     required int quality,
-    required bool? hasAlpha,
+    required SourceFacts facts,
     required bool keepMetadata,
     bool allowFormatFallback = false,
     bool keepOriginalTime = true,
@@ -78,6 +86,7 @@ abstract final class ImageEncoder {
     int? maxWidth,
     int? maxHeight,
   }) => MediaDiagnostics.trace((trace) async {
+    final hasAlpha = facts.alpha;
     if (target == DefaultFormat.auto ||
         (target == DefaultFormat.jpeg && hasAlpha != false)) {
       MediaDiagnostics.record(
@@ -87,6 +96,41 @@ abstract final class ImageEncoder {
       );
       throw ImageEncodingFailure(target, trace.events);
     }
+
+    // PQ/HLG samples read as sRGB are a wrong image, so no engine receives the
+    // original: only ImageIO's tone-mapped SDR rendition may continue.
+    var input = source;
+    var plan = facts;
+    if (facts.directHdr == true) {
+      final sdr = await NativeImageEncoder.bakeUpright(
+        source: source,
+        keepMetadata: keepMetadata,
+        keepOriginalTime: keepOriginalTime,
+        toSdr: true,
+      );
+      if (sdr == null) {
+        MediaDiagnostics.record(
+          MediaBackend.imageEncoder,
+          MediaOperation.encode,
+          MediaDiagnosticCode.hdrToneMapUnavailable,
+        );
+        throw ImageEncodingFailure(target, trace.events);
+      }
+      MediaDiagnostics.record(
+        MediaBackend.imageIO,
+        MediaOperation.bake,
+        MediaDiagnosticCode.hdrToSdr,
+      );
+      input = sdr;
+      plan = SourceFacts.sdr(alpha: facts.alpha);
+    } else if (facts.directHdr == null || facts.gainMap == null) {
+      MediaDiagnostics.record(
+        MediaBackend.imageEncoder,
+        MediaOperation.probe,
+        MediaDiagnosticCode.hdrUnverified,
+      );
+    }
+
     final candidates = allowFormatFallback
         ? fallbackChain(target, hasAlpha)
         : [target];
@@ -101,10 +145,10 @@ abstract final class ImageEncoder {
       EncodedImage? encoded;
       try {
         encoded = await _tryEncode(
-          source: source,
+          source: input,
           format: fmt,
           quality: quality,
-          hasAlpha: hasAlpha,
+          facts: plan,
           keepMetadata: keepMetadata,
           keepOriginalTime: keepOriginalTime,
           bitDepth: bitDepth,
@@ -143,12 +187,14 @@ abstract final class ImageEncoder {
             MediaDiagnosticCode.alphaUnverified,
           );
         }
+        if (plan.gainMap == true) await _recordGainMap(encoded);
         return EncodedImage(
           encoded.bytes,
           encoded.format,
           backend: encoded.backend,
           requestedFormat: target,
           diagnostics: trace.events,
+          hdr: encoded.hdr,
         );
       }
     }
@@ -182,24 +228,53 @@ abstract final class ImageEncoder {
     return out;
   }
 
+  /// Gain-map sources: DarkLib reports the outcome; for other engines read
+  /// the output back. Presence is not proof its meaning survived (IMG-10).
+  static Future<void> _recordGainMap(EncodedImage out) async {
+    final outcome = out.hdr;
+    if (outcome == HdrOutcome.gainMapKept) return;
+    if (outcome == HdrOutcome.gainMapKeepFailed) {
+      MediaDiagnostics.record(
+        MediaBackend.darklib,
+        MediaOperation.encode,
+        MediaDiagnosticCode.hdrKeepFailed,
+      );
+    }
+    final after = outcome == null || outcome == HdrOutcome.none
+        ? (await DarkLibCore.inspect(out.bytes))?.gainMap
+        : Presence.absent;
+    if (after == Presence.present) return;
+    MediaDiagnostics.record(
+      out.backend ?? MediaBackend.imageEncoder,
+      MediaOperation.encode,
+      after == Presence.absent
+          ? MediaDiagnosticCode.hdrToSdr
+          : MediaDiagnosticCode.hdrUnverified,
+    );
+  }
+
   static Future<EncodedImage?> _tryEncode({
     required Uint8List source,
     required DefaultFormat format,
     required int quality,
-    required bool? hasAlpha,
+    required SourceFacts facts,
     required bool keepMetadata,
     bool keepOriginalTime = true,
     int bitDepth = 0,
     int? maxWidth,
     int? maxHeight,
   }) async {
+    final hasAlpha = facts.alpha;
+    // An SDR rendition of any HDR source; below iOS 17 a gain map's SDR base.
+    final toSdr = facts.hasHdr;
     var backend = MediaBackend.androidAvif;
     try {
       if (format == DefaultFormat.avif) {
         // Hardware output is followed by a best-effort metadata transplant.
         // This path still needs independent preservation verification.
-        // Android's current bitmap/YUV path has no alpha plane.
-        final hw = hasAlpha == false
+        // Android's bitmap/YUV path has no alpha plane and no tone mapper, so
+        // it runs only on sources known to be neither transparent nor PQ/HLG.
+        final hw = hasAlpha == false && facts.directHdr == false
             ? await NativeAvifEncoder.encode(source: source, quality: quality)
             : null;
         if (hw != null && hw.isNotEmpty) {
@@ -231,8 +306,13 @@ abstract final class ImageEncoder {
           keepMetadata: keepMetadata,
           maxEdge: maxWidth ?? 0,
         );
-        if (dark != null && dark.isNotEmpty) {
-          return EncodedImage(dark, format, backend: backend);
+        if (dark != null) {
+          return EncodedImage(
+            dark.bytes,
+            format,
+            backend: backend,
+            hdr: dark.hdr,
+          );
         }
 
         // Platform decode bridge for sources DarkLib cannot decode directly.
@@ -241,6 +321,7 @@ abstract final class ImageEncoder {
           source: source,
           keepMetadata: keepMetadata,
           keepOriginalTime: keepOriginalTime,
+          toSdr: toSdr,
         );
         if (baked != null && baked.isNotEmpty) {
           final bridged = await DarkLibCore.transcode(
@@ -250,8 +331,13 @@ abstract final class ImageEncoder {
             keepMetadata: keepMetadata,
             maxEdge: maxWidth ?? 0,
           );
-          if (bridged != null && bridged.isNotEmpty) {
-            return EncodedImage(bridged, format, backend: backend);
+          if (bridged != null) {
+            return EncodedImage(
+              bridged.bytes,
+              format,
+              backend: backend,
+              hdr: bridged.hdr,
+            );
           }
         }
 
@@ -301,13 +387,19 @@ abstract final class ImageEncoder {
           keepMetadata: keepMetadata,
           maxEdge: maxWidth ?? 0,
         );
-        if (dark != null && dark.isNotEmpty) {
-          return EncodedImage(dark, format, backend: backend);
+        if (dark != null) {
+          return EncodedImage(
+            dark.bytes,
+            format,
+            backend: backend,
+            hdr: dark.hdr,
+          );
         }
         final baked = await NativeImageEncoder.bakeUpright(
           source: source,
           keepMetadata: keepMetadata,
           keepOriginalTime: keepOriginalTime,
+          toSdr: toSdr,
         );
         if (baked != null && baked.isNotEmpty) {
           final bridged = await DarkLibCore.transcode(
@@ -317,8 +409,13 @@ abstract final class ImageEncoder {
             keepMetadata: keepMetadata,
             maxEdge: maxWidth ?? 0,
           );
-          if (bridged != null && bridged.isNotEmpty) {
-            return EncodedImage(bridged, format, backend: backend);
+          if (bridged != null) {
+            return EncodedImage(
+              bridged.bytes,
+              format,
+              backend: backend,
+              hdr: bridged.hdr,
+            );
           }
         }
       }
@@ -332,6 +429,7 @@ abstract final class ImageEncoder {
           source: source,
           keepMetadata: keepMetadata,
           keepOriginalTime: keepOriginalTime,
+          toSdr: toSdr,
         );
         if (baked != null && baked.isNotEmpty) {
           return EncodedImage(baked, format, backend: MediaBackend.imageIO);
@@ -353,6 +451,9 @@ abstract final class ImageEncoder {
           keepOriginalTime: keepOriginalTime,
           // Only HEIC honours a forced depth; JPEG is 8-bit anyway.
           bitDepth: format == DefaultFormat.heic ? bitDepth : 0,
+          // With metadata, ImageIO copies a gain map next to its base; without
+          // it the map is dropped, so decode the SDR rendition instead.
+          toSdr: toSdr && !keepMetadata,
         );
         if (native != null && native.isNotEmpty) {
           return EncodedImage(native, format, backend: MediaBackend.imageIO);

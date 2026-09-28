@@ -5,6 +5,7 @@ import 'package:hayn/core/diagnostics/media_diagnostics.dart';
 import 'package:hayn/core/darklib/darklib.dart';
 import 'package:hayn/src/rust/frb_generated.dart';
 import 'package:hayn/features/image_ops/data/image_encoder.dart';
+import 'package:hayn/features/image_ops/data/source_facts.dart';
 import 'package:hayn/features/image_ops/data/native_avif_encoder.dart';
 import 'package:hayn/features/settings/providers/preferences_providers.dart';
 
@@ -14,20 +15,24 @@ class _Api extends Fake implements DarkLibApi {
   bool reject = false;
   bool veto = false;
   @override
-  Future<Uint8List> crateApiCodecTranscode({
+  Future<Transcoded> crateApiCodecTranscode({
     required List<int> bytes,
     required DarkLibFormat format,
     required int quality,
     required int maxEdge,
+    required bool keepMetadata,
   }) async {
     calls++;
     if (veto) {
-      return Future<Uint8List>.error(
-        'preservation_required:gainmap_processing_failed',
+      return Future<Transcoded>.error(
+        'preservation_required:hdr_transfer_unsupported',
       );
     }
     if (reject) throw StateError('secret filename');
-    return empty ? Uint8List(0) : encodedHeader(DefaultFormat.webp);
+    return Transcoded(
+      bytes: empty ? Uint8List(0) : encodedHeader(DefaultFormat.webp),
+      hdr: HdrOutcome.none,
+    );
   }
 }
 
@@ -53,7 +58,7 @@ void main() {
       source: Uint8List(3),
       target: DefaultFormat.webp,
       quality: 80,
-      hasAlpha: false,
+      facts: const SourceFacts.sdr(alpha: false),
       keepMetadata: false,
     );
     expect(api.calls, before + 1);
@@ -109,7 +114,7 @@ void main() {
         source: Uint8List(3),
         target: DefaultFormat.jpeg,
         quality: 80,
-        hasAlpha: false,
+        facts: const SourceFacts.sdr(alpha: false),
         keepMetadata: false,
       );
       expect(result.backend, MediaBackend.imageIO);
@@ -137,7 +142,7 @@ void main() {
         source: Uint8List(3),
         target: DefaultFormat.avif,
         quality: 80,
-        hasAlpha: false,
+        facts: const SourceFacts.sdr(alpha: false),
         keepMetadata: false,
       );
       expect(result.backend, MediaBackend.androidAvif);
@@ -157,7 +162,7 @@ void main() {
           source: Uint8List(3),
           target: DefaultFormat.webp,
           quality: 80,
-          hasAlpha: false,
+          facts: const SourceFacts.sdr(alpha: false),
           keepMetadata: false,
           allowFormatFallback: true,
         ),

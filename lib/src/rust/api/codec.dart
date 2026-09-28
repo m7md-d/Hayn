@@ -3,40 +3,29 @@
 
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
+import '../engine/codec.dart';
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `target_of`
 
 /// Decode → optional downscale → encode at `quality` (1..=100; PNG ignores it).
-/// Metadata is NOT carried — use [`transcode_keep_metadata`] for that. Throws on
-/// a container the codec layer can't handle yet.
-Future<Uint8List> transcode({
+/// `keep_metadata` carries EXIF/XMP/ICC. The result says what happened to an
+/// HDR gain map. Throws `preservation_required:…` for PQ/HLG, which this
+/// engine cannot render correctly as SDR, and a plain message for containers
+/// the codec layer can't handle.
+Future<Transcoded> transcode({
   required List<int> bytes,
   required CodecFormat format,
   required int quality,
   required int maxEdge,
+  required bool keepMetadata,
 }) => DarkLib.instance.api.crateApiCodecTranscode(
   bytes: bytes,
   format: format,
   quality: quality,
   maxEdge: maxEdge,
-);
-
-/// Like [`transcode`], but carries the source's EXIF/XMP/ICC into the output
-/// where supported (orientation normalised — the pixels are baked upright on
-/// decode), and carries an ISO 21496-1 HDR gain map through a full-resolution
-/// AVIF→AVIF convert. Formats without an injector return bytes without metadata.
-Future<Uint8List> transcodeKeepMetadata({
-  required List<int> bytes,
-  required CodecFormat format,
-  required int quality,
-  required int maxEdge,
-}) => DarkLib.instance.api.crateApiCodecTranscodeKeepMetadata(
-  bytes: bytes,
-  format: format,
-  quality: quality,
-  maxEdge: maxEdge,
+  keepMetadata: keepMetadata,
 );
 
 /// Target encode format for [`transcode`].

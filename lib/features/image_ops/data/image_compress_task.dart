@@ -10,15 +10,15 @@ import '../../settings/providers/preferences_providers.dart';
 import '../domain/image_format_policy.dart';
 import 'gallery_saver.dart';
 import 'image_encoder.dart';
-import 'image_probe.dart';
 import 'output_name.dart';
+import 'source_facts.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ImageCompressTask — the actual compress/convert engine, run through the
 // shared TaskRunner so it surfaces in the floating Tasks badge with progress +
 // cancellation.
 //
-// Per asset: load original → probe alpha → resolve the target format
+// Per asset: load original → inspect it once (alpha, HDR) → resolve the target format
 // (docs/03-FORMATS.md, transparency-safe) → encode (with the encoder's own
 // alpha-safe fallback) → save a NEW asset to the gallery. The original is
 // untouched. Heavy work (decode/encode) happens in native/FFI off the main
@@ -112,10 +112,10 @@ class ImageCompressTask extends MediaTask {
         final src = await entity.originBytes;
         if (_cancelled) return;
         if (src != null) {
-          final hasAlpha = await ImageProbe.hasAlpha(src);
+          final facts = await SourceInspector.inspect(src);
           final target = ImageFormatPolicy.resolve(
             choice: format,
-            hasAlpha: hasAlpha,
+            hasAlpha: facts.alpha,
             caps: _caps,
           );
           if (_cancelled) return;
@@ -127,7 +127,7 @@ class ImageCompressTask extends MediaTask {
               target: target.format,
               allowFormatFallback: format == DefaultFormat.auto,
               quality: quality,
-              hasAlpha: hasAlpha,
+              facts: facts,
               keepMetadata: keepMetadata,
               keepOriginalTime: keepOriginalTime,
               bitDepth: bitDepth,

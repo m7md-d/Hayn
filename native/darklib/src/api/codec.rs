@@ -4,7 +4,7 @@
 //! Stage 3a: PNG/JPEG transcode (pure-Rust). More formats slot in behind the
 //! same call as the codec layer grows.
 
-use crate::engine::codec;
+use crate::engine::codec::{self, Transcoded};
 
 /// Target encode format for [`transcode`].
 pub enum CodecFormat {
@@ -36,29 +36,18 @@ fn target_of(format: CodecFormat, quality: u32) -> codec::Target {
 }
 
 /// Decode → optional downscale → encode at `quality` (1..=100; PNG ignores it).
-/// Metadata is NOT carried — use [`transcode_keep_metadata`] for that. Throws on
-/// a container the codec layer can't handle yet.
+/// `keep_metadata` carries EXIF/XMP/ICC. The result says what happened to an
+/// HDR gain map. Throws `preservation_required:…` for PQ/HLG, which this
+/// engine cannot render correctly as SDR, and a plain message for containers
+/// the codec layer can't handle.
 pub fn transcode(
     bytes: Vec<u8>,
     format: CodecFormat,
     quality: u32,
     max_edge: u32,
-) -> Result<Vec<u8>, String> {
+    keep_metadata: bool,
+) -> Result<Transcoded, String> {
     let edge = if max_edge == 0 { None } else { Some(max_edge) };
-    codec::transcode(&bytes, target_of(format, quality), edge).map_err(|e| e.to_string())
-}
-
-/// Like [`transcode`], but carries the source's EXIF/XMP/ICC into the output
-/// where supported (orientation normalised — the pixels are baked upright on
-/// decode), and carries an ISO 21496-1 HDR gain map through a full-resolution
-/// AVIF→AVIF convert. Formats without an injector return bytes without metadata.
-pub fn transcode_keep_metadata(
-    bytes: Vec<u8>,
-    format: CodecFormat,
-    quality: u32,
-    max_edge: u32,
-) -> Result<Vec<u8>, String> {
-    let edge = if max_edge == 0 { None } else { Some(max_edge) };
-    codec::transcode_keep_metadata(&bytes, target_of(format, quality), edge)
+    codec::transcode(&bytes, target_of(format, quality), edge, keep_metadata)
         .map_err(|e| e.to_string())
 }

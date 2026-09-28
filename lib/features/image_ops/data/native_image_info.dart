@@ -41,6 +41,21 @@ abstract final class NativeImageProbe {
     return value is bool ? value : null;
   }
 
+  /// HDR signals from ImageIO: a gain-map auxiliary image, and an ITU-R 2100
+  /// (PQ/HLG) transfer on the decoded primary. Missing keys stay unknown.
+  static Future<({bool? gainMap, bool? hdrTransfer})?> probeHdr(
+    Uint8List bytes,
+  ) async {
+    final res = await _read(bytes);
+    if (res == null) return null;
+    final gainMap = res['hasGainMap'];
+    final transfer = res['hdrTransfer'];
+    return (
+      gainMap: gainMap is bool ? gainMap : null,
+      hdrTransfer: transfer is bool ? transfer : null,
+    );
+  }
+
   static Future<NativeImageInfo?> probe(Uint8List bytes) async {
     final res = await _read(bytes);
     final depth = res?['bitDepth'];

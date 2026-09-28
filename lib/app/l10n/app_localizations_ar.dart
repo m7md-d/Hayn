@@ -775,8 +775,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get compressBitDepth => 'عمق البت';
 
   @override
-  String get compressBitDepthDesc =>
-      'دقة الألوان لكل قناة — والـHDR يُحفظ في الحالتين';
+  String get compressBitDepthDesc => 'دقة الألوان لكل قناة';
 
   @override
   String get compressBitDepthMatch => 'مطابق';

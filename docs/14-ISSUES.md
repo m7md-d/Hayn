@@ -1,6 +1,6 @@
 # 14 — سجل العيوب والمتابعة
 
-آخر تحديث: 2026-09-28. المرجع الملتزم به `bedrock: 910a281`، ويشمل دفعة حماية التحويل. اختبارات المحاكي اللاحقة تغييرات محلية؛ نتائجها وطريقة تشغيلها في [15-IOS-TESTING](15-IOS-TESTING.md). هذا السجل هو نقطة التسليم لمن يكمل العمل، ويفصل العيب المثبت عن المخاطرة وعن الميزة غير المنفذة. راجع حالة Git قبل أي تطبيق؛ لا تنسخ ملفات من نسخ الفحص القديمة فوق المشروع.
+آخر تحديث: 2026-09-28. يشمل دفعة حماية التحويل (`910a281`) ودفعة المحاكي والمصغرات بعدها؛ نتائج الأخيرة وطريقة تشغيلها في [15-IOS-TESTING](15-IOS-TESTING.md). هذا السجل هو نقطة التسليم لمن يكمل العمل، ويفصل العيب المثبت عن المخاطرة وعن الميزة غير المنفذة. لا تنسخ ملفات من نسخ الفحص القديمة فوق المشروع. Git يديره المستخدم ولا يُسجَّل وضعه هنا؛ انظر التنبيه في [16-HANDOFF](16-HANDOFF.md).
 
 **قرار المستخدم:** DarkLib باقية. الهدف تصحيحها وضبط حدودها؛ إزالة المكتبة أو العودة إلى main ليست مهمة مطروحة. الاستبدال الجراحي أزيل عمدًا ولا يعاد ضمن هذه الإصلاحات. العقد في [10-DARKLIB](10-DARKLIB.md)، وبحث الحاويات في [11-HDR-RESEARCH](11-HDR-RESEARCH.md)، والتاريخ والقياسات في [12-STABILIZATION](12-STABILIZATION.md)، والبيئة في [13-DEVELOPMENT](13-DEVELOPMENT.md).
 
@@ -14,7 +14,7 @@
 - المواضع أدناه أسماء ملفات ودوال، لا أرقام سطور قابلة للتغير. جميع الروابط من هذا المستودع؛ السجلات المحلية أدلة إضافية وليست شرطًا لفهم المشكلة.
 - الأولوية P1 لسلامة المخرجات، P2 للموثوقية والبناء، P3 لعدم اتساق التوثيق أو ميزات خارج نطاق التثبيت. لا commit أو push أو تثبيت على هاتف دون طلب.
 
-## دفعة حماية التحويل الملتزمة في 910a281 — 2026-09-27
+## دفعة حماية التحويل (910a281) — 2026-09-27
 
 النطاق: `unknown` للشفافية؛ إذن صريح لتغيير الصيغة؛ فحص هوية صيغة الناتج وقناته الشفافة؛ رفض سقوط HDR المعروف داخل Rust؛ إيصال رفض الحفظ إلى Dart كرفض نهائي. **ليس تنفيذًا كاملًا لـSourceFacts/Plan/ConversionResult أو ضمانًا لجميع backends.**
 
@@ -40,23 +40,25 @@
 
 ### IMG-03 · P1 · HDR مباشر يفقد الدقة ودالة النقل
 
-- **الحالة:** حماية رفض PQ/HLG المعروف داخل Rust مختبرة؛ الحفظ الفعلي وفحص جميع المحركات غير منفذين.
+- **الحالة (2026-09-28):** وفق سياسة المستخدم، الهدف نسخة SDR صحيحة لا حفظ PQ/HLG. يُفحص المصدر الأصلي قبل أي محرك. يُطلب tone mapping من ImageIO (`kCGImageSourceDecodeToSDR`، iOS 17+)، ثم يُتحقق من الناتج؛ إن بقي PQ/HLG أو لم يتوفر الطلب يُرفض قبل أي backend، بما فيه عتاد Android (`hdrToneMapUnavailable`). رفض Rust للأصل باقٍ ويعبر FFI. **على محاكي iOS 26.3 يتجاهل ImageIO الطلب ويعيد 10-bit PQ** (ويطبقه macOS 15)، فلم يُثبت مسار التحويل على iOS بعد، والمحاكي يرفض PQ مبكرًا. لم يُختبر على هاتف، ولا iOS 15/16، ولا HLG بعينة حقيقية.
 - **المواضع:** `Decoded`/`transcode` في [codec/mod.rs](../native/darklib/src/engine/codec/mod.rs)، تحويل العينات في [avif_dav1d.rs](../native/darklib/src/engine/codec/avif_dav1d.rs)، [color.rs](../native/darklib/src/engine/color.rs).
 - **السبب والأثر:** وسيط RGBA8 يخفض الدقة ولا يحمل transfer/range؛ `seine_hdr_rec2020.avif` بدأ Rec.2020/PQ `(9,16)` وخرج بتفسير sRGB عند ImageIO. رفع عمق ملف الناتج لا يستعيد المعلومات.
-- **معيار الإغلاق:** مسار يحفظ العينات واللون أو tone mapping مسموح صراحة، وإلا رفض مصنف. corpus مستقل PQ وHLG وICC، بما يشمل غياب nclx أو تعقيد graph. رفض transfer المعروف ليس كشفًا شاملًا لكل HDR.
+- **معيار الإغلاق:** نسخة SDR مطابقة لـtone mapping النظام أو رفض قبل أي محرك، على corpus مستقل PQ وHLG وICC بما يشمل غياب nclx أو تعقيد graph، وعلى هاتف iOS 17+ وiOS أقدم وAndroid. الفحص يقرأ nclx للعنصر الأساسي وcICP في PNG؛ PQ موصوف بـICC وحده لا يُكشف بعد.
 
 ### IMG-04 · P1 · فشل gain map قد يمر كتحويل SDR ناجح
 
-- **الحالة:** أُصلح السقوط الداخلي في الحالات المغطاة؛ رفض نهائي عبر FFI الفعلية مختبر. IMG-05 وIMG-10 ما زالا مفتوحين.
-- **المواضع:** `transcode_keep_metadata`/`transcode_hdr_avif` في [codec/mod.rs](../native/darklib/src/engine/codec/mod.rs)، `read_tmap`/`has_gainmap` في [isobmff.rs](../native/darklib/src/engine/metadata/isobmff.rs)، [_call](../lib/core/darklib/darklib.dart)، [_tryEncode](../lib/features/image_ops/data/image_encoder.dart).
+- **الحالة (2026-09-28):** لم يعد إسقاط الخريطة رفضًا، بقرار المستخدم. `transcode` يعيد `HdrOutcome`، وكل مصدر gain map يُرمَّز أساسه SDR (`GainMapDropped`)، بما فيه AVIF→AVIF. مسار الحفظ السابق أوقف لأن ImageIO، وهو قارئ مستقل، لم يرَ الخريطة المعاد بناؤها (IMG-10). Dart يسجل `hdrToSdr` ولا يحذّر المستخدم. `GainMapKept`/`GainMapKeepFailed` محجوزان لعودة الحفظ بعد إصلاح الكاتب.
+- **المواضع:** `transcode` في [codec/mod.rs](../native/darklib/src/engine/codec/mod.rs)، `read_tmap`/`has_gainmap` في [isobmff.rs](../native/darklib/src/engine/metadata/isobmff.rs)، [_call](../lib/core/darklib/darklib.dart)، [_tryEncode](../lib/features/image_ops/data/image_encoder.dart).
 - **السبب والأثر:** `None` تعني غياب خريطة أو فشل معالجتها معًا، وبعدها ينفذ SDR. تغيير الهدف/التصغير يتجاوز مسار الخريطة. EXIF rotation كان يغير الأساس وحده، وirot/imir يسقطان إلى SDR. `keepMetadata=false` لا يعد إذنًا لحذف جزء HDR من الصورة.
-- **معيار الإغلاق:** الفصل بين الغياب والفشل؛ عدم استبدال الرفض بـbackend آخر؛ اختبارات graph ناقص، transform، resize، هدف مختلف، وحالات نجاح المسار الأساسي. إضافة فحص موحد **قبل جميع المحركات** ما زالت IMG-05؛ التحذير بعد Rust لا يرى مسار hardware سبق Rust.
+- **معيار الإغلاق:** الفصل بين الغياب والإسقاط المقصود وفشل الحفظ، مختبر: graph ناقص، transform، resize، هدف مختلف، ونجاح المسار الأساسي (`native/darklib/tests/preservation.rs`، `test/hdr_plan_test.dart`). يبقى: أساس HDR غير موصوف بـnclx في صورة gain map لا يُكشف، فيُرمَّز كأنه SDR.
 
 ### IMG-05 · P1 · عقد الحفظ الشامل والتخطيط قبل الترميز غير مكتملين
 
-- **الحالة:** فجوة تنفيذ مؤكدة؛ غير مكتمل.
+- **الحالة (2026-09-28):** منفذ جزئيًا ومختبر محليًا. `SourceInspector` يفحص الأصل مرة واحدة (ألفا، PQ/HLG، gain map) من Rust `inspect_image` وImageIO، ويسلّم `SourceFacts` لاختيار الصيغة والمحرك في الضغط والقص والمعاينة. PQ/HLG لا يصل لأي محرك إلا نسخةً SDR من ImageIO؛ عتاد AVIF لا يعمل إلا على مصدر معروف أنه ليس PQ/HLG ولا شفاف؛ وجسر HEIC→PNG يطلب نسخة SDR. نتيجة الخريطة تُسجل داخليًا. غير منفذ بعد: بقية الحقائق (الأبعاد، الاتجاه، ICC، العمق)، فحص decode كامل للناتج، خطأ typed بدل نص `preservation_required:`، وفحص HDR منصي على Android (يعتمد الآن على قراءة الحاوية في Rust).
 - **المواضع:** [ImageEncoder](../lib/features/image_ops/data/image_encoder.dart)، [DarkLibCore](../lib/core/darklib/darklib.dart)، [NativeImageEncoder](../lib/features/image_ops/data/native_image_encoder.dart)، `ImageEncoderNative`/`bakeUpright` في [AppDelegate.swift](../ios/Runner/AppDelegate.swift)، [عقد التصميم](10-DARKLIB.md).
 - **السبب والأثر:** الصيغة النظرية وقدرة `keepMetadata` لا تثبت الحفظ. HEIC→PNG→RGBA8→AVIF قد يفقد HDR/اللون. hardware قد ينجح قبل فحص Rust؛ transplant قد يعيد target كما هو ويعد نجاحًا. حقول ConversionLoss النظرية ليست متصلة بجميع المسارات. `EncodedImage` يحمل المحرك والصيغة والتشخيص، وليس تقرير حفظ كاملًا.
+- **دليل إعادة الإنتاج (2026-09-28):** اختبار مؤقت بقنوات ومحاكاة DarkLib على طبقة `ImageEncoder`، سجله `/Volumes/CUSU/Development/logs/img05-gap-reproduction-20260928.log`. ثلاثة مسارات نجحت ولم يُستشر فحص HDR في أي منها: (أ) مصدر HEIC يعلن ImageIO أنه HDR، والهدف WebP: خطأ Rust العادي في فك HEIC ليس رفض حفظ، فيمر الجسر `bakeUpright`→PNG→Rust وينجح. (ب) عينة PQ `seine_hdr_rec2020.avif` إلى AVIF: عتاد Android ينجح ولا تُستدعى Rust، بينما ترفض Rust المصدر نفسه وحدها. (ج) مصدر HDR إلى HEIC مع `keepMetadata=false`: ImageIO ينجح، وSwift لا ينسخ gain map إلا عند `keepMetadata` (`ImageEncoderNative.encode`). محاكاة القنوات تثبت ترتيب القرار في Dart، لا سلوك الناتج الأصلي؛ فقد (ج) مستنتج من كود Swift.
+- **الإصلاح والتحقق (2026-09-28):** الأحمر: الاختبار المؤقت أعلاه على الكود قبل الإصلاح. الأخضر: 9 حالات في `test/hdr_plan_test.dart`، و7 انحدار Rust على عينتي libavif، و5 اختبارات جسر حقيقي على المضيف، ومجموعة المحاكي (15-IOS-TESTING). القص يستخدم النسخة SDR نفسها، لكنه بلا اختبار وحدة لأنه يحتاج محاكاة photo_manager.
 - **المطلوب التالي:** SourceFacts موثوقة مع unknown، سياسة preserveRequired وفقد مسموح محدد، تخطيط قدرات كل backend، تحقق قبل الحفظ وتقرير نتيجة. لا تستخدم علمًا عامًا باسم «حفظ» بينما تفحص alpha وحدها.
 
 ### IMG-06 · P1 · MPF في JPEG Ultra HDR يصبح غير صالح بعد التنظيف
@@ -82,17 +84,18 @@
 
 ### IMG-09 · P2 · pixi لا يطابق عمق AV1 الفعلي
 
-- **الحالة:** مثبت للشبكة؛ writer الخاص بـHDR يستعمل الثابت نفسه ويحتاج التغطية أيضًا.
+- **الحالة:** مثبت للشبكة وللـwriter الخاص بـHDR. دليل 2026-09-28: ناتج `build_hdr_avif` من عينة libavif كان `av1C` فيه يعلن high_bitdepth (10 بت) بينما `pixi` = 8؛ الأصل من libavif متسق.
 - **المواضع:** `build_grid_avif` و`build_hdr_avif` في [isobmff.rs](../native/darklib/src/engine/metadata/isobmff.rs)، `encode_avif_single`/`encode_avif_grid` في [codec/mod.rs](../native/darklib/src/engine/codec/mod.rs).
 - **السبب والأثر:** pixi يعلن 8 بت بينما ravif قد يشحن AV1/av1C بعمق 10. قبول decoder الداخلي أو ImageIO للملف لا يزيل تناقض الحاوية.
 - **معيار الإغلاق:** اشتقاق العمق من الإعداد/الحمولة الفعلية، تطابق av1C وpixi والتيار لكل عنصر، وقارئ مستقل. يشمل المسار الصور فوق 16×1024×1024 بكسل؛ لا يقتصر على 200MP.
 
 ### IMG-10 · P1 · صلاحية gain map بعد تغيير الأساس لم تثبت
 
-- **الحالة:** مخاطرة دلالية وغياب تحقق؛ لا تعمم فساد كل صورة.
-- **المواضع:** `transcode_hdr_avif` في [codec/mod.rs](../native/darklib/src/engine/codec/mod.rs)، `read_tmap`/`build_hdr_avif` في [isobmff.rs](../native/darklib/src/engine/metadata/isobmff.rs)، نقل auxiliary في [AppDelegate.swift](../ios/Runner/AppDelegate.swift).
+- **الحالة:** مثبت أن الكاتب الحالي لا ينتج خريطة يقرؤها قارئ مستقل؛ مسار الحفظ موقوف منذ 2026-09-28 والناتج أساس SDR.
+- **دليل 2026-09-28:** حوّلنا عينة `seine_sdr_gainmap_srgb.avif` إلى AVIF بمسار الحفظ. ImageIO على الماك (macOS 15) ومحاكي iOS 26.3 يرى في الأصل ISO gain map (Headroom 2.46)، ولا يرى أي خريطة في ناتجنا (Headroom 1)، ويعدّ فيه صورتين. مقارنة الصناديق: ناتجنا بلا علامة `tmap` في `ftyp`، وعنصر `tmap` فيه `ispe` وحده بلا `pixi` و`colr`، والخريطة بلا `pixi`، و`pixi` لا يطابق `av1C` (IMG-09). الملفات في `build/ios-preservation/20260928-194848/`. قراءة `read_tmap` في Rust للناتج لم تكن إلا تحققًا ذاتيًا.
+- **المواضع:** `read_tmap`/`build_hdr_avif` في [isobmff.rs](../native/darklib/src/engine/metadata/isobmff.rs)، نقل auxiliary في [AppDelegate.swift](../ios/Runner/AppDelegate.swift).
 - **السبب:** إعادة ترميز/تغيير اللون أو الهندسة للأساس ثم نقل الخريطة ومعاملاتها لا يثبت أنهما متوافقان. اختبار Rust القديم يحمل نصًا اصطناعيًا كمعاملات tmap؛ يفحص نقل بايتات وليس دلالة الإضاءة. قراءة graph وprimary والبدائل وترتيب dimg تحتاج تحققًا أدق؛ لا يكفي إيجاد أول tmap.
-- **معيار الإغلاق:** Apple gain map وISO gain map منفصلان؛ مقارنة إعادة البناء في فضاء خطي وعند headroom معلوم وقارئ مستقل؛ رفض الحالات التي لم تثبت. لا تحذف grid: هي تركيب مكاني وليست gain map.
+- **معيار الإغلاق:** Apple gain map وISO gain map منفصلان؛ ImageIO يرى الخريطة وheadroom الصحيح في ناتجنا؛ مقارنة إعادة البناء في فضاء خطي وعند headroom معلوم؛ الحالات غير المثبتة تعطي الأساس SDR. عندها يعاد تفعيل الحفظ في `transcode`. لا تحذف grid: هي تركيب مكاني وليست gain map.
 
 ### IMG-11 · P2 · تغيير الصيغة تلقائيًا وقبول ناتج بلا فحص
 
@@ -209,7 +212,7 @@
 
 - **الحالة:** أضيف هذا السجل وملخص حالي إلى docs/10 وdocs/12 وdocs/13، مع حفظ المقاطع التاريخية وتسميتها. تستمر مراجعة الادعاءات القديمة عند لمس المسار.
 - **المواضع:** [12-STABILIZATION](12-STABILIZATION.md)، [13-DEVELOPMENT](13-DEVELOPMENT.md)، [BUILD.md](../native/darklib/docs/BUILD.md)، والخطط `docs/01` إلى `docs/09`.
-- **التفصيل:** مقاطع تقول إن إصلاحات الدفعة الأولى غير ملتزم بها أو iOS متعذر؛ لاحقًا التزمت في `d514063` وجهز المحاكي واعتمد iOS 15. README حُدّث في `ddc06a8`؛ لا تكرر حكم README القديم. الخطط القديمة ليست دليل اكتمال.
+- **التفصيل:** مقاطع تقول إن إصلاحات الدفعة الأولى غير ملتزم بها أو iOS متعذر؛ لاحقًا التزمت في `d514063` وجهز المحاكي واعتمد iOS 15. README حُدّث في `ddc06a8`؛ لا تكرر حكم README القديم. الخطط القديمة ليست دليل اكتمال. منذ 2026-09-28 لا تسجّل الوثائق حالة Git أصلًا؛ Git يديره المستخدم، والقاعدة في [workflow.md](../.claude/rules/workflow.md).
 - **معيار الإغلاق:** حالة حالية بارزة مع تاريخ كل baseline؛ روابط هذا السجل من Claude؛ كل إصلاح يحدّث سجله والاختبار/القيد بدل دفنها في محادثة.
 
 ### PROD-01 · P3 · شاشات لا تزال خططًا أو موصولة جزئيًا
@@ -217,6 +220,14 @@
 - **الحالة:** نقص معروف خارج دفعة المكتبة؛ يلزم إعادة فحص كل flow قبل إصدار.
 - **المواضع:** [قص الفيديو](../lib/features/video_ops/presentation/trim_video_screen.dart)، [تحرير الفيديو](../lib/features/video_ops/presentation/video_editor_screen.dart)، [crop_video_screen](../lib/features/video_ops/presentation/crop_video_screen.dart)، [التحريك من صور](../lib/features/animated/presentation/animate_from_photos_screen.dart)، [فصل الصوت](../lib/features/audio/presentation/separate_audio_screen.dart).
 - **المطلوب:** لا تعرض نجاحًا لعملية غير منفذة، واتساق أدوات Coming Soon مع المداخل المنفذة. لا توسع DarkLib إلى محركات فيديو/صوت لإغلاق هذا البند؛ حدودها موثقة.
+
+### PROD-02 · P3 · نص تحذير الشفافية لا يطابق السلوك
+
+- **الحالة:** مثبت بقراءة الكود؛ ينتظر قرار المستخدم.
+- **المواضع:** `compressAlphaFlattenWarning` في [app_en.arb](../lib/app/l10n/app_en.arb) و[app_ar.arb](../lib/app/l10n/app_ar.arb)، `_flattensAlpha` في [compress_screen.dart](../lib/features/image_ops/presentation/compress_screen.dart)، بداية [ImageEncoder.encode](../lib/features/image_ops/data/image_encoder.dart).
+- **السبب والأثر:** النص يقول إن الصورة الشفافة ستُحفظ بصيغة تحفظ الشفافية بدل JPEG. منذ `910a281` الصيغة المحددة لا تتغير، وJPEG مع شفافية موجودة أو مجهولة يفشل. فالنص يعد بما لا يحدث، وهو أيضًا تحذير تقني من النوع الذي منعته قاعدة النصوص (flutter.md، 2026-09-28).
+- **معيار الإغلاق:** قرار المستخدم في سلوك JPEG مع الشفافية (دمجها على خلفية بصمت، أو صيغة أخرى، أو فشل)، ثم نص يطابقه أو لا نص، واختبار للسلوك.
+- **أُغلق معه:** `compressBitDepthDesc` كان يقول «HDR is kept either way»؛ صار «Colour precision per channel» / «دقة الألوان لكل قناة».
 
 ## أمور أُصلحت أو استُبعدت — لا تُفتح من جديد بلا دليل
 
@@ -235,7 +246,7 @@
 
 baseline المراجعة التاريخي: **158 Flutter + 74 Rust**، والتحليل وdoctor ناجحان عند `ddc06a8`؛ سجلاته `/Volumes/CUSU/Development/logs/review-20260927-*`. تلتها دفعة `910a281` بنتائج **174 Flutter + 79 Rust + 3 host-native**. سجلات الأحمر المعتمدة لهذه الدفعة: `preservation-red-flutter.log` و`preservation-red-rust-corrected.log` في المجلد نفسه (5 حالات فشلت في كل مجموعة).
 
-آخر تحقق محلي في 2026-09-28: **180 Flutter + 11 على محاكي iOS**، والتحليل وقارئ ImageIO المستقل وبناء Android debug وiOS release دون توقيع ناجحة. تفاصيل النطاق وسجلات الجولات في [15-IOS-TESTING](15-IOS-TESTING.md). لا تنسب نتائج Rust السابقة إلى إعادة تشغيل في دفعة المحاكي.
+دفعة المحاكي والمصغرات (2026-09-28): **180 Flutter + 11 على محاكي iOS**. آخر تحقق محلي بعد IMG-05 الجزء الأول (2026-09-28): **189 Flutter و79+7 Rust و5 host-native و11 على المحاكي**، والتحليل وfmt/clippy والقارئ المستقل وبناء Android debug وiOS release دون توقيع ناجحة. تفاصيل الجولات في [15-IOS-TESTING](15-IOS-TESTING.md) والنتائج في آخر [12-STABILIZATION](12-STABILIZATION.md).
 
 الفحص الأول محفوظ خارجيًا في `/Volumes/CUSU/Development/verification/Hayn-audit-20260925/`: `results/` للسجلات والعينات، و`bedrock/native/darklib/tests/audit_regressions.rs` لحالات اللون/MPF/grid/الاتجاه القديمة. هذه نسخة قديمة للفحص فقط، لا شجرة عمل تُنسخ على المشروع. التقرير التاريخي الكامل موجود محليًا في مشروع Codex بعنوان `Hayn-review-2026-09-25.md`؛ جميع المشاكل القابلة للمتابعة منه ملخصة هنا فلا يعتمد التسليم على توفره.
 
