@@ -1,6 +1,7 @@
-import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:photo_manager/photo_manager.dart';
 import '../../../../core/async/concurrency_limiter.dart';
+import '../../../../core/diagnostics/media_diagnostics.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ThumbnailCache — in-memory map of asset.id → low-res bytes already loaded
@@ -45,6 +46,7 @@ abstract final class ThumbnailCache {
 
   /// Returns the cached thumbnail or loads it through the limiter. Returns null
   /// if cancelled before the fetch starts or if the platform has no thumbnail.
+  /// Platform failures are diagnosed in release and are never cached.
   static Future<Uint8List?> load(
     AssetEntity asset, {
     bool Function()? cancelled,
@@ -59,8 +61,36 @@ abstract final class ThumbnailCache {
       if (again != null) return again;
       if (cancelled?.call() ?? false) return null;
 
-      final data = await asset.thumbnailDataWithSize(thumbSize);
-      if (data != null) put(asset.id, data);
+      Uint8List? data;
+      try {
+        data = await asset.thumbnailDataWithSize(thumbSize);
+      } on MissingPluginException {
+        MediaDiagnostics.record(
+          MediaBackend.gallery,
+          MediaOperation.thumbnail,
+          MediaDiagnosticCode.unavailable,
+        );
+        return null;
+      } catch (_) {
+        // Photos may store a format that its thumbnail service cannot render.
+        // Keep the existing placeholder; never leak an unawaited UI exception
+        // or cache the failure, so a later request can retry normally.
+        MediaDiagnostics.record(
+          MediaBackend.gallery,
+          MediaOperation.thumbnail,
+          MediaDiagnosticCode.exception,
+        );
+        return null;
+      }
+      if (data == null || data.isEmpty) {
+        MediaDiagnostics.record(
+          MediaBackend.gallery,
+          MediaOperation.thumbnail,
+          MediaDiagnosticCode.emptyOutput,
+        );
+        return null;
+      }
+      put(asset.id, data);
       return data;
     });
   }

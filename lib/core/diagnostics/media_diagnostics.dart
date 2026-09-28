@@ -25,6 +25,7 @@ enum MediaOperation {
   cancel,
   cleanup,
   save,
+  thumbnail,
 }
 
 enum MediaDiagnosticCode {
