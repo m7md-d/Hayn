@@ -22,6 +22,8 @@
 | `flutter_rust_bridge_codegen` 2.12.0 (مطابق للـruntime) و`cargo-expand` 1.0.126 الذي يحتاجه | `Development/tools/<الأداة>-<النسخة>/bin`؛ ليسا في PATH |
 | مجلدات Xcode وCocoaPods وSwiftPM | انظر [iOS وXcode](#ios-وxcode) |
 
+**انقطاع القرص تحت الحمل (2026-09-29):** القرص NVMe في علبة Realtek RTL9210 (MD202) عبر Hub نوع USB-C فيه محول HDMI، ويطلب 896 mA من 900 متاحة. في 19:16 و19:26 اختفى من الناقل أثناء بناء Xcode/Rust والمحاكي مع مفهرسي Dart وSpotlight. سجل النظام يُظهر `Disappear` ثم `removed disk` قبل أي unmount، فهو انقطاع عتادي لا إخراج برمجي. البرامج التي تعمل من القرص تتعطل حينها بـSIGBUS. التوصية: وصله مباشرة بمنفذ الماك أو بمصدر طاقة مستقل، مع تهوية. الوكلاء يشغّلون الفحوص الثقيلة خطوة خطوة، لا سلسلة كاملة في أمر خلفي واحد، ويتحققون من `mount | grep CUSU` قبل كل خطوة. فهرسة Spotlight على الوحدة كانت مفعلة عند آخر فحص (`mdutil -s`)؛ تعطيلها يحتاج `sudo mdutil -i off /Volumes/CUSU` أو إضافتها لقائمة الخصوصية في إعدادات Spotlight.
+
 بقي `~/.cargo/bin` الصغير وملفات إعداد الطرفية داخليًا.
 
 توليد روابط DarkLib بعد تغيير API في `native/darklib/src/api`، من جذر المشروع. إن لم يجد المولّد `cargo expand` في PATH ثبّته وحده داخل `~/.cargo/bin`، لذلك يُمرَّر مساره الخارجي:

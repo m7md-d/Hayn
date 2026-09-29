@@ -1,7 +1,8 @@
 //! HDR policy on independent libavif fixtures (user decision, 2026-09-28):
 //! keep a gain map where the path is proven, otherwise encode the SDR base and
 //! report it; refuse PQ/HLG, which this engine cannot render as correct SDR.
-//! No keeping path is proven yet (IMG-10). Before that decision these cases
+//! AVIF→AVIF keeps the map; ImageIO proves it on the written outputs
+//! (test_native/compare_hdr_rendition.swift). Before that decision these cases
 //! were vetoes (910a281).
 
 use darklib::engine::{
@@ -64,32 +65,99 @@ fn resize_gets_the_sdr_base() {
     assert_eq!(d.width.max(d.height), 64);
 }
 
-/// The rebuilt gain map is not recognised by ImageIO (IMG-10), so AVIF→AVIF
-/// is not a proven keeping path yet: the SDR base, with or without metadata.
+/// AVIF→AVIF keeps the map, with or without metadata (it is image data, not
+/// private data). The output is written for the independent ImageIO checks.
 #[test]
-fn avif_to_avif_encodes_the_sdr_base_until_the_writer_is_verified() {
+fn avif_to_avif_keeps_the_gainmap() {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("gainmap");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src_tmap = isobmff::read_tmap(GAINMAP).unwrap();
     for keep_metadata in [true, false] {
         let out =
             codec::transcode(GAINMAP, Target::Avif { quality: 80 }, None, keep_metadata).unwrap();
-        assert_eq!(out.hdr, HdrOutcome::GainMapDropped);
-        assert!(!isobmff::has_gainmap(&out.bytes));
+        assert_eq!(
+            out.hdr,
+            HdrOutcome::GainMapKept,
+            "keep_metadata={keep_metadata}"
+        );
+        let kept = isobmff::read_tmap(&out.bytes).unwrap();
+        assert_eq!(kept.payload, src_tmap.payload, "tmap metadata verbatim");
+        assert_eq!(kept.alt_props, src_tmap.alt_props, "alternate pixi/colr");
         assert_eq!(
             metadata::extract(&out.bytes).exif.is_some(),
             keep_metadata,
             "EXIF follows the privacy choice"
         );
+        std::fs::write(
+            dir.join(format!("kept-meta{keep_metadata}.avif")),
+            &out.bytes,
+        )
+        .unwrap();
     }
 }
 
+/// Entity group ids share the item id space (ISOBMFF); a clash made ImageIO
+/// ignore the whole tmap graph (IMG-10, 2026-09-29).
 #[test]
-fn unreadable_gainmap_graph_still_gets_the_sdr_base() {
+fn altr_group_id_is_not_an_item_id() {
+    let out = codec::transcode(GAINMAP, Target::Avif { quality: 80 }, None, true).unwrap();
+    let b = &out.bytes;
+    let at = b.windows(4).position(|w| w == b"altr").unwrap();
+    let group_id = u32::from_be_bytes(b[at + 8..at + 12].try_into().unwrap());
+    let items = 1..=5; // base, gain map, tmap, Exif, XMP
+    assert!(!items.contains(&group_id), "group id {group_id}");
+}
+
+/// pixi must state the depth the AV1 stream actually has (IMG-09).
+#[test]
+fn pixi_matches_av1c_in_hdr_and_grid_writers() {
+    let pixi_bodies = |b: &[u8]| -> Vec<Vec<u8>> {
+        b.windows(4)
+            .enumerate()
+            .filter(|(_, w)| *w == b"pixi")
+            .map(|(i, _)| {
+                let n = b[i + 8] as usize; // after type + FullBox header
+                b[i + 8..i + 9 + n].to_vec()
+            })
+            .collect()
+    };
+    let out = codec::transcode(GAINMAP, Target::Avif { quality: 80 }, None, true).unwrap();
+    let base_av1c = isobmff::av1c_raw(&out.bytes).unwrap();
+    let want = isobmff::pixi_for_av1c(&base_av1c).unwrap();
+    assert_eq!(pixi_bodies(&out.bytes)[0], want, "base pixi");
+
+    let tile = codec::Decoded {
+        width: 8,
+        height: 8,
+        rgba: vec![120; 8 * 8 * 4],
+    };
+    let one = codec::encode(&tile, Target::Avif { quality: 80 }).unwrap();
+    let av1c = isobmff::av1c_raw(&one).unwrap();
+    let payload = isobmff::extract_primary_av1(&one).unwrap();
+    let spec = isobmff::GridSpec {
+        rows: 1,
+        cols: 2,
+        tile_w: 8,
+        tile_h: 8,
+        width: 16,
+        height: 8,
+    };
+    let grid = isobmff::build_grid_avif(&spec, &av1c, &[payload.clone(), payload]).unwrap();
+    assert_eq!(
+        pixi_bodies(&grid)[0],
+        isobmff::pixi_for_av1c(&av1c).unwrap()
+    );
+}
+
+#[test]
+fn unreadable_gainmap_graph_reports_keep_failure() {
     let mut broken = GAINMAP.to_vec();
     let at = broken.windows(4).position(|b| b == b"dimg").unwrap();
     broken[at..at + 4].copy_from_slice(b"zzzz");
     assert!(isobmff::has_gainmap(&broken));
     assert!(isobmff::read_tmap(&broken).is_none());
     let out = codec::transcode(&broken, Target::Avif { quality: 80 }, None, true).unwrap();
-    assert_eq!(out.hdr, HdrOutcome::GainMapDropped);
+    assert_eq!(out.hdr, HdrOutcome::GainMapKeepFailed);
     assert!(!isobmff::has_gainmap(&out.bytes));
 }
 

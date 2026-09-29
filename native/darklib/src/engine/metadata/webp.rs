@@ -7,7 +7,7 @@
 //! strips colour. Coded chunks (VP8/VP8L/ALPH/ANMF…) are copied byte-for-byte.
 //! On malformation returns the input untouched.
 
-use super::{IccPolicy, StripPolicy};
+use super::{exif, inject::riff_chunk, IccPolicy, StripPolicy};
 use crate::engine::error::Result;
 
 pub fn strip(b: &[u8], policy: StripPolicy) -> Result<Vec<u8>> {
@@ -19,6 +19,15 @@ fn strip_bytes(b: &[u8], policy: StripPolicy) -> Vec<u8> {
         return b.to_vec();
     }
     let strip_icc = policy.icc == IccPolicy::Strip;
+    // Written in place of the EXIF chunk, keeping the VP8X EXIF flag
+    // (OrientationPolicy::Keep, IMG-07).
+    let has_exif = chunk_present(b, b"EXIF");
+    let mut orientation = if has_exif {
+        exif::orientation_only(super::extract(b).orientation)
+    } else {
+        None
+    };
+    let keep_exif_flag = orientation.is_some();
 
     let mut body: Vec<u8> = Vec::with_capacity(b.len());
     let mut i = 12usize;
@@ -35,13 +44,19 @@ fn strip_bytes(b: &[u8], policy: StripPolicy) -> Vec<u8> {
             return b.to_vec();
         }
 
-        if fourcc == b"EXIF" || fourcc == b"XMP " || (fourcc == b"ICCP" && strip_icc) {
+        if fourcc == b"EXIF" {
+            changed = true; // replaced by the orientation-only block, if any
+            if let Some(tiff) = orientation.take() {
+                riff_chunk(&mut body, b"EXIF", &tiff);
+            }
+        } else if fourcc == b"XMP " || (fourcc == b"ICCP" && strip_icc) {
             changed = true; // drop whole chunk (header + payload + pad)
         } else if fourcc == b"VP8X" && size >= 1 {
             // Clear EXIF (0x08) + XMP (0x04) flag bits; also ICCP (0x20) when
             // stripping colour, so the file stays self-consistent.
             let mut chunk = b[i..chunk_end].to_vec();
-            let mask: u8 = if strip_icc { !0x2C } else { !0x0C };
+            let exif_bit: u8 = if keep_exif_flag { 0 } else { 0x08 };
+            let mask: u8 = !(0x04 | exif_bit | if strip_icc { 0x20 } else { 0 });
             let cleared = chunk[8] & mask;
             if cleared != chunk[8] {
                 chunk[8] = cleared;
@@ -64,6 +79,22 @@ fn strip_bytes(b: &[u8], policy: StripPolicy) -> Vec<u8> {
     out.extend_from_slice(b"WEBP");
     out.extend_from_slice(&body);
     out
+}
+
+/// Whether a top-level RIFF chunk `fourcc` exists (bounds-safe scan).
+fn chunk_present(b: &[u8], fourcc: &[u8; 4]) -> bool {
+    let mut i = 12usize;
+    while i + 8 <= b.len() {
+        if &b[i..i + 4] == fourcc {
+            return true;
+        }
+        let size = u32::from_le_bytes([b[i + 4], b[i + 5], b[i + 6], b[i + 7]]) as usize;
+        let Some(next) = (i + 8).checked_add(size + (size & 1)) else {
+            return false;
+        };
+        i = next;
+    }
+    false
 }
 
 #[cfg(test)]

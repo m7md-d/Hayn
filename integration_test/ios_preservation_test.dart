@@ -122,7 +122,7 @@ void main() {
     _expectSameImage(img.decodePng(rendition)!, img.decodeWebP(result.bytes)!);
   });
 
-  testWidgets('Gain map: SDR base to WebP and AVIF', (_) async {
+  testWidgets('Gain map: SDR base to WebP, kept AVIF to AVIF', (_) async {
     final source = await _fixture('seine_sdr_gainmap_srgb.avif');
     final facts = await SourceInspector.inspect(source);
     expect((facts.directHdr, facts.gainMap), (false, true));
@@ -149,12 +149,11 @@ void main() {
       facts: facts,
       keepMetadata: true,
     );
-    // No verified keeping path yet: our rebuilt map was invisible to ImageIO
-    // (IMG-10), so AVIF gets the SDR base too.
-    expect(avif.hdr, HdrOutcome.gainMapDropped);
+    // AVIF→AVIF keeps the map; ImageIO must see the rebuilt ISO gain map.
+    expect(avif.hdr, HdrOutcome.gainMapKept);
     await _artifact('gainmap-to-avif.avif', avif.bytes);
     final after = await NativeImageProbe.probeHdr(avif.bytes);
-    expect(after!.gainMap, isFalse);
+    expect(after!.gainMap, isTrue);
   });
 
   for (final target in [

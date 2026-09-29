@@ -4,8 +4,8 @@
 //! orientation, ImageGrid). Encoders: `image`, libwebp, rav1e/ravif (AVIF, with
 //! automatic ImageGrid tiling for huge opaque images). HEIC is never coded in
 //! software (HEVC patents) — platform hardware owns it. `transcode` optionally
-//! carries EXIF/XMP/ICC and reports what happened to a gain map in
-//! [`HdrOutcome`].
+//! carries EXIF/XMP/ICC and, for AVIF→AVIF, the ISO 21496-1 HDR gain map; it
+//! reports what happened to a gain map in [`HdrOutcome`].
 
 use std::io::Cursor;
 
@@ -240,19 +240,14 @@ fn encode_avif_grid(img: &Decoded, quality: u8, tile: u32) -> Result<Vec<u8>> {
 /// What a transcode did with an HDR gain map. The HDR policy (user decision,
 /// 2026-09-28): keep HDR where the path is proven, otherwise encode the SDR
 /// base without asking. The caller records anything but `None`/`GainMapKept`.
-///
-/// `GainMapKept`/`GainMapKeepFailed` are not produced today: the AVIF writer
-/// (`isobmff::build_hdr_avif`) is not recognised by an independent reader
-/// (ImageIO sees no gain map: no `tmap` brand, missing `tmap` properties, pixi
-/// ≠ av1C depth). Hayn IMG-09/IMG-10 re-enable keeping once it is verified.
+/// Keeping is proven by ImageIO reading the rebuilt ISO gain map (IMG-10).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HdrOutcome {
     /// No gain map was recognised in the source.
     None,
     /// The gain map was rebuilt next to the re-encoded base.
     GainMapKept,
-    /// The target, resize, orientation or an unverified writer cannot carry
-    /// it; SDR base only.
+    /// The target, resize or orientation cannot carry it; SDR base only.
     GainMapDropped,
     /// Keeping was attempted and failed; SDR base only.
     GainMapKeepFailed,
@@ -264,8 +259,10 @@ pub struct Transcoded {
 }
 
 /// Decode → (optional resize) → encode to `target`. With `keep_metadata` the
-/// source's EXIF/XMP/ICC are carried (orientation baked into the pixels). A
-/// gain-map source is encoded as its SDR base and reported. PQ/HLG is
+/// source's EXIF/XMP/ICC are carried (orientation baked into the pixels). An
+/// ISO 21496-1 gain map survives a full-resolution, unrotated AVIF→AVIF
+/// convert (with or without metadata: it is image data, not private data);
+/// elsewhere the SDR base is encoded and the outcome says so. PQ/HLG is
 /// refused: this engine decodes to RGBA8 and has no tone mapper, and
 /// sRGB-tagged PQ samples would be a wrong image, not an SDR one.
 pub fn transcode(
@@ -275,24 +272,81 @@ pub fn transcode(
     keep_metadata: bool,
 ) -> Result<Transcoded> {
     use crate::engine::inspect::{inspect, Presence};
-    use crate::engine::metadata;
+    use crate::engine::metadata::{self, isobmff, Canonical};
 
     let facts = inspect(bytes);
     if facts.transfer.is_direct_hdr() {
         return Err(DarkError::PreservationRequired("hdr_transfer_unsupported"));
     }
-    let hdr = if facts.gain_map == Presence::Present {
-        HdrOutcome::GainMapDropped
-    } else {
-        HdrOutcome::None
-    };
+    let meta = metadata::extract(bytes);
+
+    let mut hdr = HdrOutcome::None;
+    if facts.gain_map == Presence::Present {
+        // irot/imir or EXIF rotation would be baked into the base but not into
+        // the gain map, misaligning them.
+        let keepable = max_edge.is_none()
+            && crate::engine::format::detect(bytes) == crate::engine::format::ImageFormat::Avif
+            && matches!(meta.orientation, 0 | 1)
+            && isobmff::read_orientation(bytes).is_none();
+        hdr = HdrOutcome::GainMapDropped;
+        if let (true, Target::Avif { quality }) = (keepable, target) {
+            let carried = if keep_metadata {
+                meta.clone()
+            } else {
+                Canonical::default()
+            };
+            match transcode_hdr_avif(bytes, quality, &carried) {
+                Some(out) => {
+                    return Ok(Transcoded {
+                        bytes: out,
+                        hdr: HdrOutcome::GainMapKept,
+                    })
+                }
+                None => hdr = HdrOutcome::GainMapKeepFailed,
+            }
+        }
+    }
+
     let out = encode(&decode(bytes, max_edge)?, target)?;
     let out = if keep_metadata {
-        metadata::inject(&out, &metadata::extract(bytes))
+        metadata::inject(&out, &meta)
     } else {
         out
     };
     Ok(Transcoded { bytes: out, hdr })
+}
+
+/// Carry an ISO 21496-1 gain map through an AVIF→AVIF re-encode: decode + encode
+/// the base and the gain-map image separately (same geometry and colour, so the
+/// map still describes the base), copy the tmap metadata and its alternate
+/// properties verbatim, and build the container from scratch. `None` when the
+/// graph is unreadable or any step fails; the caller encodes the base alone.
+fn transcode_hdr_avif(
+    bytes: &[u8],
+    quality: u8,
+    meta: &crate::engine::metadata::Canonical,
+) -> Option<Vec<u8>> {
+    use crate::engine::metadata::isobmff;
+    let tmap = isobmff::read_tmap(bytes)?;
+    let coded = |rgba_img: &Decoded| -> Option<isobmff::CodedItem> {
+        let avif = encode_avif_single(rgba_img, quality).ok()?;
+        Some(isobmff::CodedItem {
+            payload: isobmff::extract_primary_av1(&avif)?,
+            av1c_box: isobmff::av1c_raw(&avif)?,
+            width: rgba_img.width,
+            height: rgba_img.height,
+        })
+    };
+    let base = coded(&decode(bytes, None).ok()?)?;
+    let (gw, gh, grgba) = avif_dav1d::decode_item(bytes, tmap.gainmap_id, 0).ok()?;
+    let gm = coded(&Decoded {
+        width: gw,
+        height: gh,
+        rgba: grgba,
+    })?;
+    let out = isobmff::build_hdr_avif(&base, &gm, &tmap.payload, &tmap.alt_props, meta)?;
+    // Self-check only; the independent proof is ImageIO (tests + IMG-10).
+    (isobmff::read_tmap(&out)?.payload == tmap.payload).then_some(out)
 }
 
 #[cfg(test)]
@@ -517,11 +571,12 @@ mod tests {
         );
     }
 
-    /// `build_hdr_avif` reads back through our own parser; that is not proof
-    /// an independent reader accepts it (IMG-10). Until it is verified, a
-    /// gain-map convert encodes the SDR base and reports `GainMapDropped`.
+    /// A synthetic HDR AVIF converted AVIF→AVIF keeps its gain map: the tmap
+    /// metadata byte-identical, the gain-map image re-encoded at its own
+    /// resolution, EXIF carried. A resize encodes the SDR base. Our own parser
+    /// only; ImageIO checks the real fixture (tests/preservation.rs).
     #[test]
-    fn gainmap_avif_convert_encodes_the_sdr_base() {
+    fn hdr_avif_gainmap_survives_convert() {
         use crate::engine::metadata::{extract, isobmff, Canonical};
 
         let coded = |w: u32, h: u32, rgba: [u8; 4]| -> isobmff::CodedItem {
@@ -552,7 +607,7 @@ mod tests {
             exif: Some(tiff_orientation(1)),
             ..Default::default()
         };
-        let src = isobmff::build_hdr_avif(&base, &gm, &curve, &meta).expect("builds");
+        let src = isobmff::build_hdr_avif(&base, &gm, &curve, &[], &meta).expect("builds");
 
         // The source reads back as a well-formed HDR AVIF.
         assert_eq!(
@@ -567,15 +622,25 @@ mod tests {
         assert!(extract(&src).exif.is_some(), "EXIF item present");
 
         let done = transcode(&src, Target::Avif { quality: 85 }, None, true).expect("convert");
-        assert_eq!(done.hdr, HdrOutcome::GainMapDropped);
-        assert!(!isobmff::has_gainmap(&done.bytes), "no half-valid gain map");
-        assert!(extract(&done.bytes).exif.is_some(), "EXIF carried");
-        let d2 = decode(&done.bytes, None).expect("output base decodes");
+        assert_eq!(done.hdr, HdrOutcome::GainMapKept);
+        let out = done.bytes;
+        let t2 = isobmff::read_tmap(&out).expect("tmap in output");
+        assert_eq!(t2.payload, curve, "curve metadata carried verbatim");
+        assert!(extract(&out).exif.is_some(), "EXIF carried");
+        let d2 = decode(&out, None).expect("output base decodes");
         assert_eq!((d2.width, d2.height), (32, 24));
         assert!(
             (d2.rgba[0] as i32 - 230).abs() < 25,
             "base colour ≈ orange, got {}",
             d2.rgba[0]
+        );
+        let (gw, gh, grgba) =
+            avif_dav1d::decode_item(&out, t2.gainmap_id, 0).expect("gain map decodes");
+        assert_eq!((gw, gh), (16, 12), "gain map keeps its own resolution");
+        assert!(
+            (grgba[0] as i32 - 160).abs() < 25,
+            "gain map value ≈ grey, got {}",
+            grgba[0]
         );
         let small = transcode(&src, Target::Avif { quality: 85 }, Some(16), true).unwrap();
         assert_eq!(small.hdr, HdrOutcome::GainMapDropped);

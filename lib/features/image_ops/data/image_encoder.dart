@@ -329,7 +329,12 @@ abstract final class ImageEncoder {
         // This path still needs independent preservation verification.
         // Android's bitmap/YUV path has no alpha plane and no tone mapper, so
         // it runs only on sources known to be neither transparent nor PQ/HLG.
-        final hw = hasAlpha == false && facts.directHdr == false
+        // A gain-map AVIF goes to DarkLib, which keeps the map (IMG-10).
+        final keepsGainMap =
+            facts.gainMap == true &&
+            ImageProbe.sniff(source) == SniffedFormat.avif;
+        final hw =
+            hasAlpha == false && facts.directHdr == false && !keepsGainMap
             ? await NativeAvifEncoder.encode(source: source, quality: quality)
             : null;
         if (hw != null && hw.isNotEmpty) {

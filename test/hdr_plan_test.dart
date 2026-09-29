@@ -252,6 +252,20 @@ void main() {
     expect(codes(r.diagnostics), contains(MediaDiagnosticCode.hdrUnverified));
   });
 
+  test('gain-map AVIF goes to DarkLib, which keeps the map', () async {
+    api.hdr = HdrOutcome.gainMapKept;
+    final r = await ImageEncoder.encode(
+      source: encodedHeader(DefaultFormat.avif),
+      target: DefaultFormat.avif,
+      quality: 80,
+      facts: gainMap,
+      keepMetadata: false,
+    );
+    expect(hardwareEncodes, isEmpty);
+    expect(r.backend, MediaBackend.darklib);
+    expect(r.hdr, HdrOutcome.gainMapKept);
+  });
+
   test('known SDR source still uses hardware AVIF', () async {
     final r = await ImageEncoder.encode(
       source: _png,

@@ -118,6 +118,25 @@ pub fn summarize(tiff: &[u8]) -> Option<ExifSummary> {
     Some(s)
 }
 
+/// A minimal little-endian TIFF/EXIF block holding only the Orientation tag,
+/// for a strip that removes every other tag but must keep the image upright
+/// (IMG-07). `None` for 1 and invalid values: absence already means upright.
+pub fn orientation_only(orientation: u16) -> Option<Vec<u8>> {
+    if !(2..=8).contains(&orientation) {
+        return None;
+    }
+    let mut t = b"II\x2a\x00".to_vec();
+    t.extend_from_slice(&8u32.to_le_bytes()); // IFD0 offset
+    t.extend_from_slice(&1u16.to_le_bytes()); // one entry
+    t.extend_from_slice(&0x0112u16.to_le_bytes()); // Orientation
+    t.extend_from_slice(&3u16.to_le_bytes()); // SHORT
+    t.extend_from_slice(&1u32.to_le_bytes()); // count
+    t.extend_from_slice(&orientation.to_le_bytes());
+    t.extend_from_slice(&[0, 0]);
+    t.extend_from_slice(&0u32.to_le_bytes()); // no next IFD
+    Some(t)
+}
+
 /// Return a copy of `tiff` with the Orientation tag forced to 1 (call after
 /// baking orientation into the pixels — single source of truth). No Orientation
 /// tag → returned unchanged (absence means upright). Bounds-safe; never panics.

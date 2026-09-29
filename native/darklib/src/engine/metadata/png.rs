@@ -3,9 +3,11 @@
 //! Drop text / timestamp / EXIF ancillary chunks (`tEXt`/`zTXt`/`iTXt`/`eXIf`/
 //! `tIME`); keep IHDR/PLTE/IDAT/IEND and the colour chunks (gAMA/cHRM/sRGB).
 //! `iCCP` (ICC) is kept unless the policy strips colour. IDAT is copied
-//! byte-for-byte. On malformation returns the input untouched.
+//! byte-for-byte. `eXIf` is replaced by a minimal one holding only a
+//! non-upright Orientation (IMG-07). On malformation returns the input
+//! untouched.
 
-use super::{IccPolicy, StripPolicy};
+use super::{exif, inject::png_chunk, IccPolicy, StripPolicy};
 use crate::engine::error::Result;
 
 const SIG: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
@@ -19,6 +21,8 @@ fn strip_bytes(b: &[u8], policy: StripPolicy) -> Vec<u8> {
         return b.to_vec();
     }
     let strip_icc = policy.icc == IccPolicy::Strip;
+    // Written in place of the eXIf chunk; OrientationPolicy::Keep.
+    let mut orientation = exif::orientation_only(super::extract(b).orientation);
 
     let mut out: Vec<u8> = Vec::with_capacity(b.len());
     out.extend_from_slice(&b[..8]);
@@ -39,6 +43,11 @@ fn strip_bytes(b: &[u8], policy: StripPolicy) -> Vec<u8> {
             || kind == b"eXIf"
             || kind == b"tIME"
             || (kind == b"iCCP" && strip_icc);
+        if kind == b"eXIf" {
+            if let Some(tiff) = orientation.take() {
+                png_chunk(&mut out, b"eXIf", &tiff);
+            }
+        }
         if !drop {
             out.extend_from_slice(&b[i..chunk_end]);
         }

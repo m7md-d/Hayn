@@ -80,18 +80,12 @@ class StripMetadataTask extends MediaTask {
       if (dl != null) {
         bytes = dl;
         ext = _extFor(fmt);
-      } else {
-        final dart = MetadataStripper.strip(src);
-        if (dart != null) {
-          bytes = dart.bytes;
-          ext = dart.ext;
-        } else if (fmt == SniffedFormat.heic || fmt == SniffedFormat.avif) {
-          final native = await NativeImageStripper.strip(src);
-          if (_cancelled) return;
-          if (native != null) {
-            bytes = native;
-            ext = fmt == SniffedFormat.avif ? 'avif' : 'heic';
-          }
+      } else if (fmt == SniffedFormat.heic || fmt == SniffedFormat.avif) {
+        final native = await NativeImageStripper.strip(src);
+        if (_cancelled) return;
+        if (native != null) {
+          bytes = native;
+          ext = fmt == SniffedFormat.avif ? 'avif' : 'heic';
         }
       }
       if (bytes.isEmpty) {

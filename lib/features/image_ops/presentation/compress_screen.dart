@@ -20,6 +20,7 @@ import '../../settings/providers/preferences_providers.dart';
 import '../data/compress_estimate_controller.dart';
 import '../data/image_compress_task.dart';
 import '../data/image_encoder.dart';
+import '../data/image_probe.dart';
 import '../data/native_image_info.dart';
 import '../data/source_facts.dart';
 import '../domain/image_format_policy.dart';
@@ -349,6 +350,9 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
       sourceAlpha: facts.alpha == true,
       sourceDirectHdr: facts.directHdr == true,
       sourceGainMap: facts.gainMap == true,
+      sourceIsAvif:
+          _originBytes != null &&
+          ImageProbe.sniff(_originBytes!) == SniffedFormat.avif,
       keepMetadata: _keepMetadata,
       platformCopiesGainMap: Platform.isIOS,
     );

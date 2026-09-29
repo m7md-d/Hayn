@@ -43,11 +43,11 @@
 - **الحالة (2026-09-28):** وفق سياسة المستخدم، الهدف نسخة SDR صحيحة لا حفظ PQ/HLG. يُفحص المصدر الأصلي قبل أي محرك. يُطلب tone mapping من ImageIO (`kCGImageSourceDecodeToSDR`، iOS 17+)، ثم يُتحقق من الناتج؛ إن بقي PQ/HLG أو لم يتوفر الطلب يُرفض قبل أي backend، بما فيه عتاد Android (`hdrToneMapUnavailable`). رفض Rust للأصل باقٍ ويعبر FFI. **على محاكي iOS 26.3 يتجاهل ImageIO الطلب ويعيد 10-bit PQ** (ويطبقه macOS 15)، فلم يُثبت مسار التحويل على iOS بعد، والمحاكي يرفض PQ مبكرًا. لم يُختبر على هاتف، ولا iOS 15/16، ولا HLG بعينة حقيقية.
 - **المواضع:** `Decoded`/`transcode` في [codec/mod.rs](../native/darklib/src/engine/codec/mod.rs)، تحويل العينات في [avif_dav1d.rs](../native/darklib/src/engine/codec/avif_dav1d.rs)، [color.rs](../native/darklib/src/engine/color.rs).
 - **السبب والأثر:** وسيط RGBA8 يخفض الدقة ولا يحمل transfer/range؛ `seine_hdr_rec2020.avif` بدأ Rec.2020/PQ `(9,16)` وخرج بتفسير sRGB عند ImageIO. رفع عمق ملف الناتج لا يستعيد المعلومات.
-- **معيار الإغلاق:** نسخة SDR مطابقة لـtone mapping النظام أو رفض قبل أي محرك، على corpus مستقل PQ وHLG وICC بما يشمل غياب nclx أو تعقيد graph، وعلى هاتف iOS 17+ وiOS أقدم وAndroid. الفحص يقرأ nclx للعنصر الأساسي وcICP في PNG؛ PQ موصوف بـICC وحده لا يُكشف بعد.
+- **معيار الإغلاق:** نسخة SDR مطابقة لـtone mapping النظام أو رفض قبل أي محرك، على corpus مستقل PQ وHLG وICC بما يشمل غياب nclx أو تعقيد graph، وعلى المحاكي وAndroid. اختبار الآيفون الفعلي وiOS 15/16 مرفوض بقرار المستخدم (2026-09-29)؛ تحويل PQ على الهاتف يبقى قيدًا غير مثبت. الفحص يقرأ nclx للعنصر الأساسي وcICP في PNG؛ PQ موصوف بـICC وحده لا يُكشف بعد.
 
 ### IMG-04 · P1 · فشل gain map قد يمر كتحويل SDR ناجح
 
-- **الحالة (2026-09-28):** لم يعد إسقاط الخريطة رفضًا، بقرار المستخدم. `transcode` يعيد `HdrOutcome`، وكل مصدر gain map يُرمَّز أساسه SDR (`GainMapDropped`)، بما فيه AVIF→AVIF. مسار الحفظ السابق أوقف لأن ImageIO، وهو قارئ مستقل، لم يرَ الخريطة المعاد بناؤها (IMG-10). Dart يسجل `hdrToSdr` ولا يحذّر المستخدم. `GainMapKept`/`GainMapKeepFailed` محجوزان لعودة الحفظ بعد إصلاح الكاتب.
+- **الحالة (2026-09-29):** لم يعد إسقاط الخريطة رفضًا، بقرار المستخدم. `transcode` يعيد `HdrOutcome`: AVIF→AVIF بالحجم الكامل بلا دوران يحفظ الخريطة (`GainMapKept`، مثبت بـImageIO في IMG-10)، وغيره يُرمَّز أساسه SDR (`GainMapDropped`)، وفشل الحفظ يعطي الأساس مع `GainMapKeepFailed`. Dart يسجل `hdrToSdr`/`hdrKeepFailed` ولا يحذّر المستخدم.
 - **المواضع:** `transcode` في [codec/mod.rs](../native/darklib/src/engine/codec/mod.rs)، `read_tmap`/`has_gainmap` في [isobmff.rs](../native/darklib/src/engine/metadata/isobmff.rs)، [_call](../lib/core/darklib/darklib.dart)، [_tryEncode](../lib/features/image_ops/data/image_encoder.dart).
 - **السبب والأثر:** `None` تعني غياب خريطة أو فشل معالجتها معًا، وبعدها ينفذ SDR. تغيير الهدف/التصغير يتجاوز مسار الخريطة. EXIF rotation كان يغير الأساس وحده، وirot/imir يسقطان إلى SDR. `keepMetadata=false` لا يعد إذنًا لحذف جزء HDR من الصورة.
 - **معيار الإغلاق:** الفصل بين الغياب والإسقاط المقصود وفشل الحفظ، مختبر: graph ناقص، transform، resize، هدف مختلف، ونجاح المسار الأساسي (`native/darklib/tests/preservation.rs`، `test/hdr_plan_test.dart`). يبقى: أساس HDR غير موصوف بـnclx في صورة gain map لا يُكشف، فيُرمَّز كأنه SDR.
@@ -70,8 +70,10 @@
 
 ### IMG-07 · P1 · التنظيف يحذف اتجاه العرض
 
-- **الحالة:** مثبت على main وbedrock؛ غير مصلح.
-- **المواضع:** [metadata/jpeg.rs](../native/darklib/src/engine/metadata/jpeg.rs)، `OrientationPolicy::Keep` في [metadata/mod.rs](../native/darklib/src/engine/metadata/mod.rs)، [metadata.dart](../lib/features/image_ops/data/metadata.dart).
+- **الحالة (2026-09-29):** أُصلح ومختبر محليًا وبقارئ مستقل لـJPEG وPNG وWebP. حذف EXIF يترك مكانه EXIF مصغرًا فيه Orientation وحده (`exif::orientation_only`) حين يكون الاتجاه غير 1، وفي WebP يبقى علم EXIF في VP8X. أزيل منظف Dart الاحتياطي (`MetadataStripper.strip*`) لأنه نسخة ثانية من السلوك نفسه بالخلل نفسه؛ بقي `canStrip` للواجهة، وفشل DarkLib يُعدّ الآن «غير مدعوم» بدل حفظ صورة مقلوبة.
+- **الدليل:** الأحمر `img07-red-20260929.log`: فشلت الصيغ الثلاث من الاتجاه 2. الأخضر: `native/darklib/tests/strip_orientation.rs` يقارن الصورة المعروضة (بعد تطبيق الاتجاه) قبل التنظيف وبعده للاتجاهات 1–8 على صورة 6×4 غير متناظرة، ويتحقق من زوال GPS. القارئ المستقل `test_native/inspect_strip_orientation.swift` (ImageIO على الماك) قرأ الاتجاه والأبعاد المعروضة وغياب GPS في 24 ملفًا (`img07-independent-20260929.log`).
+- **المتبقي:** AVIF/HEIC يعتمدان `irot`/`imir` التي لا يمسها التنظيف، لكن لا اختبار بعينة فيها هذه الخصائص. منظف iOS الأصلي الاحتياطي لـHEIC/AVIF غير مختبر للاتجاه. عرض المعرض على Android في T-13 (docs/17).
+- **المواضع:** [metadata/jpeg.rs](../native/darklib/src/engine/metadata/jpeg.rs)، [png.rs](../native/darklib/src/engine/metadata/png.rs)، [webp.rs](../native/darklib/src/engine/metadata/webp.rs)، `orientation_only` في [exif.rs](../native/darklib/src/engine/metadata/exif.rs)، [strip_metadata_task.dart](../lib/features/image_ops/data/strip_metadata_task.dart).
 - **السبب والأثر:** حذف APP1/EXIF كاملًا دون حفظ orientation أو baking؛ JPEG بأبعاد تخزين 40×24 واتجاه 6 عُرض بعد التنظيف 40×24 بدل 24×40، خلاف السياسة المعلنة.
 - **معيار الإغلاق:** اتجاهات 1–8 وصورة غير مربعة؛ EXIF مصغر آمن أو تحويل بكسلات معلن، مع حذف البيانات الخاصة فعلًا. وسّع الاختبار لبقية الحاويات بدل افتراض اشتراكها في السلوك الصحيح.
 
@@ -84,16 +86,17 @@
 
 ### IMG-09 · P2 · pixi لا يطابق عمق AV1 الفعلي
 
-- **الحالة:** مثبت للشبكة وللـwriter الخاص بـHDR. دليل 2026-09-28: ناتج `build_hdr_avif` من عينة libavif كان `av1C` فيه يعلن high_bitdepth (10 بت) بينما `pixi` = 8؛ الأصل من libavif متسق.
+- **الحالة (2026-09-29):** أُصلح للكاتبين. `pixi_for_av1c` يشتق عدد القنوات والعمق من علمي `high_bitdepth`/`twelve_bit` و`monochrome` في `av1C` لكل عنصر (الأساس والخريطة والشبكة). اختبار `pixi_matches_av1c_in_hdr_and_grid_writers`، وImageIO يقرأ الناتج. دليل 2026-09-28 قبل الإصلاح: `av1C` يعلن 10 بت و`pixi` = 8. المتبقي: شبكة حقيقية فوق 16 ميغابكسل بقارئ مستقل (تحتاج موارد وزمنًا، لا جهازًا).
 - **المواضع:** `build_grid_avif` و`build_hdr_avif` في [isobmff.rs](../native/darklib/src/engine/metadata/isobmff.rs)، `encode_avif_single`/`encode_avif_grid` في [codec/mod.rs](../native/darklib/src/engine/codec/mod.rs).
 - **السبب والأثر:** pixi يعلن 8 بت بينما ravif قد يشحن AV1/av1C بعمق 10. قبول decoder الداخلي أو ImageIO للملف لا يزيل تناقض الحاوية.
 - **معيار الإغلاق:** اشتقاق العمق من الإعداد/الحمولة الفعلية، تطابق av1C وpixi والتيار لكل عنصر، وقارئ مستقل. يشمل المسار الصور فوق 16×1024×1024 بكسل؛ لا يقتصر على 200MP.
 
 ### IMG-10 · P1 · صلاحية gain map بعد تغيير الأساس لم تثبت
 
-- **الحالة:** مثبت أن الكاتب الحالي لا ينتج خريطة يقرؤها قارئ مستقل؛ مسار الحفظ موقوف منذ 2026-09-28 والناتج أساس SDR.
+- **الحالة (2026-09-29):** أُصلح لـISO gain map في AVIF→AVIF ومثبت بقارئ مستقل. الكاتب يضيف علامة `tmap`، ويحمل خصائص عنصر `tmap` من الأصل (`pixi`/`colr` للبديل HDR)، ويشتق `pixi` من `av1C`، ويعطي مجموعة `altr` معرّفًا لا يتصادم مع معرفات العناصر. السبب الجذري لتجاهل ImageIO كان المعرّف: `group_id` = 1 هو معرّف الأساس نفسه، والمعرّفات مشتركة في ISOBMFF. أعيد تفعيل الحفظ في `transcode`.
+- **دليل 2026-09-29:** ImageIO على الماك يرى ISO gain map في ناتجنا بـHeadroom 2.462 كالأصل وصورة واحدة. `test_native/compare_hdr_rendition.swift` يفك الأصل والناتج بـ`kCGImageSourceDecodeToHDR` في Display P3 خطي: القمة 2.435 مقابل 2.422 (HDR مطبق)، ومتوسط الفرق 1.98% مع البيانات و1.94% بدونها، وهو فرق إعادة الترميز lossy عند جودة 80. السجل `img10-independent-20260929.log`. المتبقي: Apple gain map القديم في HEIC خارج Rust (ImageIO)، وgain map بأساس HDR، وعينات أكثر (T-12).
 - **دليل 2026-09-28:** حوّلنا عينة `seine_sdr_gainmap_srgb.avif` إلى AVIF بمسار الحفظ. ImageIO على الماك (macOS 15) ومحاكي iOS 26.3 يرى في الأصل ISO gain map (Headroom 2.46)، ولا يرى أي خريطة في ناتجنا (Headroom 1)، ويعدّ فيه صورتين. مقارنة الصناديق: ناتجنا بلا علامة `tmap` في `ftyp`، وعنصر `tmap` فيه `ispe` وحده بلا `pixi` و`colr`، والخريطة بلا `pixi`، و`pixi` لا يطابق `av1C` (IMG-09). الملفات في `build/ios-preservation/20260928-194848/`. قراءة `read_tmap` في Rust للناتج لم تكن إلا تحققًا ذاتيًا.
-- **المواضع:** `read_tmap`/`build_hdr_avif` في [isobmff.rs](../native/darklib/src/engine/metadata/isobmff.rs)، نقل auxiliary في [AppDelegate.swift](../ios/Runner/AppDelegate.swift).
+- **المواضع:** `read_tmap`/`build_hdr_avif`/`pixi_for_av1c` في [isobmff.rs](../native/darklib/src/engine/metadata/isobmff.rs)، `transcode_hdr_avif` في [codec/mod.rs](../native/darklib/src/engine/codec/mod.rs)، نقل auxiliary في [AppDelegate.swift](../ios/Runner/AppDelegate.swift).
 - **السبب:** إعادة ترميز/تغيير اللون أو الهندسة للأساس ثم نقل الخريطة ومعاملاتها لا يثبت أنهما متوافقان. اختبار Rust القديم يحمل نصًا اصطناعيًا كمعاملات tmap؛ يفحص نقل بايتات وليس دلالة الإضاءة. قراءة graph وprimary والبدائل وترتيب dimg تحتاج تحققًا أدق؛ لا يكفي إيجاد أول tmap.
 - **معيار الإغلاق:** Apple gain map وISO gain map منفصلان؛ ImageIO يرى الخريطة وheadroom الصحيح في ناتجنا؛ مقارنة إعادة البناء في فضاء خطي وعند headroom معلوم؛ الحالات غير المثبتة تعطي الأساس SDR. عندها يعاد تفعيل الحفظ في `transcode`. لا تحذف grid: هي تركيب مكاني وليست gain map.
 

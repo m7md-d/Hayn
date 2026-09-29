@@ -58,10 +58,10 @@ func hdrFacts(_ name: String) -> (transfer: Bool, gainMap: Bool)? {
 if let gm = hdrFacts("gainmap-to-webp.webp") {
   precondition(!gm.transfer && !gm.gainMap, "WebP carries no gain map")
   let avif = hdrFacts("gainmap-to-avif.avif")!
-  precondition(!avif.transfer && !avif.gainMap, "AVIF is the SDR base (IMG-10)")
+  precondition(!avif.transfer && avif.gainMap, "AVIF keeps the gain map (IMG-10)")
   // Present only where the platform produced an SDR rendition of PQ.
   if let pq = hdrFacts("pq-to-webp.webp") {
     precondition(!pq.transfer && !pq.gainMap, "PQ output must be SDR")
   }
-  print("Independent ImageIO: HDR policy outputs are SDR without a gain map")
+  print("Independent ImageIO: WebP/PQ outputs are SDR; AVIF keeps its gain map")
 }

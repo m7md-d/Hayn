@@ -103,11 +103,13 @@ void main() {
       bool gainMap = false,
       bool keepMetadata = true,
       bool ios = true,
+      bool avifSource = false,
     }) => ImageFormatPolicy.losses(
       format: f,
       sourceAlpha: alpha,
       sourceDirectHdr: pq,
       sourceGainMap: gainMap,
+      sourceIsAvif: avifSource,
       keepMetadata: keepMetadata,
       platformCopiesGainMap: ios,
     );
@@ -137,6 +139,11 @@ void main() {
       expect(losses(DefaultFormat.jpeg, gainMap: true).hdr, isFalse);
       expect(losses(DefaultFormat.webp, gainMap: true).hdr, isTrue);
       expect(losses(DefaultFormat.avif, gainMap: true).hdr, isTrue);
+      expect(
+        losses(DefaultFormat.avif, gainMap: true, avifSource: true).hdr,
+        isFalse,
+        reason: 'DarkLib keeps an AVIF gain map (IMG-10)',
+      );
       expect(
         losses(DefaultFormat.heic, gainMap: true, keepMetadata: false).hdr,
         isTrue,

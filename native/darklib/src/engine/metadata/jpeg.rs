@@ -5,10 +5,12 @@
 //! Ultra-HDR gain map) is kept unless the policy strips colour. APP1 XMP is
 //! surgically filtered (not dropped): the gain-map metadata survives while
 //! privacy properties are removed, so HDR isn't silently lost. The entropy-coded
-//! scan is copied byte-for-byte, so the pixels are identical. On ANY malformation
-//! we return the input untouched — never risk corrupting the image.
+//! scan is copied byte-for-byte, so the pixels are identical. EXIF is replaced
+//! by a minimal block holding only a non-upright Orientation, so the image
+//! still displays upright (IMG-07). On ANY malformation we return the input
+//! untouched — never risk corrupting the image.
 
-use super::{xmp, IccPolicy, StripPolicy};
+use super::{exif, xmp, IccPolicy, StripPolicy};
 use crate::engine::error::Result;
 
 const XMP_SIG: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
@@ -22,6 +24,8 @@ fn strip_bytes(b: &[u8], policy: StripPolicy) -> Vec<u8> {
         return b.to_vec();
     }
     let strip_icc = policy.icc == IccPolicy::Strip;
+    // Written in place of the first EXIF segment; OrientationPolicy::Keep.
+    let mut orientation = exif::orientation_only(super::extract(b).orientation);
 
     let mut out: Vec<u8> = Vec::with_capacity(b.len());
     out.extend_from_slice(&[0xFF, 0xD8]);
@@ -70,6 +74,13 @@ fn strip_bytes(b: &[u8], policy: StripPolicy) -> Vec<u8> {
                     } // too big for one APP1 → drop (gain-map XMP is small in practice)
                 }
                 // else: no gain map → drop the XMP entirely (privacy).
+            } else if payload.starts_with(b"Exif\0\0") {
+                if let Some(tiff) = orientation.take() {
+                    out.extend_from_slice(&[0xFF, 0xE1]);
+                    out.extend_from_slice(&((tiff.len() + 8) as u16).to_be_bytes());
+                    out.extend_from_slice(b"Exif\0\0");
+                    out.extend_from_slice(&tiff);
+                }
             }
             // EXIF (or any other APP1) → drop.
             i = seg_end;

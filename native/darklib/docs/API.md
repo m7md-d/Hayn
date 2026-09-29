@@ -171,11 +171,11 @@ not software-decoded** → `Err` (use a hardware/platform decoder). `max_edge`
 downscales for **previews only** — `None` keeps full resolution; never downscale a
 saved output. `transcode` = `decode → optional downscale → encode`; with
 `keep_metadata` it carries EXIF/XMP/ICC. HDR policy (Hayn, 2026-09-28): a
-gain-map source is encoded as its SDR base → `GainMapDropped`, AVIF→AVIF
-included. `GainMapKept`/`GainMapKeepFailed` are reserved: the gain map rebuilt by
-`isobmff::build_hdr_avif` is not recognised by ImageIO (no `tmap` brand, no
-`pixi`/`colr` on the `tmap` item, pixi ≠ av1C depth), so keeping stays off
-until it is fixed and independently verified (Hayn IMG-09/IMG-10). A PQ/HLG
+full-resolution AVIF→AVIF convert without `irot`/`imir`/EXIF rotation keeps the
+ISO 21496-1 gain map (tmap metadata and its alternate `pixi`/`colr` verbatim,
+gain-map image re-encoded; with or without metadata) → `GainMapKept`, verified
+by ImageIO in Hayn (IMG-10). Any other target, a resize or a rotation encodes
+the SDR base → `GainMapDropped`; a failed keep → `GainMapKeepFailed`. A PQ/HLG
 primary is refused with `preservation_required:hdr_transfer_unsupported`: RGBA8
 has no tone mapper, and relabelled PQ samples would be a wrong image.
 
@@ -260,10 +260,11 @@ fn inspect_image(bytes) -> Facts   // async; see engine::inspect above
   Orientation (`irot`/`imir`), transparency (the alpha auxiliary item) and
   **ImageGrid (tiled) images** are all handled — grid tiles decode one at a time,
   so peak memory ≈ canvas + one tile.
-- **HDR carry through a re-encode**: none yet. Every gain-map source produces
-  its SDR base and reports it in `HdrOutcome`; `build_hdr_avif` needs the fixes
-  above before keeping returns. A gain map whose base is HDR but not signalled
-  by nclx is not detected.
+- **HDR carry through a re-encode**: AVIF→AVIF at full resolution only (see
+  above). The writer adds the `tmap` brand, derives each `pixi` from its
+  `av1C`, and gives the `altr` group an id outside the item ids. Other targets
+  and Apple's HEIC flavour produce the SDR base. A gain map whose base is HDR
+  but not signalled by nclx is not detected.
 - **Very large images**: AVIF tiles in BOTH directions — grid decode, and grid
   *encode* (opaque images above 16 MP encode tile-by-tile as an ImageGrid at full
   resolution; transparency or other targets use the single-pass path). JPEG/PNG/

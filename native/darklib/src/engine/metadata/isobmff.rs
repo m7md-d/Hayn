@@ -306,6 +306,27 @@ pub fn av1c_raw(b: &[u8]) -> Option<Vec<u8>> {
         .and_then(|p| b.get(p.start..p.end).map(<[u8]>::to_vec))
 }
 
+/// `pixi` body (channel count + bits per channel) matching a raw `av1C` box: the
+/// encoder chooses the AV1 depth (ravif may pick 10-bit for 8-bit input), so a
+/// fixed 8 contradicts the stream (IMG-09). `None` for a malformed box.
+pub fn pixi_for_av1c(av1c_box: &[u8]) -> Option<Vec<u8>> {
+    // Box header (8) then: marker|version, profile|level, then the flags byte:
+    // tier(7) high_bitdepth(6) twelve_bit(5) monochrome(4) subsampling(3..0).
+    if av1c_box.get(4..8)? != b"av1C" {
+        return None;
+    }
+    let flags = *av1c_box.get(8 + 2)?;
+    let depth = match (flags & 0x40 != 0, flags & 0x20 != 0) {
+        (false, _) => 8,
+        (true, false) => 10,
+        (true, true) => 12,
+    };
+    let channels = if flags & 0x10 != 0 { 1 } else { 3 };
+    let mut body = vec![depth; channels as usize + 1];
+    body[0] = channels;
+    Some(body)
+}
+
 /// Geometry of a grid AVIF to build: `rows`×`cols` tiles of `tile_w`×`tile_h`,
 /// displayed as a `width`×`height` canvas (right/bottom tiles cropped).
 pub struct GridSpec {
@@ -385,7 +406,7 @@ pub fn build_grid_avif(spec: &GridSpec, av1c_box: &[u8], tiles: &[Vec<u8>]) -> O
         body.extend_from_slice(&h.to_be_bytes());
         fullbox(b"ispe", 0, [0, 0, 0], &body)
     };
-    let pixi = fullbox(b"pixi", 0, [0, 0, 0], &[3, 8, 8, 8]); // 3 channels × 8-bit
+    let pixi = fullbox(b"pixi", 0, [0, 0, 0], &pixi_for_av1c(av1c_box)?);
     let ipco = wrap_box(
         b"ipco",
         &[
@@ -469,6 +490,28 @@ pub struct TmapInfo {
     pub payload: Vec<u8>,
     /// The gain-map image item (`av01`) to decode/re-encode.
     pub gainmap_id: u32,
+    /// The `tmap` item's own properties except `ispe` (e.g. `pixi`, `colr`,
+    /// `clli` of the HDR alternate), raw boxes to carry verbatim.
+    pub alt_props: Vec<Vec<u8>>,
+}
+
+/// Raw property boxes associated with item `id` via `ipma`, in order.
+fn item_properties(b: &[u8], id: u32) -> Option<Vec<Vec<u8>>> {
+    let mc = meta_children(b)?;
+    let iprp = *mc.iter().find(|x| x.typ == *b"iprp")?;
+    let ipc = boxes_in(b, iprp.body, iprp.end)?;
+    let ipco = *ipc.iter().find(|x| x.typ == *b"ipco")?;
+    let ipma = *ipc.iter().find(|x| x.typ == *b"ipma")?;
+    let props = boxes_in(b, ipco.body, ipco.end)?;
+    let idxs = parse_ipma(b, ipma)?
+        .into_iter()
+        .find(|(item, _)| *item == id)
+        .map(|(_, i)| i)
+        .unwrap_or_default();
+    idxs.iter()
+        .filter_map(|&i| (i as usize).checked_sub(1).and_then(|k| props.get(k)))
+        .map(|p| b.get(p.start..p.end).map(<[u8]>::to_vec))
+        .collect()
 }
 
 /// Read the ISO 21496-1 `tmap` structure, if present: a `tmap` item whose `dimg`
@@ -488,6 +531,10 @@ pub fn read_tmap(b: &[u8]) -> Option<TmapInfo> {
     Some(TmapInfo {
         payload: read_item_by_id(b, tmap_id)?,
         gainmap_id,
+        alt_props: item_properties(b, tmap_id)?
+            .into_iter()
+            .filter(|p| p.get(4..8) != Some(b"ispe"))
+            .collect(),
     })
 }
 
@@ -510,6 +557,7 @@ pub fn build_hdr_avif(
     base: &CodedItem,
     gainmap: &CodedItem,
     tmap_payload: &[u8],
+    tmap_props: &[Vec<u8>],
     meta: &super::Canonical,
 ) -> Option<Vec<u8>> {
     let fullbox = |typ: &[u8; 4], body: &[u8]| -> Vec<u8> {
@@ -585,49 +633,60 @@ pub fn build_hdr_avif(
     // grpl/altr: the tmap is the preferred alternative to the base, so HDR-aware
     // readers render it and SDR readers keep the base.
     let grpl = {
-        let mut altr = 1u32.to_be_bytes().to_vec(); // group_id
+        // Entity group ids share the item id space: take the next free one.
+        let mut altr = next_id.to_be_bytes().to_vec(); // group_id
         altr.extend_from_slice(&2u32.to_be_bytes()); // two entities
         altr.extend_from_slice(&3u32.to_be_bytes()); // tmap first (preferred)
         altr.extend_from_slice(&1u32.to_be_bytes());
         wrap_box(b"grpl", &fullbox(b"altr", &altr))
     };
 
-    // iprp: [1 av1C base, 2 ispe base, 3 pixi, 4 av1C gm, 5 ispe gm, 6 colr?].
+    // iprp: [1 av1C base, 2 ispe base, 3 pixi base, 4 av1C gm, 5 ispe gm,
+    // 6 pixi gm, then the tmap's alternate properties, then colr ICC?]. Each
+    // pixi follows its own av1C (IMG-09).
     let ispe = |w: u32, h: u32| -> Vec<u8> {
         let mut body = w.to_be_bytes().to_vec();
         body.extend_from_slice(&h.to_be_bytes());
         fullbox(b"ispe", &body)
     };
-    let pixi = fullbox(b"pixi", &[3, 8, 8, 8]);
     let mut ipco_body = [
         base.av1c_box.clone(),
         ispe(base.width, base.height),
-        pixi,
+        fullbox(b"pixi", &pixi_for_av1c(&base.av1c_box)?),
         gainmap.av1c_box.clone(),
         ispe(gainmap.width, gainmap.height),
+        fullbox(b"pixi", &pixi_for_av1c(&gainmap.av1c_box)?),
     ]
     .concat();
-    let has_icc = if let Some(icc) = &meta.icc {
+    let mut tmap_idx = vec![2u8]; // canvas-sized ispe, shared with the base
+    for (k, prop) in tmap_props.iter().enumerate() {
+        ipco_body.extend_from_slice(prop);
+        tmap_idx.push(u8::try_from(7 + k).ok().filter(|i| *i < 0x80)?);
+    }
+    let icc_idx = if let Some(icc) = &meta.icc {
         let mut colr = b"prof".to_vec();
         colr.extend_from_slice(icc);
         ipco_body.extend_from_slice(&wrap_box(b"colr", &colr));
-        true
+        Some(
+            u8::try_from(7 + tmap_props.len())
+                .ok()
+                .filter(|i| *i < 0x80)?,
+        )
     } else {
-        false
+        None
     };
     let ipco = wrap_box(b"ipco", &ipco_body);
     let mut ipma_body = 3u32.to_be_bytes().to_vec(); // base, gm, tmap entries
     ipma_body.extend_from_slice(&1u16.to_be_bytes()); // base
     let mut base_props = vec![0x80 | 1, 2, 3];
-    if has_icc {
-        base_props.push(6);
-    }
+    base_props.extend(icc_idx);
     ipma_body.push(base_props.len() as u8);
     ipma_body.extend_from_slice(&base_props);
     ipma_body.extend_from_slice(&2u16.to_be_bytes()); // gain map
-    ipma_body.extend_from_slice(&[2, 0x80 | 4, 5]);
+    ipma_body.extend_from_slice(&[3, 0x80 | 4, 5, 6]);
     ipma_body.extend_from_slice(&3u16.to_be_bytes()); // tmap (canvas-sized)
-    ipma_body.extend_from_slice(&[1, 2]);
+    ipma_body.push(tmap_idx.len() as u8);
+    ipma_body.extend_from_slice(&tmap_idx);
     let ipma = fullbox(b"ipma", &ipma_body);
     let iprp = wrap_box(b"iprp", &[ipco, ipma].concat());
 
@@ -658,7 +717,8 @@ pub fn build_hdr_avif(
 
     let mut ftyp = b"avif".to_vec();
     ftyp.extend_from_slice(&0u32.to_be_bytes());
-    ftyp.extend_from_slice(b"avifmif1miaf");
+    // `tmap` brand: readers only apply the gain map when it is declared.
+    ftyp.extend_from_slice(b"avifmif1miaftmap");
     let ftyp = wrap_box(b"ftyp", &ftyp);
 
     let meta_len = build_meta(&build_iloc(&vec![0; n])).len();

@@ -71,27 +71,33 @@ abstract final class ImageFormatPolicy {
 
   /// Losses of saving a source with these facts as [format] (resolved). Only
   /// what the source actually has can be lost, so an opaque SDR photo never
-  /// gets a note. HDR survives only where ImageIO copies a gain map next to
-  /// its base (HEIC/JPEG with metadata, iOS); every other path saves the SDR
-  /// image, and no Rust path keeps HDR yet (IMG-10). A flattened JPEG is
-  /// re-encoded from SDR pixels, so it drops a gain map too.
+  /// gets a note. A gain map survives AVIF→AVIF in DarkLib (verified by
+  /// ImageIO, IMG-10) and HEIC/JPEG through ImageIO with metadata (iOS);
+  /// PQ/HLG always becomes SDR. A flattened JPEG is re-encoded from SDR pixels.
+  /// Resize caps and rotated sources can still drop a map; not reflected here.
   static FormatLosses losses({
     required DefaultFormat format,
     required bool sourceAlpha,
     required bool sourceDirectHdr,
     required bool sourceGainMap,
+    required bool sourceIsAvif,
     required bool keepMetadata,
     required bool platformCopiesGainMap,
   }) {
     final alpha = sourceAlpha && !keepsAlpha(format);
-    final hdrKept =
+    final gainMapKept =
         sourceGainMap &&
         !sourceDirectHdr &&
         !alpha &&
-        keepMetadata &&
-        platformCopiesGainMap &&
-        (format == DefaultFormat.heic || format == DefaultFormat.jpeg);
-    return (alpha: alpha, hdr: (sourceDirectHdr || sourceGainMap) && !hdrKept);
+        ((format == DefaultFormat.avif && sourceIsAvif) ||
+            (keepMetadata &&
+                platformCopiesGainMap &&
+                (format == DefaultFormat.heic ||
+                    format == DefaultFormat.jpeg)));
+    return (
+      alpha: alpha,
+      hdr: (sourceDirectHdr || sourceGainMap) && !gainMapKept,
+    );
   }
 
   /// Whether a format can carry an alpha channel. JPEG is the only common

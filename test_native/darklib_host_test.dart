@@ -110,7 +110,7 @@ void main() {
       );
       expect(img.decodeWebP(webp.bytes), isNotNull);
 
-      // No verified keeping path yet (IMG-10): AVIF also gets the SDR base.
+      // AVIF→AVIF keeps the map (ImageIO-verified, IMG-10).
       final avif = await ImageEncoder.encode(
         source: bytes,
         target: DefaultFormat.avif,
@@ -118,12 +118,20 @@ void main() {
         facts: facts,
         keepMetadata: false,
       );
-      expect(avif.hdr, HdrOutcome.gainMapDropped);
+      expect(avif.hdr, HdrOutcome.gainMapKept);
       expect(
         avif.diagnostics.map((d) => d.code),
-        contains(MediaDiagnosticCode.hdrToSdr),
+        isNot(
+          anyOf(
+            contains(MediaDiagnosticCode.hdrToSdr),
+            contains(MediaDiagnosticCode.hdrKeepFailed),
+          ),
+        ),
       );
-      expect((await DarkLibCore.inspect(avif.bytes))!.gainMap, Presence.absent);
+      expect(
+        (await DarkLibCore.inspect(avif.bytes))!.gainMap,
+        Presence.present,
+      );
     },
     // AV1 encodes in the unoptimised debug library are slow.
     timeout: const Timeout(Duration(minutes: 3)),

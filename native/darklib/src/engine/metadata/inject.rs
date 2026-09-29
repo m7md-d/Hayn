@@ -117,7 +117,7 @@ fn build_iccp(icc: &[u8]) -> Vec<u8> {
     data
 }
 
-fn png_chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+pub(super) fn png_chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
     out.extend_from_slice(&(data.len() as u32).to_be_bytes());
     out.extend_from_slice(kind);
     out.extend_from_slice(data);
@@ -262,7 +262,7 @@ fn mux_webp(b: &[u8], meta: &Canonical) -> Option<Vec<u8>> {
 }
 
 /// Append a RIFF chunk: fourcc + LE u32 size + payload + a pad byte to even.
-fn riff_chunk(out: &mut Vec<u8>, fourcc: &[u8; 4], data: &[u8]) {
+pub(super) fn riff_chunk(out: &mut Vec<u8>, fourcc: &[u8; 4], data: &[u8]) {
     out.extend_from_slice(fourcc);
     out.extend_from_slice(&(data.len() as u32).to_le_bytes());
     out.extend_from_slice(data);
