@@ -121,6 +121,8 @@ fn webp_with(tiff: &[u8]) -> Vec<u8> {
 fn check(name: &str, build: fn(&[u8]) -> Vec<u8>) {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("strip-orientation");
     std::fs::create_dir_all(&dir).unwrap();
+    let sources = dir.with_file_name("strip-orientation-sources");
+    std::fs::create_dir_all(&sources).unwrap();
     for o in 1..=8u16 {
         let src = build(&tiff(o));
         assert_eq!(
@@ -146,6 +148,8 @@ fn check(name: &str, build: fn(&[u8]) -> Vec<u8>) {
         assert!(!gps, "{name} o{o} GPS removed");
         let ext = name;
         std::fs::write(dir.join(format!("{name}-o{o}.{ext}")), &out).unwrap();
+        // The source too, for the on-device gallery check (docs/17-TODO T-13).
+        std::fs::write(sources.join(format!("{name}-o{o}.{ext}")), &src).unwrap();
     }
 }
 

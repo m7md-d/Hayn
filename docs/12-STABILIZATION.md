@@ -217,3 +217,37 @@ DarkLib باقية بقرار المستخدم. هذه دفعة تصحيح جز�
 التحقق: Rust fmt وclippy بلا ملاحظات و**79 + 9 + 3**، منها `avif_to_avif_keeps_the_gainmap` و`altr_group_id_is_not_an_item_id` و`pixi_matches_av1c_in_hdr_and_grid_writers`. ImageIO على الماك يرى ISO gain map في الناتج بـHeadroom 2.462 كالأصل، و`test_native/compare_hdr_rendition.swift` يجد فرقًا 1.98% (1.94% دون البيانات) بين صورتي HDR، والقمة فوق 2.4 (`img10-independent-20260929.log`). **189 حالة Flutter** والتحليل بلا ملاحظات؛ **5 اختبارات جسر حقيقي** (`img10-host-native-20260929.log`).
 
 لم يكتمل: مجموعة المحاكي وبناء iOS release وAndroid debug لهذه الدفعة. انقطع القرص الخارجي أثناء البناء مرتين (19:16 و19:26) فتعطلت `cargo` و`rustc` و`adb` بـSIGBUS، وأُوقفت السلسلة. تُعاد خطوة خطوة (docs/13).
+
+**تحديث 2026-09-29 (مساءً):** بُني Android debug وprofile لـarm64 بنجاح بهذه الدفعة وشُغلت على هاتف (القسم التالي). مجموعة المحاكي وبناء iOS release ما زالا غير مشغلين.
+
+## أول تشغيل على هاتف Android — 2026-09-29
+
+الهاتف Galaxy S25 Edge (SM-S937B، Android 16، SDK 36، Snapdragon 8 Elite، arm64 فقط)، بإذن المستخدم. المجموعة الجديدة `integration_test/android_device_test.dart` تشغلها `tool/test_android_device.sh` (طريقة التشغيل في docs/13). الفك المستقل فيها هو مفكك Android نفسه عبر `ui.instantiateImageCodec` لـAVIF/HEIC، والمعرض فُحص بلقطات شاشة تقارن رقميًا.
+
+**النتيجة: 34 من 36.** نجح: دمج الشفافية في JPEG لـPNG وWebP وAVIF (T-08)؛ رفض PQ إلى AVIF وWebP قبل أي محرك؛ gain map إلى WebP يعطي الأساس SDR؛ تنظيف 24 ملفًا يعطي على arm64 بايتات المضيف نفسها والصورة المعروضة نفسها؛ ترميز PNG وJPEG وHEIC (`flutter_image_compress`، وHEIC بالمرمّز العتادي `c2.qti.heic.encoder`) وWebP (DarkLib) يُفك بألوانه؛ التطبيق يفتح المكتبة والإعدادات. فشل اثنان، والسبب واحد (IMG-13): فك Flutter لـAVIF بعمق 10 على Android خاطئ، والملفات نفسها صحيحة في معرض Samsung وImageIO.
+
+**المعرض:** T-13 نجح (لقطات قبل التنظيف وبعده متطابقة للاتجاهات 1–8 في الصيغ الثلاث، والمعرض يحترم الاتجاه في PNG وWebP). ملف AVIF المحفوظ بخريطة gain map يُعرض كالأصل (متوسط فرق 2.3). السجلات: `android-device-s25edge-profile-20260929-2301.log` و`android-gallery-s25edge-20260929.log` و`img13-flutter-avif-decode-probe-20260929.json`.
+
+**قيود الهاتف:** لا مرمّز AV1 عتادي، فـAVIF كله عبر DarkLib ولا يُغلق DEV-01 به. debug APK يبني DarkLib دون تحسين: تحويل gain map إلى WebP أخذ نحو 5 دقائق وتجاوز AVIF مهلة 12 دقيقة، فالمجموعة تعمل بـprofile. ما زال بناء debug يجمّع i686 (BUILD-03).
+
+**ما لم يُنفذ:** بناء release وقياس الحجم (T-10)، وHEIC شفاف أو بعمق 10 وJPEG Ultra HDR (لا عينات).
+
+## IMG-13: جسر فك Android — 2026-09-29
+
+بقرار المستخدم (بدل فك DarkLib الذي لا يغطي HEIC): `PlatformDecoder.kt` يرد على `bakeUpright` في قناة `hayn/metadata` على Android، وبقية طرق القناة تبقى `notImplemented` كما كانت. يفك بـImageDecoder إلى ARGB_8888 وsRGB والاتجاه مطبق، ويعيد PNG. لا بيانات وصفية، فـDart لا يسأله إلا دونها ويسجل `androidDecoder.bake.unavailable` غير ذلك. PQ/HLG مع طلب SDR يُرفض عند الرأس (لا tone mapper مثبت). `maxEdge` للمعاينات يقلل الفك بقوة 2.
+
+أثره خارج القص: الجسر صار متاحًا لمسارات `ImageEncoder` على Android حين لا تُطلب البيانات: ناتج PNG (المحرك `androidDecoder` بدل `flutter_image_compress`)، وجسر HEIC→AVIF/WebP، و`AlphaFlatten`. اختبار الهاتف يتحقق أن اتجاه الجسر يطابق Flutter في 24 ملفًا.
+
+التحقق: 193 Flutter (منها 4 في `platform_pixels_test.dart`)، التحليل بلا ملاحظات. على الهاتف 39 من 39 دون المعرض، و41 من 41 مع `HAYN_GALLERY=1` (قص فعلي لـAVIF بعمق 10 بخريطة وبدونها)، والمعرض يؤكد الألوان. عمق ناتج DarkLib يبقى 10 بت بقرار المستخدم. لم يُشغّل: محاكي iOS وبناء iOS release لهذا التغيير (Swift لم يتغير، والتغيير في Dart المشترك محمي بـ`onAndroid`).
+
+## عينات الـcorpus ونتائجها على الهاتف — 2026-09-30
+
+بطلب المستخدم جُمعت العينات الناقصة: 11 ملفًا من corpus libavif (رخصة libavif)، و4 من مرمّز Apple بـ`test_native/make_platform_fixtures.swift`. الوصف والبصمات في `native/darklib/tests/fixtures/README.md`. الخصائص فُحصت بـImageIO لا بالأسماء: ملفا `paris` ‏ICC فيهما sRGB لا P3، وP3 بـICC وحده في JPEG من Apple.
+
+على الهاتف (`android-device-s25edge-corpus-20260930-0011.log`): Ultra HDR إلى WebP وAVIF يعطي الأساس SDR مع `hdrToSdr` وصورة مطابقة؛ HLG HEIC يُرفض عند الرأس؛ قص HEIC بعمق 10 يحفظ ألوانه (مع `HAYN_GALLERY=1`). وفشل HEIC الشفاف إلى JPEG: Android يتجاهل ألفا في HEIC فيظهر اللون المخفي (IMG-15). الاختبار باقٍ أحمر حتى الإصلاح. أغلب عينات libavif لم تدخل اختبارات Rust بعد.
+
+## معماريات Android والحجم (BUILD-03/04) — 2026-09-30
+
+بقرار المستخدم أزيل x86_64: Android يشحن arm64-v8a وحدها. السبب الجذري لحجم APK: إضافة Flutter لـGradle تملأ `abiFilters` بكل المعماريات قبل كتلة التطبيق، و`add` كان يضيف إليها؛ فالحزمة حملت armeabi-v7a وx86_64 أيضًا رغم أن الإعداد لم يذكر الأولى. الإصلاح `clear()` ثم arm64 في `build.gradle.kts`، وcargokit يبني arm64 وحده.
+
+القياس: release ‏156.3MB ← 50.3MB (4:27 ← 1:26)، ومثبتًا على الهاتف 48MB لمجلد الشيفرة، والتشغيل الأول 210ms بلا انهيار. debug يبني DarkLib لـaarch64 وحده. قياس 98.88MiB في أعلى هذه الوثيقة تاريخي (قبل FFmpeg 3.6.2 وقبل هذا الإصلاح). بعد تشغيل `flutter drive` يلزم بناء release دون `--no-pub` ليُعاد توليد `GeneratedPluginRegistrant.java` بلا `integration_test`.

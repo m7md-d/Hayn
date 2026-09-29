@@ -89,6 +89,7 @@ verify(sourceFacts, plan, output) -> VerificationReport
 - PQ/HLG: نسخة SDR من ImageIO (iOS 17+) قبل أي محرك، يُتحقق منها فإن بقيت PQ رُفضت، وإلا رفض مبكر. محاكي iOS 26.3 يتجاهل الطلب فيرفض. عتاد AVIF على Android مشروط بمصدر معروف أنه ليس PQ/HLG.
 - لا تحذير للمستخدم؛ التشخيص `hdrToSdr` و`hdrKeepFailed` و`hdrToneMapUnavailable` و`hdrUnverified`.
 - 2026-09-29: JPEG لصورة شفافة يُدمج على الأبيض قبل أي محرك (`alphaFlattened`)، والواجهة تكتفي بنص خفيف على الصيغة حين تحمل الأصلية ما ستفقده.
+- 2026-09-29 (IMG-13): على Android صار لـ`bakeUpright` تنفيذ بـImageDecoder (`PlatformDecoder.kt`، المحرك `androidDecoder`): PNG بعمق 8 وsRGB والاتجاه مطبق، بلا بيانات وصفية، فيُسأل فقط حين لا تُطلب. لا tone mapper مثبت على Android، فطلب SDR لمصدر PQ/HLG يُرفض عند رأس الملف وتبقى سياسة الرفض كما هي. AVIF/HEIC على Android لا يُفكان بـFlutter في القص والمعاينة (`PlatformPixels`). عمق ناتج AVIF يبقى 10 بت بقرار المستخدم.
 
 نقل رمز الرفض النصي مرحلة انتقالية صغيرة حتى يعتمد API typed لحقائق المصدر والخطة ونتيجة الحفظ؛ عندها يستبدل الرمز وتُحدّث اختبارات الجسر معه، ولا يبقى مساران متوازيان. شرط إزالته وجود بديل typed يثبت الرفض على FFI الفعلية، لا مجرد تغيير أسماء Dart.
 

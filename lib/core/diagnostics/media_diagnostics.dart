@@ -8,6 +8,7 @@ enum MediaBackend {
   ffmpeg,
   imageIO,
   androidAvif,
+  androidDecoder,
   darklib,
   flutterAvif,
   imageCompress,

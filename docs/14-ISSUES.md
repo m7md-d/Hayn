@@ -1,6 +1,6 @@
 # 14 — سجل العيوب والمتابعة
 
-آخر تحديث: 2026-09-28. يشمل دفعة حماية التحويل (`910a281`) ودفعة المحاكي والمصغرات بعدها؛ نتائج الأخيرة وطريقة تشغيلها في [15-IOS-TESTING](15-IOS-TESTING.md). هذا السجل هو نقطة التسليم لمن يكمل العمل، ويفصل العيب المثبت عن المخاطرة وعن الميزة غير المنفذة. لا تنسخ ملفات من نسخ الفحص القديمة فوق المشروع. Git يديره المستخدم ولا يُسجَّل وضعه هنا؛ انظر التنبيه في [16-HANDOFF](16-HANDOFF.md).
+آخر تحديث: 2026-09-29. يشمل دفعة حماية التحويل (`910a281`) ودفعة المحاكي والمصغرات بعدها؛ نتائج الأخيرة وطريقة تشغيلها في [15-IOS-TESTING](15-IOS-TESTING.md). أول تشغيل على هاتف Android فعلي (Galaxy S25 Edge) وما كشفه في IMG-13 وقسم Android في [12-STABILIZATION](12-STABILIZATION.md). هذا السجل هو نقطة التسليم لمن يكمل العمل، ويفصل العيب المثبت عن المخاطرة وعن الميزة غير المنفذة. لا تنسخ ملفات من نسخ الفحص القديمة فوق المشروع. Git يديره المستخدم ولا يُسجَّل وضعه هنا؛ انظر التنبيه في [16-HANDOFF](16-HANDOFF.md).
 
 **قرار المستخدم:** DarkLib باقية. الهدف تصحيحها وضبط حدودها؛ إزالة المكتبة أو العودة إلى main ليست مهمة مطروحة. الاستبدال الجراحي أزيل عمدًا ولا يعاد ضمن هذه الإصلاحات. العقد في [10-DARKLIB](10-DARKLIB.md)، وبحث الحاويات في [11-HDR-RESEARCH](11-HDR-RESEARCH.md)، والتاريخ والقياسات في [12-STABILIZATION](12-STABILIZATION.md)، والبيئة في [13-DEVELOPMENT](13-DEVELOPMENT.md).
 
@@ -59,6 +59,7 @@
 - **السبب والأثر:** الصيغة النظرية وقدرة `keepMetadata` لا تثبت الحفظ. HEIC→PNG→RGBA8→AVIF قد يفقد HDR/اللون. hardware قد ينجح قبل فحص Rust؛ transplant قد يعيد target كما هو ويعد نجاحًا. حقول ConversionLoss النظرية ليست متصلة بجميع المسارات. `EncodedImage` يحمل المحرك والصيغة والتشخيص، وليس تقرير حفظ كاملًا.
 - **دليل إعادة الإنتاج (2026-09-28):** اختبار مؤقت بقنوات ومحاكاة DarkLib على طبقة `ImageEncoder`، سجله `/Volumes/CUSU/Development/logs/img05-gap-reproduction-20260928.log`. ثلاثة مسارات نجحت ولم يُستشر فحص HDR في أي منها: (أ) مصدر HEIC يعلن ImageIO أنه HDR، والهدف WebP: خطأ Rust العادي في فك HEIC ليس رفض حفظ، فيمر الجسر `bakeUpright`→PNG→Rust وينجح. (ب) عينة PQ `seine_hdr_rec2020.avif` إلى AVIF: عتاد Android ينجح ولا تُستدعى Rust، بينما ترفض Rust المصدر نفسه وحدها. (ج) مصدر HDR إلى HEIC مع `keepMetadata=false`: ImageIO ينجح، وSwift لا ينسخ gain map إلا عند `keepMetadata` (`ImageEncoderNative.encode`). محاكاة القنوات تثبت ترتيب القرار في Dart، لا سلوك الناتج الأصلي؛ فقد (ج) مستنتج من كود Swift.
 - **الإصلاح والتحقق (2026-09-28):** الأحمر: الاختبار المؤقت أعلاه على الكود قبل الإصلاح. الأخضر: 9 حالات في `test/hdr_plan_test.dart`، و7 انحدار Rust على عينتي libavif، و5 اختبارات جسر حقيقي على المضيف، ومجموعة المحاكي (15-IOS-TESTING). القص يستخدم النسخة SDR نفسها، لكنه بلا اختبار وحدة لأنه يحتاج محاكاة photo_manager.
+- **هاتف Android (2026-09-29):** على Galaxy S25 Edge (Android 16) رُفض PQ إلى AVIF وإلى WebP قبل أي محرك، والتشخيص كاملًا `androidDecoder.bake.unavailable` (منذ جسر IMG-13؛ قبله `imageIO.bake.unavailable`) ثم `hdrToneMapUnavailable`؛ وgain map إلى WebP أعطى الأساس SDR مع `hdrToSdr` وصورة مطابقة للأصل. وJPEG Ultra HDR (`seine_sdr_gainmap_srgb.jpg`: XMP `hdrgm` وMPF) إلى WebP وAVIF أعطى الأساس SDR مع `hdrToSdr` وصورة مطابقة (2026-09-30). HLG HEIC يُرفض قبل أي محرك كذلك (IMG-14).
 - **المطلوب التالي:** SourceFacts موثوقة مع unknown، سياسة preserveRequired وفقد مسموح محدد، تخطيط قدرات كل backend، تحقق قبل الحفظ وتقرير نتيجة. لا تستخدم علمًا عامًا باسم «حفظ» بينما تفحص alpha وحدها.
 
 ### IMG-06 · P1 · MPF في JPEG Ultra HDR يصبح غير صالح بعد التنظيف
@@ -72,7 +73,8 @@
 
 - **الحالة (2026-09-29):** أُصلح ومختبر محليًا وبقارئ مستقل لـJPEG وPNG وWebP. حذف EXIF يترك مكانه EXIF مصغرًا فيه Orientation وحده (`exif::orientation_only`) حين يكون الاتجاه غير 1، وفي WebP يبقى علم EXIF في VP8X. أزيل منظف Dart الاحتياطي (`MetadataStripper.strip*`) لأنه نسخة ثانية من السلوك نفسه بالخلل نفسه؛ بقي `canStrip` للواجهة، وفشل DarkLib يُعدّ الآن «غير مدعوم» بدل حفظ صورة مقلوبة.
 - **الدليل:** الأحمر `img07-red-20260929.log`: فشلت الصيغ الثلاث من الاتجاه 2. الأخضر: `native/darklib/tests/strip_orientation.rs` يقارن الصورة المعروضة (بعد تطبيق الاتجاه) قبل التنظيف وبعده للاتجاهات 1–8 على صورة 6×4 غير متناظرة، ويتحقق من زوال GPS. القارئ المستقل `test_native/inspect_strip_orientation.swift` (ImageIO على الماك) قرأ الاتجاه والأبعاد المعروضة وغياب GPS في 24 ملفًا (`img07-independent-20260929.log`).
-- **المتبقي:** AVIF/HEIC يعتمدان `irot`/`imir` التي لا يمسها التنظيف، لكن لا اختبار بعينة فيها هذه الخصائص. منظف iOS الأصلي الاحتياطي لـHEIC/AVIF غير مختبر للاتجاه. عرض المعرض على Android في T-13 (docs/17).
+- **المتبقي:** AVIF/HEIC يعتمدان `irot`/`imir` التي لا يمسها التنظيف، لكن لا اختبار بعينة فيها هذه الخصائص. منظف iOS الأصلي الاحتياطي لـHEIC/AVIF غير مختبر للاتجاه.
+- **هاتف Android (2026-09-29، T-13):** على Galaxy S25 Edge أعطت DarkLib على arm64 البايتات نفسها التي أعطاها المضيف للملفات الـ24، والصورة المعروضة قبل التنظيف وبعده متطابقة (اختبار التكامل). وفي معرض Samsung نفسه: لقطة الشاشة قبل التنظيف وبعده متطابقة بكسلًا بكسلًا للصيغ الثلاث والاتجاهات 1–8، وألوان الزوايا تطابق التحويل الصحيح لكل اتجاه، أي أن المعرض يحترم EXIF في PNG وWebP أيضًا. السجل `android-gallery-s25edge-20260929.log`.
 - **المواضع:** [metadata/jpeg.rs](../native/darklib/src/engine/metadata/jpeg.rs)، [png.rs](../native/darklib/src/engine/metadata/png.rs)، [webp.rs](../native/darklib/src/engine/metadata/webp.rs)، `orientation_only` في [exif.rs](../native/darklib/src/engine/metadata/exif.rs)، [strip_metadata_task.dart](../lib/features/image_ops/data/strip_metadata_task.dart).
 - **السبب والأثر:** حذف APP1/EXIF كاملًا دون حفظ orientation أو baking؛ JPEG بأبعاد تخزين 40×24 واتجاه 6 عُرض بعد التنظيف 40×24 بدل 24×40، خلاف السياسة المعلنة.
 - **معيار الإغلاق:** اتجاهات 1–8 وصورة غير مربعة؛ EXIF مصغر آمن أو تحويل بكسلات معلن، مع حذف البيانات الخاصة فعلًا. وسّع الاختبار لبقية الحاويات بدل افتراض اشتراكها في السلوك الصحيح.
@@ -114,6 +116,33 @@
 - **السبب والأثر:** `keepOriginalTime` لا يصل إلى Rust كما يصل إلى ImageIO؛ قد يختلف وقت الأصل في المعرض عن EXIF في الملف المشترك. `bitDepth` لا يصل إلى AVIF software؛ «match source» في الواجهة لا يثبت حفظ HDR/العمق.
 - **دليل المحاكي:** JPEG الاصطناعي 776→890 بايت بعد Photos؛ الاختلاف محصور في EXIF (حقول دقة العرض وإصدار EXIF وتوصيف المكونات والمشهد). بقية المقاطع بما فيها scan متطابقة، وبكسلات ImageIO متطابقة. لذلك فرق الحجم هنا ليس إعادة ترميز أو فقد جودة. هذه العينة بلا وقت/GPS؛ لا تثبت سياسة حفظهما. التفاصيل في [15-IOS-TESTING](15-IOS-TESTING.md).
 - **معيار الإغلاق:** سياسة واضحة لكل حقل، نتيجة فيها العمق الفعلي، وفحص EXIF/وقت الأصل على iOS وAndroid. لا تفسر bit depth وحده بأنه HDR.
+
+### IMG-13 · P1 · Flutter على Android يفك AVIF بعمق 10 بت بألوان خاطئة
+
+- **الحالة (2026-09-29):** أُصلح ومختبر على الهاتف. الملفات نفسها كانت صحيحة؛ الخلل في مسار فك Flutter على Android. الإصلاح بقرار المستخدم: جسر فك Android (`PlatformDecoder.kt`) يرد على `bakeUpright` بـPNG بعمق 8 وsRGB والاتجاه مطبق، دون بيانات وصفية (Dart لا يسأله إلا بـ`keepMetadata=false`)، ولا يعطي «نسخة SDR» لـPQ/HLG لأنه بلا tone mapper مثبت، فيبقى الرفض. `PlatformPixels` يوجه AVIF/HEIC على Android إليه في القص ومعاينة «قبل» والتكبير في التفاصيل والمحذوفات (`PlatformFileImage`). محرك جديد في التشخيص `androidDecoder`، وناتج PNG على Android صار منه. عمق ناتج DarkLib يبقى 10 بت بقرار المستخدم (القياس مكلف والملفات صحيحة).
+- **التحقق:** `test/platform_pixels_test.dart` (4). على الهاتف 41 من 41 مع `HAYN_GALLERY=1`: AVIF بعمق 10 من DarkLib يُقرأ بألوانه عبر الجسر وعبر `flutter_avif` (معاينة الناتج)؛ الجسر يطبق الاتجاه كـFlutter في الملفات الـ24؛ PQ يُرفض عند الرأس؛ وقص فعلي بـ`ImageCropTask` لـAVIF بعمق 10 مع gain map وبدونها يحفظ ألوان الأصل. في معرض Samsung: القص SDR يطابق مصدره (فرق 2.9)، وقص مصدر gain map يطابق أساسه SDR تمامًا ويظهر المصدر أسطع بـHDR كما تقضي السياسة (`android-gallery-s25edge-20260929.log`، `android-device-s25edge-t14-20260929-2344.log`).
+- **HEIC بعمق 10 (2026-09-30):** عينة `apple_heic_10bit_p3.heic` من مرمّز Apple؛ قصها الفعلي على الهاتف يحفظ ألوانها (41+ مع `HAYN_GALLERY=1`).
+- **المتبقي:** Android دون 9 بلا جسر، ولا يفك AVIF/HEIC أصلًا. فك الجسر كامل الدقة في القص يضيف bitmap وPNG مؤقتين للصور الكبيرة (RUN-01).
+- **الدليل:** على Galaxy S25 Edge (Android 16) فك `ui.instantiateImageCodec` خمسة ملفات بلون معروف (80,120,160) وغيره. AVIF بعمق 8 من ravif وSVT-AV1 صحيح؛ AVIF بعمق 10 من المرمّزين، 4:4:4 و4:2:0 معًا، ألوانه مبعثرة وألفا أقل من 255 في صورة معتمة، مثل (67,159,43,232) بدل (80,120,160,255). النمط يوافق قراءة bitmap بعمق 10 (`RGBA_1010102`) على أنه 8 بت. معرض Samsung يعرض الملفات نفسها صحيحة (فرق 1–2 عن مرجع PNG)، وكذلك ImageIO على الماك. ناتج DarkLib لـAVIF بعمق 10 دائمًا (افتراض ravif)، فاختبار «SDR إلى AVIF» قرأ الأخضر 147 بدل 120، وAVIF المحفوظ بخريطة gain map ظهر في Flutter بمتوسط فرق 90 بينما عرضه المعرض كالأصل (فرق 2.3). السجلات: `img13-flutter-avif-decode-probe-20260929.json` و`android-gallery-s25edge-20260929.log`. لم نجد بلاغًا مطابقًا في Flutter.
+- **المواضع المتأثرة:** `_decodeRgba` في [image_crop_task.dart](../lib/features/image_ops/data/image_crop_task.dart) يفك الأصل بهذا المسار ثم يحفظ البكسلات، فقص صورة بعمق 10 على Android يُتوقع أن يحفظ ألوانًا خاطئة (مستنتج من المسار ونتيجة الفك، لم يُشغّل القص نفسه). ومعاينة «قبل» في [compress_screen.dart](../lib/features/image_ops/presentation/compress_screen.dart) والتكبير في [asset_detail_screen.dart](../lib/features/library/presentation/asset_detail_screen.dart) و[trash_screen.dart](../lib/features/trash/presentation/trash_screen.dart) تعرض الأصل بـ`Image.memory`/`Image.file`. معاينة ناتج AVIF تستخدم `AvifImage` (مفكك آخر) ولم تُفحص. HEIC بعمق 10 لم يُختبر لعدم وجود عينة.
+- **معيار الإغلاق:** تحقق لـAVIF وHEIC بعمق 10.
+
+### IMG-15 · P1 · HEIC الشفاف على Android يفقد ألفا دون علم التطبيق
+
+- **الحالة (2026-09-30):** مثبت على الهاتف؛ غير مصلح.
+- **الدليل:** عينة `apple_heic_alpha.heic` (مرمّز Apple): اللون (80,120,160) بألفا 64 ومربع معتم. على Galaxy S25 Edge، طلب JPEG أعطى (82,…) بدل (211,221,231)، أي اللون المخفي لا الدمج على الأبيض. مفكك HEIF في Android يتجاهل مستوى ألفا، و`facts.alpha` = null لأن فحص ألفا على Android لا يقرأ HEIC (القناة iOS فقط)، فيمضي المسار صامتًا. اختبار «Transparent HEIC to JPEG flattens onto white» في `android_device_test.dart` يفشل الآن عمدًا. السجل `android-device-s25edge-corpus-20260930-0011.log`.
+- **الأثر المتوقع:** HEIC شفاف إلى JPEG يعطي ألوانًا مخفية بدل الأبيض؛ وإلى PNG/WebP/AVIF يفقد الشفافية كلها. الأخيرة مستنتجة من المسار نفسه، لم تُشغّل.
+- **الموضع:** `AlphaFlatten._readable` و`ImageProbe.hasAlpha` و`PlatformDecoder.kt`، و`inspect` في DarkLib (لا يبلغ عن ألفا).
+- **اتجاه الإصلاح المقترح:** DarkLib تقرأ وجود عنصر ألفا المساعد في HEIF/AVIF من الحاوية دون فك (`auxC` بمعرّف ألفا)، فتصبح الحقيقة معروفة على كل منصة. ثم على Android: HEIC بألفا يُرفض بوضوح ما لم يقرأ الجسر ألفا فعلًا ويُتحقق منه في الناتج. لا يُسقط صامتًا (القاعدة 3).
+- **معيار الإغلاق:** الاختبار أعلاه ينجح بالدمج الصحيح، أو يتحول إلى رفض مصنّف؛ وحالة PNG/WebP بالمعيار نفسه.
+
+### IMG-14 · P2 · جسر Android يسقط HDR والعمق إلى 8 بت
+
+- **الحالة (2026-09-29):** مسجل بطلب المستخدم؛ يحتاج دراسة. ليس خللًا في ألوان SDR (IMG-13 أُصلح)، بل حدود الإصلاح.
+- **الموضع:** `PlatformDecoder.kt`، `PlatformPixels`، `image_crop_task.dart`، وخطة HDR في `ImageEncoder`.
+- **ما يُفقد على Android الآن:** (1) معاينة AVIF/HEIC في التطبيق SDR بعمق 8 دائمًا: خريطة gain map لا تُطبق، وصور HDR تُعرض بلا سطوعها، ودقة 10 بت تنزل إلى 8 (تدرج أوضح في السماء والظلال). (2) القص يعطي SDR بعمق 8 من أي مصدر HDR (القص كذلك على iOS أيضًا). (3) PQ/HLG يُرفض في التحويل والقص، لأن الجسر لا يملك tone mapper مثبتًا، بينما iOS يحولها إلى SDR.
+- **ما يستحق الدراسة:** Android 14+ فيه `Gainmap` في Bitmap، وJPEG بخريطة (Ultra HDR) عبر `Bitmap.compress`؛ وقد يعمل tone mapping في ImageDecoder حين يُطلب sRGB لمصدر PQ/HLG، ولم يُقس. وعرض HDR داخل Flutter على Android غير مدروس. أي مسار يُعتمد بعد قياس ناتجه بقارئ مستقل، لا بافتراض أن النظام حوّل صحيحًا.
+- **معيار الإغلاق:** قرار موثق لكل حالة (حفظ HDR، أو SDR صحيح بتحويل مثبت، أو رفض) مع دليل على الهاتف؛ لا تحذير في الواجهة (سياسة HDR).
 
 ## الموارد والتشغيل والأجهزة
 
@@ -157,6 +186,8 @@
 - **الحالة:** تعارض مع عقد API مثبت؛ أثره وحجمه على الهواتف غير مقاسين.
 - **الموضع:** `encodeAv1` في [AvifHwEncoder.kt](../android/app/src/main/kotlin/app/naqaa/hayn/AvifHwEncoder.kt).
 - **السبب:** تحويل جودة 0–100 إلى KEY_QUALITY متناقص 63–10، دون `getQualityRange()`، كأنه quantizer. [Android](https://developer.android.com/reference/android/media/MediaCodecInfo.EncoderCapabilities#getQualityRange()) يعرّف المجال بحسب التنفيذ، والأعلى عمومًا أجود.
+- **ندرة العتاد (2026-09-29):** بحسب ما نُشر حتى 2024، Tensor G3 (Pixel 8 فما بعد) أول وأغلب معالج هاتف فيه ترميز AV1 عتادي؛ Snapdragon 8 Gen 3 وDimensity 9300 وExynos 2400 تفك فقط ([Notebookcheck](https://www.notebookcheck.net/Source-code-confirms-Google-Tensor-G3-as-the-first-smartphone-SoC-to-have-hardware-accelerated-AV1-encoding-support.806980.0.html)). فمسار `AvifHwEncoder.kt` (505 أسطر) يخدم أقلية صغيرة؛ الإبقاء عليه أو إزالته قرار للمستخدم.
+- **هاتف 2026-09-29:** Galaxy S25 Edge (Snapdragon 8 Elite، SM8750) بلا مرمّز AV1 عتادي؛ قائمته فيها `c2.android.av1.encoder` البرمجي وحده، و`isAvailable()` أعاد false، فذهب AVIF إلى DarkLib. البند يحتاج هاتفًا آخر.
 - **معيار الإغلاق:** المجال الفعلي وتحقق CQ/VBR وفشل المحرك، ثم قياس جهاز يدعم AV1 العتادي. لا تنسب اختلاف أحجام الجهازين كله لهذه النقطة ولا تعد بتساوي أحجام «جودة 80».
 
 ### DEV-02 · P2 · القدرات المقدرة ليست فحصًا للمحرك الفعلي
@@ -183,17 +214,19 @@
 
 ### BUILD-03 · P2 · فصل APK يتعارض مع abiFilters وتجميع غير لازم
 
-- **الحالة:** تعارض split-per-abi أُعيد سابقًا ولم يتغير الملف؛ سجل Android الأخير `preservation-ios-android-retry.log` يؤكد تجميع i686 وتكرار x64 رغم طلب arm64/x64 فقط.
+- **الحالة (2026-09-30):** أُصلح ومختبر. بقرار المستخدم لا يُشحن إلا arm64-v8a (x86_64 كان للمحاكي وبعض Chromebook فقط). السبب الجذري للحزمة الكبيرة: إضافة Flutter لـGradle تملأ `abiFilters` بكل ما تدعمه قبل كتلتنا، و`add` كان يضيف إليها فشُحنت armeabi-v7a وx86_64 أيضًا. الآن `clear()` ثم arm64، وcargokit يبني arm64 وحده (أزيلت إضافة x86/x64 في debug). release: ‏156.3MB بثلاث معماريات ← **50.3MB** بمعمارية واحدة، والزمن 4:27 ← 1:26. debug: DarkLib لـaarch64 وحده (`android-release-arm64-20260930-0029.log`، `android-debug-arm64-20260930-0031.log`). `--split-per-abi` بلا فائدة مع معمارية واحدة ويتعارض مع `abiFilters`، فلا يُستخدم.
+- **الحالة السابقة:** تعارض split-per-abi؛ سجل `preservation-ios-android-retry.log` أكد تجميع i686 وتكرار x64 رغم طلب arm64/x64 فقط.
 - **المواضع:** [app/build.gradle.kts](../android/app/build.gradle.kts)، [cargokit/plugin.gradle](../rust_builder/cargokit/gradle/plugin.gradle).
 - **السبب:** filters ثابتة arm64/x64 مع إعداد splits، وdebug يضيف x86/x64 بلا إزالة التكرار. دعم Rust لمعماريات معينة لا يثبت محتويات APK من مكتبات plugins الأخرى.
-- **معيار الإغلاق:** اختبار universal وsplit للمقاصد المدعومة، فحص libs المعبأة فعلًا، وإزالة ABI غير مشحون/التكرار. لا تستخدم nightly لحل ABI غير مطلوب.
+- **معيار الإغلاق:** تحقق: APK فيه arm64-v8a وحده (16 مكتبة)، وdebug لا يبني غيره. Flutter ما زال يترجم Dart AOT لبقية المعماريات حين لا يُمرر `--target-platform android-arm64` ثم تُستبعد؛ هدر زمن لا حجم.
 
 ### BUILD-04 · P2 · قياس release قديم والتوقيع للنشر غير مجهز
 
-- **الحالة:** يحتاج إعادة قياس بعد FFmpeg 3.6.2؛ ليس مانع debug.
+- **الحالة (2026-09-30):** الحجم قيس؛ التوقيع للنشر باقٍ. release بعد BUILD-03: ‏APK **50.3MB** (arm64 فقط، مكتباته 46.8MB غير مضغوطة). على Galaxy S25 Edge: `extractNativeLibs=false`، ومجلد الشيفرة المثبت 48MB (`du`)، ومجلد oat غير مقروء بصلاحيات adb. التشغيل الأول 210ms بلا انهيار. الحجم لا يساوي حجم التنزيل من Play.
+- **الحالة السابقة:** يحتاج إعادة قياس بعد FFmpeg 3.6.2؛ ليس مانع debug.
 - **المواضع:** [pubspec.yaml](../pubspec.yaml)، [app/build.gradle.kts](../android/app/build.gradle.kts)، [قياسات الاستقرار](12-STABILIZATION.md).
 - **التفصيل:** baseline APK 98.88MiB يسبق تحديث FFmpeg؛ لا يعاد عرضه كحجم حالي. release Android يستخدم debug signing حاليًا؛ يلزم إعداد نشر منفصل عند طلب النشر. تحذيرات ثلاث plugins عن SPM/CocoaPods ليست فشل البناء الحالي.
-- **معيار الإغلاق:** قياس package/installed لكل ABI وإصدار، فصلها عن build/cache؛ لا نشر أو تغيير مفاتيح بلا طلب.
+- **معيار الإغلاق:** القياس تحقق لـarm64؛ يبقى إعداد توقيع النشر عند طلبه. لا نشر أو تغيير مفاتيح بلا طلب.
 
 ### BUILD-05 · P2 · تحذيرات توافق أدوات البناء المستقبلية
 
@@ -228,10 +261,10 @@
 
 ### PROD-02 · P3 · نص تحذير الشفافية لا يطابق السلوك
 
-- **الحالة (2026-09-29):** أُصلح بقرار المستخدم. JPEG لصورة شفافة أو مجهولة الشفافية يُنفذ: `AlphaFlatten` يدمجها على الأبيض قبل أي محرك (DarkLib أو ImageIO أو الإضافة لقراءة ما لا يقرؤه package:image)، ثم تُنقل البيانات الوصفية من الأصل عند طلبها، ويسجل `alphaFlattened`. أزيل تحذير الشفافية و`requiresAlphaFlatten`، وحل محلهما نص خفيف على الصيغة من `ImageFormatPolicy.losses` يظهر فقط حين تحمل الأصلية ما ستفقده الصيغة. اختبارات: `test/alpha_flatten_test.dart` (دمج جزئي، 16 بت، palette)، وحالتان في `preservation_regression_test.dart`، و`losses` في `image_format_policy_test.dart`، واختبار المحاكي يقيس بكسل JPEG الناتج على iOS. لم يُختبر على Android، ولا HEIC شفاف على Android.
+- **الحالة (2026-09-29):** أُصلح بقرار المستخدم. JPEG لصورة شفافة أو مجهولة الشفافية يُنفذ: `AlphaFlatten` يدمجها على الأبيض قبل أي محرك (DarkLib أو ImageIO أو الإضافة لقراءة ما لا يقرؤه package:image)، ثم تُنقل البيانات الوصفية من الأصل عند طلبها، ويسجل `alphaFlattened`. أزيل تحذير الشفافية و`requiresAlphaFlatten`، وحل محلهما نص خفيف على الصيغة من `ImageFormatPolicy.losses` يظهر فقط حين تحمل الأصلية ما ستفقده الصيغة. اختبارات: `test/alpha_flatten_test.dart` (دمج جزئي، 16 بت، palette)، وحالتان في `preservation_regression_test.dart`، و`losses` في `image_format_policy_test.dart`، واختبار المحاكي يقيس بكسل JPEG الناتج على iOS. على Galaxy S25 Edge (2026-09-29، T-08): PNG وWebP وAVIF شفافة إلى JPEG، والشفافية معروفة ومجهولة، أعطت (211,221,231) تقريبًا عبر `flutter_image_compress`. HEIC الشفاف على Android يفشل: ألفا لا تُقرأ (IMG-15).
 - **المواضع:** `compressAlphaFlattenWarning` في [app_en.arb](../lib/app/l10n/app_en.arb) و[app_ar.arb](../lib/app/l10n/app_ar.arb)، `_flattensAlpha` في [compress_screen.dart](../lib/features/image_ops/presentation/compress_screen.dart)، بداية [ImageEncoder.encode](../lib/features/image_ops/data/image_encoder.dart).
 - **السبب والأثر:** النص يقول إن الصورة الشفافة ستُحفظ بصيغة تحفظ الشفافية بدل JPEG. منذ `910a281` الصيغة المحددة لا تتغير، وJPEG مع شفافية موجودة أو مجهولة يفشل. فالنص يعد بما لا يحدث، وهو أيضًا تحذير تقني من النوع الذي منعته قاعدة النصوص (flutter.md، 2026-09-28).
-- **معيار الإغلاق:** تحقق؛ يبقى تحقق Android. نقل التاريخ مع `keepOriginalTime=false` عبر `transplant_metadata` لا يحذف تاريخ EXIF (IMG-12).
+- **معيار الإغلاق:** تحقق على iOS وAndroid. نقل التاريخ مع `keepOriginalTime=false` عبر `transplant_metadata` لا يحذف تاريخ EXIF (IMG-12).
 - **أُغلق معه:** `compressBitDepthDesc` كان يقول «HDR is kept either way»؛ صار «Colour precision per channel» / «دقة الألوان لكل قناة».
 
 ## أمور أُصلحت أو استُبعدت — لا تُفتح من جديد بلا دليل

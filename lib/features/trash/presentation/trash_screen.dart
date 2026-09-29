@@ -7,6 +7,7 @@ import '../../../app/l10n/app_localizations.dart';
 import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
 import '../../../shared/widgets/widgets.dart';
+import '../../image_ops/presentation/widgets/platform_file_image.dart';
 import '../../settings/providers/preferences_providers.dart';
 import '../providers/trash_provider.dart';
 
@@ -159,10 +160,10 @@ class _TrashRow extends StatelessWidget {
               ),
               clipBehavior: Clip.antiAlias,
               child: _backupExists
-                  ? Image.file(
-                      File(item.backupPath),
+                  ? PlatformFileImage(
+                      item.backupPath,
+                      maxEdge: 112,
                       fit: BoxFit.cover,
-                      gaplessPlayback: true,
                       cacheWidth: 112,
                       errorBuilder: (_, __, ___) => _fallbackIcon(hc),
                     )
@@ -265,7 +266,11 @@ class _TrashRow extends StatelessWidget {
                 minScale: 1,
                 maxScale: 8,
                 child: Center(
-                  child: Image.file(File(item.backupPath), fit: BoxFit.contain),
+                  child: PlatformFileImage(
+                    item.backupPath,
+                    maxEdge: 4096,
+                    fit: BoxFit.contain,
+                  ),
                 ),
               ),
             ),

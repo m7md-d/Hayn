@@ -18,6 +18,7 @@ import 'image_encoder.dart';
 import 'image_probe.dart';
 import 'native_image_encoder.dart';
 import 'output_name.dart';
+import 'platform_pixels.dart';
 import 'source_facts.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -74,32 +75,38 @@ class ImageCropTask extends MediaTask {
     }
     if (_cancelled) return;
 
-    // The crop is 8-bit SDR. For an HDR original, ImageIO's SDR rendition is
-    // the input (upright, like the preview). PQ/HLG without it is refused; a
-    // gain map without it decodes its SDR base below. Not surfaced to the user.
+    // The crop is 8-bit SDR. For an HDR original, the platform's SDR
+    // rendition is the input (upright, like the preview). PQ/HLG without it is
+    // refused; a gain map without it decodes its SDR base below. On Android,
+    // AVIF/HEIC always take the platform bridge: Flutter misreads their 10-bit
+    // pixels (IMG-13). Not surfaced to the user.
     final facts = await SourceInspector.inspect(src);
     var pixels = src;
-    if (facts.hasHdr) {
-      final sdr = await NativeImageEncoder.bakeUpright(
+    if (facts.hasHdr || PlatformPixels.needsBridge(src)) {
+      final baked = await NativeImageEncoder.bakeUpright(
         source: src,
         keepMetadata: false,
         keepOriginalTime: true,
-        toSdr: true,
+        toSdr: facts.hasHdr,
       );
-      if (sdr == null && facts.directHdr == true) {
+      if (facts.hasHdr) {
+        if (baked == null && facts.directHdr == true) {
+          MediaDiagnostics.record(
+            MediaBackend.imageEncoder,
+            MediaOperation.encode,
+            MediaDiagnosticCode.hdrToneMapUnavailable,
+          );
+          throw StateError('Crop source has no SDR rendition');
+        }
         MediaDiagnostics.record(
           MediaBackend.imageEncoder,
           MediaOperation.encode,
-          MediaDiagnosticCode.hdrToneMapUnavailable,
+          MediaDiagnosticCode.hdrToSdr,
         );
-        throw StateError('Crop source has no SDR rendition');
       }
-      MediaDiagnostics.record(
-        MediaBackend.imageEncoder,
-        MediaOperation.encode,
-        MediaDiagnosticCode.hdrToSdr,
-      );
-      pixels = sdr ?? src;
+      // Without the bridge (Android before 9) the platform decodes neither
+      // AVIF nor HEIC, so Flutter's decode below is the only remaining path.
+      pixels = baked ?? src;
     }
     if (_cancelled) return;
 

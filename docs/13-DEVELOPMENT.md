@@ -54,7 +54,7 @@ flutter test
 flutter build apk --debug --target-platform android-arm64
 ```
 
-المشروع يدعم Android arm64 وx86_64 حاليًا، وليس armv7. أمر البناء أعلاه للتحقق السريع من arm64، وليس إثباتًا لبقية المنصات. تحديث Flutter أو Gradle عملية مستقلة؛ لا تغيّر النسخ لتجاوز تحذير ضمن عمل آخر.
+المشروع يشحن Android arm64-v8a وحدها منذ 2026-09-30 (x86_64 أزيل بقرار المستخدم، وarmv7 غير مدعوم؛ BUILD-03). أمر البناء أعلاه للتحقق السريع من arm64، وليس إثباتًا لبقية المنصات. تحديث Flutter أو Gradle عملية مستقلة؛ لا تغيّر النسخ لتجاوز تحذير ضمن عمل آخر.
 
 المجلد الخارجي `Development/logs` يحوي سجلات التثبيت والفحص وmanifest النقل، و`Development/backups/environment-20260926` يحوي الإعدادات السابقة. نسخة دراسة main/bedrock في `Development/verification/Hayn-audit-20260925`؛ لا تحتاج نسخ build وtarget إلى Git.
 
@@ -165,3 +165,21 @@ org.gradle.daemon.idletimeout=60000
 للتراجع عن السياسة لاحقًا: احذف السطرين المضافين من ملف Gradle العام، واحذف كتلة Gradle المضافة في نهاية ملف البيئة (أو استعد النسخة بعد مراجعة أي تعديلات أحدث). الملف العام لم يكن موجودًا قبل هذه الدفعة؛ لا تحذفه كاملًا إذا أضيفت إليه إعدادات أخرى. لا تحذف الكاشات.
 
 المراجع: [Gradle Daemon](https://docs.gradle.org/current/userguide/gradle_daemon.html)، [Tooling API](https://docs.gradle.org/current/userguide/tooling_api.html).
+
+## الاختبار على هاتف Android — 2026-09-29
+
+```sh
+bash tool/test_android_device.sh [serial]
+```
+
+يشغّل `integration_test/android_device_test.dart` بـ`flutter drive --profile` (سائق `test_driver/integration_test.dart`). ثلاثة قيود حكمت الشكل:
+
+- **profile لا debug:** debug يبني Rust دون تحسين، فتحويل واحد لـAVIF بخريطة gain map يتجاوز 12 دقيقة.
+- **لا ملفات على الهاتف:** Android 16 يمنع التطبيق من قراءة ما يدفعه adb إلى `Android/data`، وprofile ليس debuggable فلا `run-as`. لذلك تُخدَم العينات من الماك عبر `python3 -m http.server` على 127.0.0.1 و`adb reverse`، وتعود النواتج داخل تقرير `reportData` (base64) إلى `build/android-device/<وقت>/results`. لا شيء يُكتب في تخزين الهاتف أو معرضه، ولا يخرج شيء إلى الشبكة.
+- **الإذن:** التثبيت على الهاتف بطلب المستخدم. ما يُضاف يدويًا إلى المعرض للفحص البصري (مثل `Pictures/HaynTest/`) لا يحذفه الوكيل؛ يُبلغ المستخدم به وهو يحذفه.
+
+العينات المخدومة: كل صور `native/darklib/tests/fixtures/` ونواتج `strip_orientation.rs`. `HAYN_TEST_TARGET` يشغّل ملف اختبار آخر بالآلية نفسها، و`HAYN_EXTRA_FIXTURES` ينسخ مجلدًا إضافيًا إلى العينات المخدومة. تحقق من `mount | grep CUSU` قبل التشغيل؛ البناء الأول ثقيل.
+
+`HAYN_GALLERY=1` يفعّل اختبارات القص الفعلي، وهي تحفظ مصادرها ونواتجها في المعرض (`Pictures/`، أسماء `hayn-test-crop-*`) وتبقى للمستخدم. `flutter drive` يزيل التطبيق بعد كل تشغيل، فلا يسبق `pm grant` الاختبار؛ الإذن يُطلب في `setUpAll`، والسكربت يضغط «السماح بالكل» بـ`uiautomator` فقط حين تكون نافذة الإذن في المقدمة. تشغيل `uiautomator` أو طلب الإذن أثناء اختبار يفعّل accessibility فيفشل الاختبار بـ«SemanticsHandle was active»؛ هذا أثر البيئة لا عطل في التطبيق. الشاشة يجب أن تكون مفتوحة.
+
+فحص المعرض: `adb shell am start -a android.intent.action.VIEW -d content://media/external/images/media/<id> -p com.sec.android.gallery3d` ثم `adb exec-out screencap -p`، والمقارنة رقمية بين اللقطات لا بالعين. الشاشة يجب أن تكون مفتوحة.

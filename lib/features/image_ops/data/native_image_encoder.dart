@@ -1,3 +1,6 @@
+import 'dart:io' show Platform;
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../../../core/diagnostics/media_diagnostics.dart';
@@ -61,26 +64,49 @@ abstract final class NativeImageEncoder {
     }
   }
 
-  /// Ask ImageIO for upright PNG pixels. A lossless PNG encoder does not prove
+  /// Android selects the ImageDecoder bridge; tests may flip it.
+  @visibleForTesting
+  static bool onAndroid = Platform.isAndroid;
+
+  /// The engine behind [bakeUpright] on this platform.
+  static MediaBackend get bakeBackend =>
+      onAndroid ? MediaBackend.androidDecoder : MediaBackend.imageIO;
+
+  /// Ask the platform for upright 8-bit PNG pixels: ImageIO on iOS, Android's
+  /// ImageDecoder on Android (IMG-13). A lossless PNG encoder does not prove
   /// a lossless decode/colour/HDR conversion from the original image. [toSdr]
-  /// requests ImageIO's SDR rendition (iOS 17+); below that a PQ/HLG source
-  /// returns null, while a gain-map source decodes its SDR base.
+  /// requests an SDR rendition: ImageIO tone maps PQ/HLG (iOS 17+); Android
+  /// has no verified tone mapper and returns null for them. A gain-map source
+  /// decodes its SDR base. The Android bridge carries no metadata, so it
+  /// answers only [keepMetadata] = false. [maxEdge] > 0 lets Android sample a
+  /// preview down (the long edge stays at least maxEdge); iOS ignores it.
   static Future<Uint8List?> bakeUpright({
     required Uint8List source,
     required bool keepMetadata,
     required bool keepOriginalTime,
     bool toSdr = false,
+    int maxEdge = 0,
   }) async {
+    final backend = bakeBackend;
+    if (backend == MediaBackend.androidDecoder && keepMetadata) {
+      MediaDiagnostics.record(
+        backend,
+        MediaOperation.bake,
+        MediaDiagnosticCode.unavailable,
+      );
+      return null;
+    }
     try {
       final res = await channel.invokeMethod<Uint8List>('bakeUpright', {
         'bytes': source,
         'keepMetadata': keepMetadata,
         'keepOriginalTime': keepOriginalTime,
         'toSdr': toSdr,
+        'maxEdge': maxEdge,
       });
       if (res == null || res.isEmpty) {
         MediaDiagnostics.record(
-          MediaBackend.imageIO,
+          backend,
           MediaOperation.bake,
           MediaDiagnosticCode.emptyOutput,
         );
@@ -89,14 +115,14 @@ abstract final class NativeImageEncoder {
       return res;
     } on MissingPluginException {
       MediaDiagnostics.record(
-        MediaBackend.imageIO,
+        backend,
         MediaOperation.bake,
         MediaDiagnosticCode.unavailable,
       );
       return null;
     } catch (_) {
       MediaDiagnostics.record(
-        MediaBackend.imageIO,
+        backend,
         MediaOperation.bake,
         MediaDiagnosticCode.exception,
       );

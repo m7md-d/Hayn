@@ -22,6 +22,7 @@ import '../data/image_compress_task.dart';
 import '../data/image_encoder.dart';
 import '../data/image_probe.dart';
 import '../data/native_image_info.dart';
+import '../data/platform_pixels.dart';
 import '../data/source_facts.dart';
 import '../domain/image_format_policy.dart';
 import 'widgets/compress_estimate_card.dart';
@@ -82,6 +83,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   // truth. Skipped for multi-select (that would mean loading every original —
   // which is exactly what the index-based estimate avoids).
   Uint8List? _originBytes;
+  Uint8List? _originShown; // what the "before" pane draws (IMG-13 on Android)
   int _beforeSize = 0;
   int _activeW = 0; // source dimensions (for the huge-image encode cap)
   int _activeH = 0;
@@ -146,10 +148,14 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
     if (!mounted) return;
     final facts = origin == null ? null : await SourceInspector.inspect(origin);
     final info = origin == null ? null : await NativeImageProbe.probe(origin);
+    final shown = origin == null
+        ? null
+        : await PlatformPixels.forDisplay(origin, maxEdge: 4096);
     if (!mounted) return;
     setState(() {
       _previewBytes = thumb;
       _originBytes = origin;
+      _originShown = shown;
       _beforeSize = origin?.length ?? 0;
       _activeW = entity.width;
       _activeH = entity.height;
@@ -313,7 +319,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   /// quality), with the quick thumbnail as the placeholder until it loads / if a
   /// format can't decode in the engine.
   Widget _beforeWidget() {
-    final origin = _originBytes;
+    final origin = _originShown;
     if (origin != null) {
       return Image.memory(
         origin,

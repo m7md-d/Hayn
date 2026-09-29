@@ -11,6 +11,7 @@ import java.util.concurrent.Executors
 class MainActivity : FlutterActivity() {
 
     private val avifExecutor = Executors.newSingleThreadExecutor()
+    private val decodeExecutor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -43,6 +44,28 @@ class MainActivity : FlutterActivity() {
                             avifExecutor.execute {
                                 val out = runCatching { AvifHwEncoder.encode(bytes, quality) }
                                     .getOrNull()
+                                mainHandler.post { result.success(out) }
+                            }
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        // The iOS image channel's pixel bridge; its other methods stay iOS-only
+        // (notImplemented → MissingPluginException in Dart, as before).
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, IMAGE_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "bakeUpright" -> {
+                        val bytes = call.argument<ByteArray>("bytes")
+                        val toSdr = call.argument<Boolean>("toSdr") ?: false
+                        val maxEdge = call.argument<Int>("maxEdge") ?: 0
+                        if (bytes == null) {
+                            result.success(null)
+                        } else {
+                            decodeExecutor.execute {
+                                val out = PlatformDecoder.bakeUprightPng(bytes, toSdr, maxEdge)
                                 mainHandler.post { result.success(out) }
                             }
                         }
@@ -92,5 +115,6 @@ class MainActivity : FlutterActivity() {
     private companion object {
         const val SIZE_CHANNEL = "hayn/media_size"
         const val AVIF_CHANNEL = "hayn/avif"
+        const val IMAGE_CHANNEL = "hayn/metadata"
     }
 }

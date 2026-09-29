@@ -7,7 +7,7 @@ DarkLib builds on **stable Rust** for every target it supports.
 | Platform | Target triple | ABI | Supported |
 |---|---|---|:--:|
 | Android (phones) | `aarch64-linux-android` | arm64-v8a | ✅ |
-| Android (emulator/x86) | `x86_64-linux-android` | x86_64 | ✅ |
+| Android (emulator/x86) | `x86_64-linux-android` | x86_64 | builds, not shipped since 2026-09-30 |
 | Android (legacy 32-bit) | `armv7-linux-androideabi` | armeabi-v7a | ⛔ |
 | iOS device | `aarch64-apple-ios` | — | ✅ |
 | iOS simulator | `aarch64-apple-ios-sim`, `x86_64-apple-ios` | — | ✅ |
@@ -41,14 +41,10 @@ under nightly; on stable it will fail with `error[E0554]`.
 
 ## Building without armv7
 
-The Flutter app's Android Gradle config sets `abiFilters = arm64-v8a, x86_64`,
-and the vendored cargokit is patched to skip `android-arm`, so a plain
-`flutter build apk` works. For a fully clean release with no 32-bit slice at all,
-build with an explicit platform list:
-
-```sh
-flutter build apk --release --target-platform android-arm64,android-x64
-```
+The Flutter app's Android Gradle config sets `abiFilters = arm64-v8a` (x86_64
+served only PC emulators and a few Chromebooks; dropped by user decision on
+2026-09-30), and the vendored cargokit builds `android-arm64` only, so a plain
+`flutter build apk` works and packages one ABI.
 
 ## If you ever need armv7
 
@@ -59,8 +55,8 @@ AVIF on 32-bit ARM. Neither is maintained here.
 
 ## Packaging caveat (2026-09-26)
 
-Supported DarkLib targets and APK contents are different questions. The current
-debug APK can still contain vendor armv7 libraries; Cargokit also adds x86/x64
-to debug builds. `--split-per-abi` conflicts with the application's current
-`ndk.abiFilters`. See the [measured build results](../../../docs/12-STABILIZATION.md)
-before treating the table above as a guarantee about packaged slices.
+Supported DarkLib targets and APK contents are different questions. With a
+single ABI, `--split-per-abi` adds nothing (and conflicts with
+`ndk.abiFilters`); build the universal APK. See the
+[measured build results](../../../docs/12-STABILIZATION.md) before treating the
+table above as a guarantee about packaged slices.

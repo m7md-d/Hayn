@@ -5,7 +5,7 @@
 - A stable Rust toolchain (MSRV **1.79**) via `rustup`.
 - For mobile cross-compilation, the relevant targets and helpers:
   ```sh
-  rustup target add aarch64-linux-android x86_64-linux-android \
+  rustup target add aarch64-linux-android \
                     aarch64-apple-ios aarch64-apple-ios-sim
   cargo install cargo-ndk
   ```
@@ -29,7 +29,7 @@ it later behind a feature once the asm toolchain is wired into CI.
 ## Cross-compiling for Android
 
 ```sh
-cargo ndk -t arm64-v8a -t x86_64 build --release
+cargo ndk -t arm64-v8a build --release
 ```
 
 The whole core (AVIF/WebP encode + AVIF decode + all metadata surgery, including
@@ -40,8 +40,9 @@ The whole core (AVIF/WebP encode + AVIF decode + all metadata surgery, including
 The build is automatic: the vendored **cargokit** Gradle/Xcode glue compiles the
 crate for each target during `flutter build`. Nothing extra to run.
 
-- Android: cargokit is patched to skip `android-arm`, so a plain
-  `flutter build apk` works; `abiFilters` keeps the package to arm64 + x86_64.
+- Android: cargokit is patched to build `android-arm64` only, the one ABI in
+  the app's `abiFilters` (x86_64 dropped 2026-09-30), so a plain
+  `flutter build apk` works and debug builds skip the emulator ABIs.
 - A known APK-build flake on macOS (a stale iOS SPM symlink) is cleared with
   `rm -rf ios/Flutter/ephemeral/Packages` before rebuilding.
 

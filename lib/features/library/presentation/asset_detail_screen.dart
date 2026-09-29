@@ -14,6 +14,7 @@ import '../../../shared/widgets/widgets.dart';
 import '../../image_ops/data/gallery_saver.dart';
 import '../../image_ops/data/metadata.dart';
 import '../../image_ops/data/output_name.dart';
+import '../../image_ops/data/platform_pixels.dart';
 import '../../image_ops/data/strip_metadata_task.dart';
 import '../data/native_share.dart';
 import 'providers/asset_entity_cache.dart';
@@ -654,8 +655,12 @@ class _AssetPageState extends State<_AssetPage>
     _loadingFull = true;
     final id = widget.entry.id;
     try {
-      final data = await _entity!.originBytes;
-      if (mounted && widget.entry.id == id && data != null && data.isNotEmpty) {
+      final origin = await _entity!.originBytes;
+      if (origin == null || origin.isEmpty) return;
+      // Same bound as the compare preview; only the Android AVIF/HEIC bridge
+      // (IMG-13) uses it, other images stay at full resolution.
+      final data = await PlatformPixels.forDisplay(origin, maxEdge: 4096);
+      if (mounted && widget.entry.id == id) {
         setState(() => _fullResBytes = data);
       }
     } catch (_) {

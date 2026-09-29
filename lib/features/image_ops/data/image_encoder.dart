@@ -101,7 +101,8 @@ abstract final class ImageEncoder {
     }
 
     // PQ/HLG samples read as sRGB are a wrong image, so no engine receives the
-    // original: only ImageIO's tone-mapped SDR rendition may continue.
+    // original: only ImageIO's tone-mapped SDR rendition may continue (the
+    // Android bridge has no verified tone mapper and declines).
     var input = source;
     var plan = facts;
     if (facts.directHdr == true) {
@@ -120,7 +121,7 @@ abstract final class ImageEncoder {
         throw ImageEncodingFailure(target, trace.events);
       }
       MediaDiagnostics.record(
-        MediaBackend.imageIO,
+        NativeImageEncoder.bakeBackend,
         MediaOperation.bake,
         MediaDiagnosticCode.hdrToSdr,
       );
@@ -436,8 +437,8 @@ abstract final class ImageEncoder {
       // fall away to another format) and it carries EXIF/XMP/ICC inside the
       // file, which the plugin never did for WebP. A HEIC source fails the
       // direct transcode and goes over the same platform-decode bridge as AVIF
-      // (bakeUpright → DarkLib); off-iOS the bake is null and the plugin below
-      // handles it (Android decodes HEIC platform-side).
+      // (bakeUpright → DarkLib). Android's bridge answers only without
+      // metadata; otherwise the plugin below handles HEIC platform-side.
       if (format == DefaultFormat.webp) {
         backend = MediaBackend.darklib;
         final dark = await DarkLibCore.transcode(
@@ -492,7 +493,11 @@ abstract final class ImageEncoder {
           toSdr: toSdr,
         );
         if (baked != null && baked.isNotEmpty) {
-          return EncodedImage(baked, format, backend: MediaBackend.imageIO);
+          return EncodedImage(
+            baked,
+            format,
+            backend: NativeImageEncoder.bakeBackend,
+          );
         }
       }
 
