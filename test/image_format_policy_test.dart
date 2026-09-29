@@ -9,13 +9,12 @@ FormatCapabilities _caps({
   bool heic = false,
   bool heif = false,
   bool webp = true,
-}) =>
-    FormatCapabilities(
-      supportsHeic: heic,
-      supportsHeif: heif,
-      supportsAvifHardware: avif,
-      supportsWebp: webp,
-    );
+}) => FormatCapabilities(
+  supportsHeic: heic,
+  supportsHeif: heif,
+  supportsAvifHardware: avif,
+  supportsWebp: webp,
+);
 
 ResolvedImageFormat _auto(bool alpha, FormatCapabilities caps) =>
     ImageFormatPolicy.resolve(
@@ -63,10 +62,12 @@ void main() {
         _caps(avif: false, heic: false, webp: false),
       ]) {
         final r = _auto(true, caps);
-        expect(r.format == DefaultFormat.jpeg, isFalse,
-            reason: 'alpha → ${r.format} must keep alpha');
+        expect(
+          r.format == DefaultFormat.jpeg,
+          isFalse,
+          reason: 'alpha → ${r.format} must keep alpha',
+        );
         expect(ImageFormatPolicy.keepsAlpha(r.format), isTrue);
-        expect(r.requiresAlphaFlatten, isFalse);
       }
     });
   });
@@ -76,42 +77,76 @@ void main() {
       final caps = _caps(avif: true);
       expect(
         ImageFormatPolicy.resolve(
-                choice: DefaultFormat.webp, hasAlpha: false, caps: caps)
-            .format,
+          choice: DefaultFormat.webp,
+          hasAlpha: false,
+          caps: caps,
+        ).format,
         DefaultFormat.webp,
       );
     });
 
-    test('forced JPEG on an alpha image flags a flatten (never silent)', () {
+    test('forced JPEG on an alpha image stays JPEG (flattened)', () {
       final r = ImageFormatPolicy.resolve(
         choice: DefaultFormat.jpeg,
         hasAlpha: true,
         caps: _caps(),
       );
       expect(r.format, DefaultFormat.jpeg);
-      expect(r.requiresAlphaFlatten, isTrue);
+    });
+  });
+
+  group('ImageFormatPolicy.losses — light format note', () {
+    FormatLosses losses(
+      DefaultFormat f, {
+      bool alpha = false,
+      bool pq = false,
+      bool gainMap = false,
+      bool keepMetadata = true,
+      bool ios = true,
+    }) => ImageFormatPolicy.losses(
+      format: f,
+      sourceAlpha: alpha,
+      sourceDirectHdr: pq,
+      sourceGainMap: gainMap,
+      keepMetadata: keepMetadata,
+      platformCopiesGainMap: ios,
+    );
+
+    test('nothing to lose, no note', () {
+      for (final f in DefaultFormat.values.where(
+        (f) => f != DefaultFormat.auto,
+      )) {
+        expect(losses(f), (alpha: false, hdr: false), reason: '$f');
+      }
     });
 
-    test('forced JPEG on an opaque image needs no flatten', () {
-      final r = ImageFormatPolicy.resolve(
-        choice: DefaultFormat.jpeg,
-        hasAlpha: false,
-        caps: _caps(),
-      );
-      expect(r.requiresAlphaFlatten, isFalse);
-    });
-
-    test('forced alpha-safe format on an alpha image never flattens', () {
+    test('only JPEG loses transparency', () {
+      expect(losses(DefaultFormat.jpeg, alpha: true).alpha, isTrue);
       for (final f in [
         DefaultFormat.avif,
         DefaultFormat.heic,
         DefaultFormat.webp,
         DefaultFormat.png,
       ]) {
-        final r = ImageFormatPolicy.resolve(
-            choice: f, hasAlpha: true, caps: _caps());
-        expect(r.requiresAlphaFlatten, isFalse, reason: '$f keeps alpha');
+        expect(losses(f, alpha: true).alpha, isFalse, reason: '$f');
       }
+    });
+
+    test('HDR survives only through ImageIO gain-map copy', () {
+      expect(losses(DefaultFormat.heic, gainMap: true).hdr, isFalse);
+      expect(losses(DefaultFormat.jpeg, gainMap: true).hdr, isFalse);
+      expect(losses(DefaultFormat.webp, gainMap: true).hdr, isTrue);
+      expect(losses(DefaultFormat.avif, gainMap: true).hdr, isTrue);
+      expect(
+        losses(DefaultFormat.heic, gainMap: true, keepMetadata: false).hdr,
+        isTrue,
+      );
+      expect(losses(DefaultFormat.heic, gainMap: true, ios: false).hdr, isTrue);
+      expect(losses(DefaultFormat.heic, pq: true).hdr, isTrue);
+      expect(losses(DefaultFormat.jpeg, gainMap: true, alpha: true), (
+        alpha: true,
+        hdr: true,
+      ));
     });
   });
 

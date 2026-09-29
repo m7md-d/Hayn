@@ -920,8 +920,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get compressComputing => 'Compressing…';
 
   @override
-  String get compressAlphaFlattenWarning =>
-      'JPEG can\'t keep transparency — your image will be saved in a transparency-safe format instead.';
+  String get formatNoteNoAlpha => 'Without transparency';
+
+  @override
+  String get formatNoteNoHdr => 'Without HDR';
+
+  @override
+  String get formatNoteNoAlphaNoHdr => 'Without transparency or HDR';
 
   @override
   String stripMetadataQueued(num count) {

@@ -39,6 +39,10 @@ enum MediaDiagnosticCode {
   alphaUnverified,
   alphaLost,
 
+  /// JPEG was chosen for a transparent (or unknown) source: composited onto
+  /// white by the user's choice (2026-09-29); the user is not warned.
+  alphaFlattened,
+
   /// HDR policy outcomes (user decision 2026-09-28): the saved file is a
   /// correct SDR rendition; the user is not warned.
   hdrToSdr,

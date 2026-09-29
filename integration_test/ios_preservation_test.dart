@@ -224,18 +224,28 @@ void main() {
     });
   }
 
-  testWidgets('Forced JPEG rejects present and unknown alpha', (_) async {
+  // User decision 2026-09-29: JPEG for a transparent image drops the alpha,
+  // composited onto white, the same on every platform.
+  testWidgets('Forced JPEG flattens transparency onto white', (_) async {
     for (final alpha in <bool?>[true, null]) {
-      await expectLater(
-        ImageEncoder.encode(
-          source: _png(alpha: true),
-          target: DefaultFormat.jpeg,
-          quality: 80,
-          facts: SourceFacts.sdr(alpha: alpha),
-          keepMetadata: false,
-        ),
-        throwsA(isA<ImageEncodingFailure>()),
+      final result = await ImageEncoder.encode(
+        source: _png(alpha: true),
+        target: DefaultFormat.jpeg,
+        quality: 90,
+        facts: SourceFacts.sdr(alpha: alpha),
+        keepMetadata: false,
       );
+      expect(result.backend, MediaBackend.imageIO);
+      expect(
+        result.diagnostics.map((d) => d.code),
+        contains(MediaDiagnosticCode.alphaFlattened),
+      );
+      await _artifact('jpeg-flattened.jpg', result.bytes);
+      final pixel = img.decodeJpg(result.bytes)!.getPixel(8, 6);
+      // (80,120,160) at alpha 64/255 over white.
+      expect(pixel.r, closeTo(211, 8));
+      expect(pixel.g, closeTo(221, 8));
+      expect(pixel.b, closeTo(231, 8));
     }
   });
 

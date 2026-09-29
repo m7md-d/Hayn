@@ -931,8 +931,13 @@ class AppLocalizationsAr extends AppLocalizations {
   String get compressComputing => 'جارٍ الضغط…';
 
   @override
-  String get compressAlphaFlattenWarning =>
-      'JPEG لا يحفظ الشفافية — ستُحفظ صورتك بصيغة تحفظ الشفافية بدلًا من ذلك.';
+  String get formatNoteNoAlpha => 'بدون شفافية';
+
+  @override
+  String get formatNoteNoHdr => 'بدون HDR';
+
+  @override
+  String get formatNoteNoAlphaNoHdr => 'بدون شفافية أو HDR';
 
   @override
   String stripMetadataQueued(num count) {

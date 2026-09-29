@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -332,16 +333,33 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
     );
   }
 
-  /// True when the user forced an opaque format (JPEG) on a transparent image —
-  /// the encode will flatten the alpha, so we warn first.
-  bool _flattensAlpha(FormatCapabilities caps) =>
-      _isSingle &&
-      _hasAlpha != false &&
-      ImageFormatPolicy.resolve(
-        choice: _format,
-        hasAlpha: _hasAlpha,
-        caps: caps,
-      ).requiresAlphaFlatten;
+  /// Light note on a format: only what the active image has and that choice
+  /// drops (user decision 2026-09-29). Never a warning; nothing for images
+  /// without transparency or HDR.
+  String? _formatNote(DefaultFormat choice) {
+    final facts = _facts;
+    if (facts == null) return null;
+    final resolved = ImageFormatPolicy.resolve(
+      choice: choice,
+      hasAlpha: facts.alpha,
+      caps: ref.read(formatCapabilitiesProvider),
+    ).format;
+    final lost = ImageFormatPolicy.losses(
+      format: resolved,
+      sourceAlpha: facts.alpha == true,
+      sourceDirectHdr: facts.directHdr == true,
+      sourceGainMap: facts.gainMap == true,
+      keepMetadata: _keepMetadata,
+      platformCopiesGainMap: Platform.isIOS,
+    );
+    final l = AppLocalizations.of(context);
+    return switch (lost) {
+      (alpha: true, hdr: true) => l.formatNoteNoAlphaNoHdr,
+      (alpha: true, hdr: false) => l.formatNoteNoAlpha,
+      (alpha: false, hdr: true) => l.formatNoteNoHdr,
+      (alpha: false, hdr: false) => null,
+    };
+  }
 
   void _switchActive(int newIndex) {
     if (newIndex == _activeAssetIndex) return;
@@ -528,6 +546,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
                       : HaynAdvancedSettingsCard(
                           key: const ValueKey('advanced'),
                           format: _format,
+                          formatNote: _formatNote,
                           quality: _quality,
                           keepMetadata: _keepMetadata,
                           bitDepth: _isSingle ? _bitDepth : null,
@@ -563,7 +582,6 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
                     encoding: _encoding,
                     beforeBytes: _beforeSize,
                     encoded: _encoded,
-                    flattensAlpha: _flattensAlpha(caps),
                   )
                 else
                   CompressEstimateCard(
@@ -663,13 +681,11 @@ class _RealResultCard extends StatelessWidget {
     required this.encoding,
     required this.beforeBytes,
     required this.encoded,
-    required this.flattensAlpha,
   });
 
   final bool encoding;
   final int beforeBytes;
   final EncodedImage? encoded;
-  final bool flattensAlpha;
 
   @override
   Widget build(BuildContext context) {
@@ -687,14 +703,6 @@ class _RealResultCard extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (flattensAlpha) ...[
-          HaynInlineBanner(
-            tone: HaynBannerTone.warning,
-            icon: Icons.warning_amber_rounded,
-            message: l.compressAlphaFlattenWarning,
-          ),
-          const SizedBox(height: AppSpacing.s2),
-        ],
         Container(
           padding: const EdgeInsets.all(AppSpacing.md),
           decoration: BoxDecoration(

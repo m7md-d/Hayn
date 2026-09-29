@@ -225,10 +225,10 @@
 
 ### PROD-02 · P3 · نص تحذير الشفافية لا يطابق السلوك
 
-- **الحالة:** مثبت بقراءة الكود؛ ينتظر قرار المستخدم.
+- **الحالة (2026-09-29):** أُصلح بقرار المستخدم. JPEG لصورة شفافة أو مجهولة الشفافية يُنفذ: `AlphaFlatten` يدمجها على الأبيض قبل أي محرك (DarkLib أو ImageIO أو الإضافة لقراءة ما لا يقرؤه package:image)، ثم تُنقل البيانات الوصفية من الأصل عند طلبها، ويسجل `alphaFlattened`. أزيل تحذير الشفافية و`requiresAlphaFlatten`، وحل محلهما نص خفيف على الصيغة من `ImageFormatPolicy.losses` يظهر فقط حين تحمل الأصلية ما ستفقده الصيغة. اختبارات: `test/alpha_flatten_test.dart` (دمج جزئي، 16 بت، palette)، وحالتان في `preservation_regression_test.dart`، و`losses` في `image_format_policy_test.dart`، واختبار المحاكي يقيس بكسل JPEG الناتج على iOS. لم يُختبر على Android، ولا HEIC شفاف على Android.
 - **المواضع:** `compressAlphaFlattenWarning` في [app_en.arb](../lib/app/l10n/app_en.arb) و[app_ar.arb](../lib/app/l10n/app_ar.arb)، `_flattensAlpha` في [compress_screen.dart](../lib/features/image_ops/presentation/compress_screen.dart)، بداية [ImageEncoder.encode](../lib/features/image_ops/data/image_encoder.dart).
 - **السبب والأثر:** النص يقول إن الصورة الشفافة ستُحفظ بصيغة تحفظ الشفافية بدل JPEG. منذ `910a281` الصيغة المحددة لا تتغير، وJPEG مع شفافية موجودة أو مجهولة يفشل. فالنص يعد بما لا يحدث، وهو أيضًا تحذير تقني من النوع الذي منعته قاعدة النصوص (flutter.md، 2026-09-28).
-- **معيار الإغلاق:** قرار المستخدم في سلوك JPEG مع الشفافية (دمجها على خلفية بصمت، أو صيغة أخرى، أو فشل)، ثم نص يطابقه أو لا نص، واختبار للسلوك.
+- **معيار الإغلاق:** تحقق؛ يبقى تحقق Android. نقل التاريخ مع `keepOriginalTime=false` عبر `transplant_metadata` لا يحذف تاريخ EXIF (IMG-12).
 - **أُغلق معه:** `compressBitDepthDesc` كان يقول «HDR is kept either way»؛ صار «Colour precision per channel» / «دقة الألوان لكل قناة».
 
 ## أمور أُصلحت أو استُبعدت — لا تُفتح من جديد بلا دليل

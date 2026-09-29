@@ -7,6 +7,7 @@ import 'package:flutter_image_compress/flutter_image_compress.dart' as fic;
 
 import '../../../core/darklib/darklib.dart';
 import '../../settings/providers/preferences_providers.dart';
+import 'alpha_flatten.dart';
 import 'native_avif_encoder.dart';
 import 'native_image_encoder.dart';
 import 'image_probe.dart';
@@ -15,7 +16,9 @@ import 'source_facts.dart';
 // Coordinates the existing backends from facts about the ORIGINAL source, read
 // before any engine runs (IMG-05). HDR policy (user decision, 2026-09-28): keep
 // HDR where the path exists, otherwise save a correct SDR rendition without
-// asking; PQ/HLG needs the platform tone mapper or is refused. Non-empty output
+// asking; PQ/HLG needs the platform tone mapper or is refused. JPEG for a
+// transparent source composites it onto white (user decision, 2026-09-29).
+// Non-empty output
 // is NOT proof that colour, orientation or metadata survived. Backend, format
 // and HDR outcomes are recorded in bounded release diagnostics.
 
@@ -73,7 +76,8 @@ abstract final class ImageEncoder {
   /// [fallbackChain]. Returns the bytes + the format actually produced. Throws
   /// if all permitted encoders fail. Format changes require explicit permission;
   /// backend recovery within the requested format remains allowed. A preservation
-  /// rejection is terminal. Diagnostics accompany success or failure.
+  /// rejection is terminal. Diagnostics accompany success or failure. What the
+  /// chosen format cannot hold (alpha in JPEG, HDR) is dropped without asking.
   static Future<EncodedImage> encode({
     required Uint8List source,
     required DefaultFormat target,
@@ -86,9 +90,8 @@ abstract final class ImageEncoder {
     int? maxWidth,
     int? maxHeight,
   }) => MediaDiagnostics.trace((trace) async {
-    final hasAlpha = facts.alpha;
-    if (target == DefaultFormat.auto ||
-        (target == DefaultFormat.jpeg && hasAlpha != false)) {
+    if (target == DefaultFormat.auto) {
+      // Auto must be resolved by ImageFormatPolicy before encoding.
       MediaDiagnostics.record(
         MediaBackend.imageEncoder,
         MediaOperation.encode,
@@ -130,6 +133,42 @@ abstract final class ImageEncoder {
         MediaDiagnosticCode.hdrUnverified,
       );
     }
+
+    // JPEG cannot hold alpha: flatten onto white first, the same on every
+    // platform. Metadata is carried over from the original afterwards.
+    var flattened = false;
+    if (target == DefaultFormat.jpeg && plan.alpha != false) {
+      Uint8List? flat;
+      try {
+        flat = await AlphaFlatten.toOpaquePng(input, toSdr: plan.hasHdr);
+      } on DarkLibPreservationFailure {
+        flat = null;
+      }
+      if (flat == null) {
+        MediaDiagnostics.record(
+          MediaBackend.imageEncoder,
+          MediaOperation.encode,
+          MediaDiagnosticCode.unavailable,
+        );
+        throw ImageEncodingFailure(target, trace.events);
+      }
+      MediaDiagnostics.record(
+        MediaBackend.imageEncoder,
+        MediaOperation.encode,
+        MediaDiagnosticCode.alphaFlattened,
+      );
+      if (plan.gainMap == true) {
+        MediaDiagnostics.record(
+          MediaBackend.imageEncoder,
+          MediaOperation.encode,
+          MediaDiagnosticCode.hdrToSdr,
+        );
+      }
+      input = flat;
+      plan = const SourceFacts.sdr(alpha: false);
+      flattened = true;
+    }
+    final hasAlpha = plan.alpha;
 
     final candidates = allowFormatFallback
         ? fallbackChain(target, hasAlpha)
@@ -188,8 +227,24 @@ abstract final class ImageEncoder {
           );
         }
         if (plan.gainMap == true) await _recordGainMap(encoded);
+        var bytes = encoded.bytes;
+        if (flattened && keepMetadata) {
+          final carried = await DarkLibCore.transplantMetadata(
+            source: source,
+            target: bytes,
+          );
+          if (carried == null) {
+            MediaDiagnostics.record(
+              MediaBackend.darklib,
+              MediaOperation.transplant,
+              MediaDiagnosticCode.preservationUnverified,
+            );
+          } else {
+            bytes = carried;
+          }
+        }
         return EncodedImage(
-          encoded.bytes,
+          bytes,
           encoded.format,
           backend: encoded.backend,
           requestedFormat: target,

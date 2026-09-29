@@ -110,10 +110,42 @@ void main() {
       );
     }
   });
-  test('forced JPEG with unknown alpha fails before encoding', () async {
-    var calls = 0;
-    messenger.setMockMethodCallHandler(channel, (_) async {
-      calls++;
+  // User decision 2026-09-29: JPEG for a transparent image is permission to
+  // drop the alpha. It is flattened onto white before any JPEG engine.
+  test('forced JPEG flattens transparency onto white first', () async {
+    final source = img.Image(width: 2, height: 1, numChannels: 4)
+      ..setPixelRgba(0, 0, 20, 40, 80, 0)
+      ..setPixelRgba(1, 0, 200, 100, 50, 255);
+    final sent = <Uint8List>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method != 'encodeImage') return null;
+      sent.add((call.arguments as Map)['bytes'] as Uint8List);
+      return Uint8List.fromList([255, 216, 255, ...List.filled(9, 0)]);
+    });
+    final r = await ImageEncoder.encode(
+      source: Uint8List.fromList(img.encodePng(source)),
+      target: DefaultFormat.jpeg,
+      quality: 80,
+      facts: const SourceFacts.sdr(alpha: true),
+      keepMetadata: false,
+    );
+    expect(r.format, DefaultFormat.jpeg);
+    expect(
+      r.diagnostics.map((d) => d.code),
+      contains(MediaDiagnosticCode.alphaFlattened),
+    );
+    final flat = img.decodePng(sent.single)!;
+    expect(flat.hasAlpha, isFalse);
+    final bg = flat.getPixel(0, 0);
+    expect((bg.r, bg.g, bg.b), (255, 255, 255));
+    final fg = flat.getPixel(1, 0);
+    expect((fg.r, fg.g, fg.b), (200, 100, 50));
+  });
+
+  test('JPEG with an unreadable source fails before any engine', () async {
+    final methods = <String>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      methods.add(call.method);
       return null;
     });
     await expectLater(
@@ -126,7 +158,7 @@ void main() {
       ),
       throwsA(isA<ImageEncodingFailure>()),
     );
-    expect(calls, 0);
+    expect(methods, isNot(contains('encodeImage')));
   });
   test('mismatched output container is rejected', () async {
     final png = Uint8List.fromList(

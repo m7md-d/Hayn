@@ -34,6 +34,7 @@ class HaynAdvancedSettingsCard extends ConsumerWidget {
     this.onKeepOriginalTimeChanged,
     this.keepTrashBackup,
     this.onKeepTrashChanged,
+    this.formatNote,
     super.key,
   });
 
@@ -66,6 +67,10 @@ class HaynAdvancedSettingsCard extends ConsumerWidget {
   final bool? keepTrashBackup;
   final ValueChanged<bool>? onKeepTrashChanged;
 
+  /// Light note for a format choice, e.g. "Without transparency" when it drops
+  /// something the current image has. Null or a null result shows nothing.
+  final String? Function(DefaultFormat choice)? formatNote;
+
   Future<void> _openFormatPicker(BuildContext context, WidgetRef ref) async {
     final l = AppLocalizations.of(context);
     final caps = ref.read(formatCapabilitiesProvider);
@@ -77,35 +82,42 @@ class HaynAdvancedSettingsCard extends ConsumerWidget {
     final options = <HaynPickerOption<DefaultFormat>>[
       HaynPickerOption(
           value: DefaultFormat.auto,
+          note: formatNote?.call(DefaultFormat.auto),
           label: l.formatAuto,
           description: l.formatAutoDesc,
           icon: Icons.auto_awesome_rounded),
       HaynPickerOption(
           value: DefaultFormat.avif,
+          note: formatNote?.call(DefaultFormat.avif),
           label: 'AVIF',
           description: l.formatAvifDesc,
           warning: avifHardware ? null : l.formatAvifSoftwareWarning),
       if (caps.supportsHeic)
         HaynPickerOption(
             value: DefaultFormat.heic,
+            note: formatNote?.call(DefaultFormat.heic),
             label: 'HEIC',
             description: l.formatHeicDesc)
       else if (caps.supportsHeif)
         HaynPickerOption(
             value: DefaultFormat.heic,
+            note: formatNote?.call(DefaultFormat.heic),
             label: 'HEIF',
             description: l.formatHeicDesc),
       if (caps.supportsWebp)
         HaynPickerOption(
             value: DefaultFormat.webp,
+            note: formatNote?.call(DefaultFormat.webp),
             label: 'WebP',
             description: l.formatWebpDesc),
       HaynPickerOption(
           value: DefaultFormat.jpeg,
+          note: formatNote?.call(DefaultFormat.jpeg),
           label: 'JPEG',
           description: l.formatJpegDesc),
       HaynPickerOption(
           value: DefaultFormat.png,
+          note: formatNote?.call(DefaultFormat.png),
           label: 'PNG',
           description: l.formatPngDesc),
     ];
@@ -146,6 +158,8 @@ class HaynAdvancedSettingsCard extends ConsumerWidget {
             supportsHeic: caps.supportsHeic,
             supportsHeif: caps.supportsHeif,
           );
+
+    final currentNote = formatNote?.call(format);
 
     return Container(
       padding: const EdgeInsets.all(AppSpacing.md),
@@ -189,6 +203,15 @@ class HaynAdvancedSettingsCard extends ConsumerWidget {
               ),
             ],
           ),
+          if (currentNote != null) ...[
+            const SizedBox(height: AppSpacing.s1),
+            Align(
+              alignment: AlignmentDirectional.centerEnd,
+              child: Text(currentNote,
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: hc.text3)),
+            ),
+          ],
 
           const Divider(height: AppSpacing.lg),
 

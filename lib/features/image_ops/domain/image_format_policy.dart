@@ -17,30 +17,25 @@ import '../../settings/providers/preferences_providers.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 
 class ResolvedImageFormat {
-  const ResolvedImageFormat(this.format, {this.requiresAlphaFlatten = false});
+  const ResolvedImageFormat(this.format);
 
   /// The concrete output format — never [DefaultFormat.auto].
   final DefaultFormat format;
 
-  /// True ONLY when the user explicitly forced an opaque format (JPEG) on an
-  /// image that has transparency. The UI must warn + get explicit confirmation
-  /// before flattening (e.g. onto white). Auto never sets this — it routes
-  /// alpha images to an alpha-safe format instead.
-  final bool requiresAlphaFlatten;
-
   @override
   bool operator ==(Object other) =>
-      other is ResolvedImageFormat &&
-      other.format == format &&
-      other.requiresAlphaFlatten == requiresAlphaFlatten;
+      other is ResolvedImageFormat && other.format == format;
 
   @override
-  int get hashCode => Object.hash(format, requiresAlphaFlatten);
+  int get hashCode => format.hashCode;
 
   @override
-  String toString() =>
-      'ResolvedImageFormat($format, flatten: $requiresAlphaFlatten)';
+  String toString() => 'ResolvedImageFormat($format)';
 }
+
+/// What the saved file will lack that the source has. Drives a light note on
+/// the format, never a warning (user decision, 2026-09-29).
+typedef FormatLosses = ({bool alpha, bool hdr});
 
 abstract final class ImageFormatPolicy {
   /// Resolve the concrete target format for an encode.
@@ -48,18 +43,14 @@ abstract final class ImageFormatPolicy {
   /// * [choice] == auto → the efficiency tree, branched on [hasAlpha]:
   ///   - alpha:    AVIF → HEIC/HEIF → WebP → **PNG**   (never JPEG)
   ///   - no alpha: AVIF → HEIC/HEIF → WebP → JPEG
-  /// * [choice] forced → honoured as-is; a forced JPEG on an alpha image is
-  ///   returned with [ResolvedImageFormat.requiresAlphaFlatten] = true so the
-  ///   caller can warn before flattening (we never drop alpha silently).
+  /// * [choice] forced → honoured as-is. A forced JPEG on an alpha image is
+  ///   the user's permission to flatten it (see [losses]).
   static ResolvedImageFormat resolve({
     required DefaultFormat choice,
     required bool? hasAlpha,
     required FormatCapabilities caps,
   }) {
-    if (choice != DefaultFormat.auto) {
-      final flattens = hasAlpha != false && !keepsAlpha(choice);
-      return ResolvedImageFormat(choice, requiresAlphaFlatten: flattens);
-    }
+    if (choice != DefaultFormat.auto) return ResolvedImageFormat(choice);
 
     // Auto — walk the efficiency tree. AVIF and HEIC/HEIF and WebP all keep
     // alpha, so the only difference the alpha branch makes is the final
@@ -76,6 +67,31 @@ abstract final class ImageFormatPolicy {
     return ResolvedImageFormat(
       hasAlpha != false ? DefaultFormat.png : DefaultFormat.jpeg,
     );
+  }
+
+  /// Losses of saving a source with these facts as [format] (resolved). Only
+  /// what the source actually has can be lost, so an opaque SDR photo never
+  /// gets a note. HDR survives only where ImageIO copies a gain map next to
+  /// its base (HEIC/JPEG with metadata, iOS); every other path saves the SDR
+  /// image, and no Rust path keeps HDR yet (IMG-10). A flattened JPEG is
+  /// re-encoded from SDR pixels, so it drops a gain map too.
+  static FormatLosses losses({
+    required DefaultFormat format,
+    required bool sourceAlpha,
+    required bool sourceDirectHdr,
+    required bool sourceGainMap,
+    required bool keepMetadata,
+    required bool platformCopiesGainMap,
+  }) {
+    final alpha = sourceAlpha && !keepsAlpha(format);
+    final hdrKept =
+        sourceGainMap &&
+        !sourceDirectHdr &&
+        !alpha &&
+        keepMetadata &&
+        platformCopiesGainMap &&
+        (format == DefaultFormat.heic || format == DefaultFormat.jpeg);
+    return (alpha: alpha, hdr: (sourceDirectHdr || sourceGainMap) && !hdrKept);
   }
 
   /// Whether a format can carry an alpha channel. JPEG is the only common

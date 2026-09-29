@@ -1724,11 +1724,23 @@ abstract class AppLocalizations {
   /// **'Compressing…'**
   String get compressComputing;
 
-  /// No description provided for @compressAlphaFlattenWarning.
+  /// No description provided for @formatNoteNoAlpha.
   ///
   /// In en, this message translates to:
-  /// **'JPEG can\'t keep transparency — your image will be saved in a transparency-safe format instead.'**
-  String get compressAlphaFlattenWarning;
+  /// **'Without transparency'**
+  String get formatNoteNoAlpha;
+
+  /// No description provided for @formatNoteNoHdr.
+  ///
+  /// In en, this message translates to:
+  /// **'Without HDR'**
+  String get formatNoteNoHdr;
+
+  /// No description provided for @formatNoteNoAlphaNoHdr.
+  ///
+  /// In en, this message translates to:
+  /// **'Without transparency or HDR'**
+  String get formatNoteNoAlphaNoHdr;
 
   /// No description provided for @stripMetadataQueued.
   ///

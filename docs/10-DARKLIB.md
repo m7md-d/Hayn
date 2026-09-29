@@ -88,6 +88,7 @@ verify(sourceFacts, plan, output) -> VerificationReport
 - `transcode` واحدة بخيار `keep_metadata` تعيد `Transcoded { bytes, hdr }`، وأزيلت `transcode_keep_metadata`. مصدر gain map يُرمَّز أساسه SDR ويُبلَّغ عنه، بما فيه AVIF→AVIF. أوقف مسار الحفظ لأن ImageIO لم يرَ الخريطة التي يعيد `build_hdr_avif` بناءها (IMG-10)، ويعود بعد إصلاح الكاتب والتحقق المستقل.
 - PQ/HLG: نسخة SDR من ImageIO (iOS 17+) قبل أي محرك، يُتحقق منها فإن بقيت PQ رُفضت، وإلا رفض مبكر. محاكي iOS 26.3 يتجاهل الطلب فيرفض. عتاد AVIF على Android مشروط بمصدر معروف أنه ليس PQ/HLG.
 - لا تحذير للمستخدم؛ التشخيص `hdrToSdr` و`hdrKeepFailed` و`hdrToneMapUnavailable` و`hdrUnverified`.
+- 2026-09-29: JPEG لصورة شفافة يُدمج على الأبيض قبل أي محرك (`alphaFlattened`)، والواجهة تكتفي بنص خفيف على الصيغة حين تحمل الأصلية ما ستفقده.
 
 نقل رمز الرفض النصي مرحلة انتقالية صغيرة حتى يعتمد API typed لحقائق المصدر والخطة ونتيجة الحفظ؛ عندها يستبدل الرمز وتُحدّث اختبارات الجسر معه، ولا يبقى مساران متوازيان. شرط إزالته وجود بديل typed يثبت الرفض على FFI الفعلية، لا مجرد تغيير أسماء Dart.
 

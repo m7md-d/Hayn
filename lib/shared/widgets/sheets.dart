@@ -102,6 +102,7 @@ class HaynPickerOption<T> {
     this.description,
     this.icon,
     this.warning,
+    this.note,
   });
   final T value;
   final String label;
@@ -111,6 +112,10 @@ class HaynPickerOption<T> {
   /// Optional warning shown as a yellow pill next to the label
   /// (e.g. "Software encoding — slower" for AVIF without hw accel).
   final String? warning;
+
+  /// Optional light note under the description, not a warning (e.g. "Without
+  /// transparency" when this choice drops something the source has).
+  final String? note;
 }
 
 /// Opens a picker sheet that **stays open** as the user taps options. The
@@ -259,6 +264,16 @@ class _PickerSheetBodyState<T> extends State<_PickerSheetBody<T>> {
                                 widget.options[i].description!,
                                 style: theme.textTheme.bodySmall?.copyWith(
                                   color: hc.text2,
+                                  height: 1.4,
+                                ),
+                              ),
+                            ],
+                            if (widget.options[i].note != null) ...[
+                              const SizedBox(height: 2),
+                              Text(
+                                widget.options[i].note!,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: hc.text3,
                                   height: 1.4,
                                 ),
                               ),
