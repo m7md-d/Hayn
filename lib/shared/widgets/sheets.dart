@@ -5,11 +5,12 @@ import '../../app/theme/design_tokens.dart';
 import 'buttons.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Bottom sheets — single helper that respects the theme's drag handle, radius
-// and surface color. Use this instead of showModalBottomSheet directly.
+// Bottom sheets — single helper with the app's drag handle, radius and surface
+// color. Use this instead of showModalBottomSheet directly.
 //
 //   showHaynSheet           generic sheet — pass any widget as body
 //   showHaynPickerSheet<T>  list of choices with checkmarks (theme, language…)
+//   HaynSheetHandle         the drag handle, for sheets built in place
 //   HaynSheetHeader         consistent title + close pattern inside a sheet
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -31,6 +32,10 @@ Future<T?> showHaynSheet<T>({
     enableDrag: enableDrag,
     useSafeArea: true,
     backgroundColor: Colors.transparent,
+    // The modal's own handle sits on its transparent material, above the
+    // surface below: over the page, with the content flush at the top edge.
+    // Ours is drawn inside the surface.
+    showDragHandle: false,
     builder: (ctx) => DecoratedBox(
       decoration: BoxDecoration(
         color: ctx.hc.surface,
@@ -38,9 +43,30 @@ Future<T?> showHaynSheet<T>({
           top: Radius.circular(AppRadius.xl),
         ),
       ),
-      child: builder(ctx),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [const HaynSheetHandle(), Flexible(child: builder(ctx))],
+      ),
     ),
   );
+}
+
+/// The grab bar at the top of every sheet.
+class HaynSheetHandle extends StatelessWidget {
+  const HaynSheetHandle({super.key});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(top: AppSpacing.s2, bottom: AppSpacing.s1),
+        child: Container(
+          width: 40,
+          height: 5,
+          decoration: BoxDecoration(
+            color: context.hc.border,
+            borderRadius: BorderRadius.circular(2.5),
+          ),
+        ),
+      );
 }
 
 class HaynSheetHeader extends StatelessWidget {
@@ -48,12 +74,17 @@ class HaynSheetHeader extends StatelessWidget {
     required this.title,
     this.subtitle,
     this.trailing,
+    this.alignLeft = false,
     super.key,
   });
 
   final String title;
   final String? subtitle;
   final Widget? trailing;
+
+  /// Pins both lines to the left edge whatever the language direction (a
+  /// file name and its date read from the left).
+  final bool alignLeft;
 
   @override
   Widget build(BuildContext context) {
@@ -69,13 +100,20 @@ class HaynSheetHeader extends StatelessWidget {
         children: [
           Expanded(
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: alignLeft
+                  ? CrossAxisAlignment.stretch
+                  : CrossAxisAlignment.start,
               children: [
-                Text(title, style: theme.textTheme.titleLarge),
+                Text(
+                  title,
+                  textAlign: alignLeft ? TextAlign.left : null,
+                  style: theme.textTheme.titleLarge,
+                ),
                 if (subtitle != null) ...[
                   const SizedBox(height: 2),
                   Text(
                     subtitle!,
+                    textAlign: alignLeft ? TextAlign.left : null,
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: hc.text2,
                       height: 1.4,

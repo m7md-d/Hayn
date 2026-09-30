@@ -10,7 +10,8 @@ import '../../../../app/theme/design_tokens.dart';
 // AssetVideoPlayer — in-app playback for a single video AssetEntity.
 //
 // Layout: video filled to the available width with its aspect ratio. Tap
-// toggles play/pause; a mute button sits in the corner. A thin progress bar
+// toggles play/pause; a mute button sits in the corner unless the host owns
+// the sound state ([muted], the viewer's app bar). A thin progress bar
 // at the bottom shows playhead position; tapping anywhere on it seeks.
 //
 // Controller is created lazily once the underlying File resolves from
@@ -18,8 +19,12 @@ import '../../../../app/theme/design_tokens.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 
 class AssetVideoPlayer extends StatefulWidget {
-  const AssetVideoPlayer({required this.asset, super.key});
+  const AssetVideoPlayer({required this.asset, this.muted, super.key});
   final AssetEntity asset;
+
+  /// Sound state set by a host that shows its own mute control; null keeps
+  /// the player's corner button.
+  final bool? muted;
 
   @override
   State<AssetVideoPlayer> createState() => _AssetVideoPlayerState();
@@ -29,12 +34,22 @@ class _AssetVideoPlayerState extends State<AssetVideoPlayer> {
   VideoPlayerController? _ctrl;
   bool _initialising = true;
   bool _ready = false;
-  bool _muted = false;
+  late bool _muted = widget.muted ?? false;
 
   @override
   void initState() {
     super.initState();
     _init();
+  }
+
+  @override
+  void didUpdateWidget(AssetVideoPlayer old) {
+    super.didUpdateWidget(old);
+    final muted = widget.muted;
+    if (muted != null && muted != _muted) {
+      _muted = muted;
+      _ctrl?.setVolume(muted ? 0 : 1);
+    }
   }
 
   Future<void> _init() async {
@@ -47,6 +62,7 @@ class _AssetVideoPlayerState extends State<AssetVideoPlayer> {
     try {
       await ctrl.initialize();
       ctrl.setLooping(false);
+      await ctrl.setVolume(_muted ? 0 : 1);
       ctrl.addListener(_onTick);
       if (!mounted) {
         await ctrl.dispose();
@@ -138,14 +154,15 @@ class _AssetVideoPlayerState extends State<AssetVideoPlayer> {
             child: _PlayOverlay(),
           ),
 
-          // Mute toggle in top-end corner.
-          PositionedDirectional(
-            top: 16,
-            end: 16,
-            child: SafeArea(
-              child: _MuteButton(muted: _muted, onTap: _toggleMute),
+          // Mute toggle in top-end corner, when the host has none.
+          if (widget.muted == null)
+            PositionedDirectional(
+              top: 16,
+              end: 16,
+              child: SafeArea(
+                child: _MuteButton(muted: _muted, onTap: _toggleMute),
+              ),
             ),
-          ),
 
           // Bottom progress bar — thin tappable bar.
           Positioned(

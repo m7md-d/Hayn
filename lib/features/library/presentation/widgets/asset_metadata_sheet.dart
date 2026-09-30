@@ -147,7 +147,11 @@ class _AssetMetadataSheetState extends State<AssetMetadataSheet> {
     final isVideo = asset.type == AssetType.video;
     final mp = (asset.width * asset.height) / 1e6;
 
+    // Hosted at the bottom of the screen (modal or the viewer's pull-up
+    // sheet), so only the bottom inset applies; the top one would open a
+    // status-bar-high gap above the header.
     return SafeArea(
+      top: false,
       child: FutureBuilder<_FileFacts>(
         future: _facts,
         builder: (ctx, snap) {
@@ -255,6 +259,7 @@ class _AssetMetadataSheetState extends State<AssetMetadataSheet> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   HaynSheetHeader(
+                    alignLeft: true,
                     title: facts?.filename ?? asset.id,
                     subtitle: _formatDate(asset.createDateTime,
                         Localizations.localeOf(context).languageCode),

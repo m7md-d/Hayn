@@ -92,6 +92,8 @@
   "toolCompressVideoDesc": "Reduce video size",
   "toolRemoveAudio": "Remove sound",
   "toolRemoveAudioDesc": "Mute video without quality loss",
+  "videoMute": "Mute",
+  "videoUnmute": "Unmute",
   "toolSeparateMusic": "Remove music",
   "toolSeparateDesc": "Remove music, keep voices",
   "toolAnimateFromVideo": "Video → animated",

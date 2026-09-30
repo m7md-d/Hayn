@@ -255,6 +255,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get toolRemoveAudioDesc => 'Mute video without quality loss';
 
   @override
+  String get videoMute => 'Mute';
+
+  @override
+  String get videoUnmute => 'Unmute';
+
+  @override
   String get toolSeparateMusic => 'Remove music';
 
   @override

@@ -258,6 +258,12 @@ class AppLocalizationsAr extends AppLocalizations {
   String get toolRemoveAudioDesc => 'إسكات الفيديو دون فقد جودته';
 
   @override
+  String get videoMute => 'كتم الصوت';
+
+  @override
+  String get videoUnmute => 'تشغيل الصوت';
+
+  @override
   String get toolSeparateMusic => 'إزالة الموسيقى';
 
   @override

@@ -572,6 +572,18 @@ abstract class AppLocalizations {
   /// **'Mute video without quality loss'**
   String get toolRemoveAudioDesc;
 
+  /// No description provided for @videoMute.
+  ///
+  /// In en, this message translates to:
+  /// **'Mute'**
+  String get videoMute;
+
+  /// No description provided for @videoUnmute.
+  ///
+  /// In en, this message translates to:
+  /// **'Unmute'**
+  String get videoUnmute;
+
   /// No description provided for @toolSeparateMusic.
   ///
   /// In en, this message translates to:

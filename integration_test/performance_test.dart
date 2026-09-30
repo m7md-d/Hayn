@@ -23,6 +23,7 @@ import 'package:hayn/features/image_ops/data/source_facts.dart';
 import 'package:hayn/features/library/presentation/asset_detail_screen.dart';
 import 'package:hayn/features/library/presentation/library_screen.dart';
 import 'package:hayn/features/library/presentation/providers/library_provider.dart';
+import 'package:hayn/features/library/presentation/widgets/asset_metadata_sheet.dart';
 import 'package:hayn/features/library/presentation/widgets/id_thumbnail.dart';
 import 'package:hayn/features/onboarding/providers/onboarding_provider.dart';
 import 'package:hayn/features/settings/presentation/settings_screen.dart';
@@ -169,9 +170,17 @@ void main() {
       await _unmount(tester);
       return;
     }
-    final tile = _visibleTiles(
-      tester,
-    )[math.min(4, _visibleTiles(tester).length - 1)];
+    // A photo from the fifth tile on: the frame check below needs one.
+    final videos = {
+      for (final e in _library(tester).entries)
+        if (e.isVideo) e.id,
+    };
+    final tiles = _visibleTiles(tester);
+    final tile = tiles
+        .skip(math.min(4, tiles.length - 1))
+        .followedBy(tiles)
+        .firstWhere((t) => !videos.contains(t.id), orElse: () => tiles.first)
+        .rect;
 
     r['open'] = await _frames(() async {
       final open = Stopwatch()..start();
@@ -183,6 +192,107 @@ void main() {
     });
     _check(r, 'openFirstFrameMs', _budget.responseMs);
     _checkFrames(r, 'open');
+
+    // Layout, not speed. The 360 px placeholder and the 1080 px rendition
+    // share one frame, so the photo never grows when the sharp one lands; and
+    // the action bar's backdrop reaches the screen's bottom edge.
+    try {
+      await _waitFor(tester, () {
+        final edges = _centreRenditions(tester).map((c) => c.edge);
+        return edges.any((e) => e >= _sharpEdge) &&
+            edges.any((e) => e < _sharpEdge);
+      }, timeout: const Duration(seconds: 3));
+      final sizes = {
+        for (final c in _centreRenditions(tester))
+          '${c.size.width.round()}x${c.size.height.round()}',
+      };
+      r['renditionFrames'] = sizes.toList();
+      if (sizes.length != 1) _flag(r, 'renditions differ in size: $sizes');
+    } on TimeoutException {
+      r['renditionFrames'] = 'not measured: no placeholder and 1080 px pair';
+    }
+    final gap = _screen(tester).bottom - _actionBarBottom(tester);
+    r['actionBarGapPx'] = gap.round();
+    if (gap.abs() > .5) _flag(r, 'action bar stops ${gap.round()} px short');
+
+    // The info button raises the same pull-up sheet as a swipe up (no modal
+    // of its own), and while the sheet is up no swipe changes the photo.
+    final info = find.descendant(
+      of: find.byType(AppBar),
+      matching: find.byIcon(Icons.info_outline_rounded),
+    );
+    final pager0 = _detailPager(tester);
+    final photo = pager0.page!.round();
+    await tester.tap(info);
+    var opened = true;
+    try {
+      await _waitFor(tester, () => _openDetailsSheets(tester) == 1);
+      await _idleSheet(tester);
+    } on TimeoutException {
+      opened = false;
+    }
+    final modal = _has(find.byType(BottomSheet));
+    for (final dx in [-300.0, 300.0]) {
+      await tester.fling(find.byType(AssetDetailScreen), Offset(dx, 0), 1500);
+      await _idle(tester, pager0.position);
+    }
+    final stayed = pager0.page!.round() == photo;
+    final stillOpen = _openDetailsSheets(tester) == 1;
+    await tester.tap(info);
+    var closed = true;
+    try {
+      await _waitFor(tester, () => _openDetailsSheets(tester) == 0);
+    } on TimeoutException {
+      closed = false;
+    }
+    r['infoSheet'] = {
+      'opensPullUpSheet': opened,
+      'modal': modal,
+      'swipeKeptPhoto': stayed,
+      'sheetStayedOpen': stillOpen,
+      'closesOnSecondTap': closed,
+    };
+    if (!opened || modal || !stayed || !stillOpen || !closed) {
+      _flag(r, 'details sheet: ${r['infoSheet']}');
+    }
+
+    // No hand swipes perfectly level. A swipe tilted about 6° changes the
+    // photo and never lifts the details sheet (which would lock the pager);
+    // a swipe up still raises it.
+    var tiltedMoved = false;
+    var liftedByTilt = false;
+    for (final dx in [-300.0, 300.0]) {
+      final from = pager0.page!.round();
+      await tester.fling(find.byType(AssetDetailScreen), Offset(dx, -30), 1500);
+      if (_openDetailsSheets(tester, minRise: 1) > 0) liftedByTilt = true;
+      await _idle(tester, pager0.position);
+      if (pager0.page!.round() != from) {
+        tiltedMoved = true;
+        break;
+      }
+    }
+    await tester.fling(
+      find.byType(AssetDetailScreen),
+      const Offset(0, -250),
+      1200,
+    );
+    var swipeUpOpens = true;
+    try {
+      await _waitFor(tester, () => _openDetailsSheets(tester) == 1);
+      await _idleSheet(tester);
+      await tester.tap(info);
+      await _waitFor(tester, () => _openDetailsSheets(tester) == 0);
+    } on TimeoutException {
+      swipeUpOpens = false;
+    }
+    r['swipeDirection'] = {
+      'tiltedSwipeChangesPhoto': tiltedMoved,
+      'tiltedSwipeLiftsSheet': liftedByTilt,
+      'swipeUpOpensSheet': swipeUpOpens,
+    };
+    if (!tiltedMoved || liftedByTilt || !swipeUpOpens) {
+      _flag(r, 'swipe direction: ${r['swipeDirection']}');
+    }
 
     final pager = _detailPager(tester);
     // Swipe toward later photos. RTL reverses the pager, so the direction is
@@ -196,10 +306,19 @@ void main() {
     // Why a swipe missed the sharp image: the page type and the long edge
     // shown after 3 s. Numbers only; nothing about the photo itself.
     final missed = <String>[];
+    // The mute control lives in the app bar, on video pages only.
+    var videoPages = 0;
+    var muteShown = 0;
+    var muteOnPhoto = 0;
     r['swipes'] = await _frames(() async {
       for (var i = 0; i < 14 && sharp.length + blurry < 10; i++) {
         final from = pager.page!.round();
-        await tester.fling(find.byType(AssetDetailScreen), Offset(dx, 0), 1500);
+        // Tilted like a thumb, alternating up and down.
+        await tester.fling(
+          find.byType(AssetDetailScreen),
+          Offset(dx, i.isEven ? -30 : 30),
+          1500,
+        );
         final released = Stopwatch()..start();
         final to = pager.page!.round();
         if (to == from) {
@@ -225,9 +344,29 @@ void main() {
           );
         }
         await _idle(tester, pager.position);
+        final hasMute = _has(
+          find.descendant(
+            of: find.byType(AppBar),
+            matching: find.byIcon(Icons.volume_up_rounded),
+          ),
+        );
+        if (_library(tester).entries[pager.page!.round()].isVideo) {
+          videoPages++;
+          if (hasMute) muteShown++;
+        } else if (hasMute) {
+          muteOnPhoto++;
+        }
         await Future<void>.delayed(const Duration(milliseconds: 250));
       }
     });
+    r['muteButton'] = {
+      'videoPages': videoPages,
+      'shown': muteShown,
+      'onPhotos': muteOnPhoto,
+    };
+    if (muteShown != videoPages || muteOnPhoto > 0) {
+      _flag(r, 'mute button: ${r['muteButton']}');
+    }
     _checkFrames(r, 'swipes');
     r['sharpAfterSwipeMs'] = _stats(sharp);
     r['notSharpWithin3s'] = blurry;
@@ -701,9 +840,9 @@ Rect _screen(WidgetTester tester) =>
     Offset.zero & (tester.view.physicalSize / tester.view.devicePixelRatio);
 
 /// Grid tiles on screen, top to bottom.
-List<Rect> _visibleTiles(WidgetTester tester) {
+List<({Rect rect, String id})> _visibleTiles(WidgetTester tester) {
   final screen = _screen(tester);
-  final rects = <Rect>[
+  final tiles = [
     for (final e
         in find
             .descendant(
@@ -713,10 +852,104 @@ List<Rect> _visibleTiles(WidgetTester tester) {
             .evaluate())
       if (e.renderObject case final RenderBox box
           when box.attached && box.hasSize)
-        box.localToGlobal(Offset.zero) & box.size,
-  ].where((r) => screen.deflate(1).contains(r.center)).toList();
-  rects.sort((a, b) => a.top != b.top ? a.top.compareTo(b.top) : 0);
-  return rects;
+        (
+          rect: box.localToGlobal(Offset.zero) & box.size,
+          id: (e.widget as IdThumbnail).id,
+        ),
+  ].where((t) => screen.deflate(1).contains(t.rect.center)).toList();
+  tiles.sort((a, b) => a.rect.top.compareTo(b.rect.top));
+  return tiles;
+}
+
+/// Decoded renditions at the viewer's centre: long edge and laid-out size.
+List<({int edge, Size size})> _centreRenditions(WidgetTester tester) {
+  final centre = _screen(tester).center;
+  return [
+    for (final e
+        in find
+            .descendant(
+              of: find.byType(AssetDetailScreen),
+              matching: find.byType(RawImage),
+            )
+            .evaluate())
+      if ((e.widget as RawImage).image case final image?)
+        if (e.renderObject case final RenderBox box
+            when box.attached &&
+                box.hasSize &&
+                (box.localToGlobal(Offset.zero) & box.size).contains(centre))
+          (edge: math.max(image.width, image.height), size: box.size),
+  ];
+}
+
+/// Details sheets showing in the viewer (the pull-up sheet slides in from
+/// below; a closed one sits past the screen's bottom edge).
+int _openDetailsSheets(WidgetTester tester, {double minRise = 100}) {
+  final bottom = _screen(tester).bottom;
+  return find
+      .descendant(
+        of: find.byType(AssetDetailScreen),
+        matching: find.byType(AssetMetadataSheet),
+      )
+      .evaluate()
+      .where((e) {
+        final box = e.renderObject;
+        return box is RenderBox &&
+            box.attached &&
+            box.localToGlobal(Offset.zero).dy < bottom - minRise;
+      })
+      .length;
+}
+
+/// Lets the sheet's open animation finish: the highest (open) sheet's top
+/// holds still for 100 ms (polls come faster than frames).
+Future<void> _idleSheet(WidgetTester tester) async {
+  double? last;
+  final still = Stopwatch();
+  await _waitFor(tester, () {
+    final tops = [
+      for (final e
+          in find
+              .descendant(
+                of: find.byType(AssetDetailScreen),
+                matching: find.byType(AssetMetadataSheet),
+              )
+              .evaluate())
+        if (e.renderObject case final RenderBox box when box.attached)
+          box.localToGlobal(Offset.zero).dy,
+    ];
+    if (tops.isEmpty) return false;
+    final y = tops.reduce(math.min);
+    if (y != last) {
+      last = y;
+      still
+        ..reset()
+        ..start();
+    }
+    return still.elapsedMilliseconds > 100;
+  });
+}
+
+/// Bottom edge of the viewer's action bar backdrop (the gradient behind the
+/// tool labels).
+double _actionBarBottom(WidgetTester tester) {
+  final l = AppLocalizations.of(tester.element(find.byType(AssetDetailScreen)));
+  final backdrop = find
+      .ancestor(
+        of: find
+            .descendant(
+              of: find.byType(AssetDetailScreen),
+              matching: find.text(l.selectionMore),
+            )
+            .first,
+        matching: find.byWidgetPredicate(
+          (w) =>
+              w is Container &&
+              w.decoration is BoxDecoration &&
+              (w.decoration! as BoxDecoration).gradient != null,
+        ),
+      )
+      .first;
+  return tester.getRect(backdrop).bottom;
 }
 
 /// Grid thumbnails on screen, and how many already show decoded pixels.

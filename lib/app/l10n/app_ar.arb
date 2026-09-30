@@ -92,6 +92,8 @@
   "toolCompressVideoDesc": "تقليل حجم الفيديو",
   "toolRemoveAudio": "حذف الصوت",
   "toolRemoveAudioDesc": "إسكات الفيديو دون فقد جودته",
+  "videoMute": "كتم الصوت",
+  "videoUnmute": "تشغيل الصوت",
   "toolSeparateMusic": "إزالة الموسيقى",
   "toolSeparateDesc": "إزالة الموسيقى، إبقاء الأصوات",
   "toolAnimateFromVideo": "فيديو إلى متحرّكة",

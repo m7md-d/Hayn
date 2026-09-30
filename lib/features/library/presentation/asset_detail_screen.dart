@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -63,6 +64,14 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
   /// horizontal swipes to neighbouring assets.
   bool _zoomLocked = false;
 
+  /// Video sound, shared by every video page and toggled from the app bar;
+  /// it stays as set while the viewer is open.
+  bool _muted = false;
+
+  /// Bumped by the app bar's info button; the active page opens (or closes)
+  /// its pull-up details sheet, the same one a swipe up reveals.
+  final ValueNotifier<int> _infoToggle = ValueNotifier(0);
+
   @override
   void initState() {
     super.initState();
@@ -108,6 +117,7 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
   @override
   void dispose() {
     _ctrl?.dispose();
+    _infoToggle.dispose();
     super.dispose();
   }
 
@@ -147,15 +157,6 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
   void _scrubToIndex(int i) {
     if (_ctrl == null || i == _currentIndex) return;
     _ctrl!.jumpToPage(i);
-  }
-
-  Future<void> _openInfo(BuildContext context) async {
-    final asset = await AssetEntityCache.load(_entries[_currentIndex].id);
-    if (asset == null || !context.mounted) return;
-    showHaynSheet(
-      context: context,
-      builder: (_) => AssetMetadataSheet(asset: asset),
-    );
   }
 
   void _action(String name) {
@@ -367,7 +368,15 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
                 : 0.0,
             child: _DetailAppBar(
               title: _titleFor(_entries[_currentIndex]),
-              onInfo: () => _openInfo(context),
+              muted: isVideo ? _muted : null,
+              onToggleMute: () {
+                HapticFeedback.selectionClick();
+                setState(() => _muted = !_muted);
+              },
+              onInfo: () {
+                HapticFeedback.selectionClick();
+                _infoToggle.value++;
+              },
               onShare: _share,
               onDuplicate: _duplicate,
               onDelete: _delete,
@@ -390,8 +399,9 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
             onPageChanged: _onPageChanged,
             // While the current page is zoom-locked (2+ fingers or scale > 1)
             // the PageView is frozen so a horizontal pinch motion never gets
-            // hijacked as a swipe to the next asset.
-            physics: _zoomLocked
+            // hijacked as a swipe to the next asset. Same while its details
+            // sheet is up, so the sheet never stays over another photo.
+            physics: _zoomLocked || _infoProgress > 0
                 ? const NeverScrollableScrollPhysics()
                 : const BouncingScrollPhysics(),
             itemCount: _entries.length,
@@ -400,6 +410,8 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
               return _AssetPage(
                 entry: entry,
                 isActive: i == _currentIndex,
+                muted: _muted,
+                infoToggle: _infoToggle,
                 onTap: _toggleUi,
                 onInfoProgressChanged: i == _currentIndex
                     ? (p) {
@@ -422,7 +434,8 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
           Positioned(
             left: 0, right: 0, bottom: 0,
             child: IgnorePointer(
-              ignoring: !_uiVisible || _infoProgress > 0.5,
+              // The filmstrip changes photos too; locked with the pager.
+              ignoring: !_uiVisible || _infoProgress > 0,
               child: AnimatedSlide(
                 duration: AppDuration.normal,
                 curve: AppCurves.standard,
@@ -431,38 +444,38 @@ class _AssetDetailScreenState extends ConsumerState<AssetDetailScreen> {
                   opacity: _uiVisible
                       ? (1.0 - _infoProgress).clamp(0.0, 1.0)
                       : 0.0,
-                  child: SafeArea(
-                    top: false,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (_entries.length > 1)
-                          AssetFilmstrip(
-                            entries: _entries,
-                            currentIndex: _currentIndex,
-                            onSelect: _jumpToIndex,
-                            onScrub: _scrubToIndex,
-                          ),
-                        _DetailActionBar(
-                          isVideo: isVideo,
-                          onCompress: _compress,
-                          onCrop: _crop,
-                          onStrip: _stripMetadata,
-                          // The bottom bar's "more" is for additional TOOLS
-                          // (its own topic) — distinct from the app-bar dots
-                          // which are asset actions (share/duplicate/delete).
-                          onMore: () => _action(l.selectionMore),
-                          // Dedicated video routes — the unified editor is
-                          // still available via /video-edit/{id} for power
-                          // users, but each common operation now lands on
-                          // its own focused screen.
-                          onTrim: _trim,
-                          onCropVideo: _cropVideo,
-                          onRemoveAudio: _removeAudio,
-                          onCompressVideo: _videoEdit,
+                  // No SafeArea: the action bar's backdrop runs to the
+                  // screen's bottom edge and pads its buttons above the
+                  // home indicator itself.
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_entries.length > 1)
+                        AssetFilmstrip(
+                          entries: _entries,
+                          currentIndex: _currentIndex,
+                          onSelect: _jumpToIndex,
+                          onScrub: _scrubToIndex,
                         ),
-                      ],
-                    ),
+                      _DetailActionBar(
+                        isVideo: isVideo,
+                        onCompress: _compress,
+                        onCrop: _crop,
+                        onStrip: _stripMetadata,
+                        // The bottom bar's "more" is for additional TOOLS
+                        // (its own topic) — distinct from the app-bar dots
+                        // which are asset actions (share/duplicate/delete).
+                        onMore: () => _action(l.selectionMore),
+                        // Dedicated video routes — the unified editor is
+                        // still available via /video-edit/{id} for power
+                        // users, but each common operation now lands on
+                        // its own focused screen.
+                        onTrim: _trim,
+                        onCropVideo: _cropVideo,
+                        onRemoveAudio: _removeAudio,
+                        onCompressVideo: _videoEdit,
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -491,6 +504,8 @@ class _AssetPage extends StatefulWidget {
   const _AssetPage({
     required this.entry,
     required this.isActive,
+    required this.muted,
+    required this.infoToggle,
     required this.onTap,
     this.onInfoProgressChanged,
     this.onZoomLockedChanged,
@@ -498,6 +513,8 @@ class _AssetPage extends StatefulWidget {
 
   final LibraryEntry entry;
   final bool isActive;
+  final bool muted;
+  final ValueListenable<int> infoToggle;
   final VoidCallback onTap;
 
   /// Reports the inline-info-sheet open progress (0..1) so the parent can
@@ -513,7 +530,9 @@ class _AssetPage extends StatefulWidget {
   State<_AssetPage> createState() => _AssetPageState();
 }
 
-enum _DragMode { idle, dismissDown, infoUp }
+/// [horizontal] is a swipe between photos: the PageView owns it and the
+/// page ignores the rest of that touch.
+enum _DragMode { idle, dismissDown, infoUp, horizontal }
 
 class _AssetPageState extends State<_AssetPage>
     with TickerProviderStateMixin {
@@ -521,6 +540,13 @@ class _AssetPageState extends State<_AssetPage>
   Uint8List? _hiResBytes;
   Uint8List? _fullResBytes; // full-resolution original, loaded on zoom
   bool _loadingFull = false;
+
+  /// Width / height of the photo as displayed. The page sizes one frame from
+  /// it and every rendition (360 px, 1080 px, original) fills that frame, so
+  /// the sharper one replaces the placeholder in place instead of growing
+  /// out of it. Null until known; the renditions then take their own size.
+  double? _aspect;
+
   // Materialised lazily from the entry id; needed for the video player and the
   // inline metadata sheet. Null until it resolves.
   AssetEntity? _entity;
@@ -529,8 +555,10 @@ class _AssetPageState extends State<_AssetPage>
   late final AnimationController _dismissAnim;
   late final AnimationController _infoAnim;
 
-  // Drag state — direction-locked the moment the user passes the first
-  // sub-pixel of vertical motion, so dismiss-down and info-up never fight.
+  // Drag state — direction-locked once the finger has travelled
+  // [_dirLockSlop], by the dominant axis: a swipe between photos drifts a
+  // little vertically and must never raise the info sheet (which locks the
+  // pager) or start a dismiss; dismiss-down and info-up never fight either.
   double _dismissDy = 0;
   double _infoY = 0; // pulled-up height of the info sheet
   _DragMode _dragMode = _DragMode.idle;
@@ -548,7 +576,7 @@ class _AssetPageState extends State<_AssetPage>
   static const double _infoThreshold = 90;
   static const double _infoVelocityThreshold = 600;
   static const double _infoMaxHeight = 420;
-  static const double _dirLockSlop = 2.0;
+  static const double _dirLockSlop = 8.0;
 
   @override
   void initState() {
@@ -564,12 +592,43 @@ class _AssetPageState extends State<_AssetPage>
       duration: AppDuration.normal,
     );
     _txCtrl.addListener(_syncZoomLock);
+    widget.infoToggle.addListener(_onInfoToggle);
 
     // Show the cached small thumb instantly (Hero landing), then materialise
     // the entity lazily and swap in the crisp 1080-px version.
     _lowResBytes = ThumbnailCache.get(widget.entry.id);
+    _aspect = _aspectOf(AssetEntityCache.get(widget.entry.id));
+    if (_aspect == null && _lowResBytes != null) _aspectFrom(_lowResBytes!);
     _load();
   }
+
+  static double? _aspectOf(AssetEntity? entity) {
+    if (entity == null) return null;
+    final size = entity.orientatedSize;
+    return size.width > 0 && size.height > 0 ? size.width / size.height : null;
+  }
+
+  /// Reads the aspect from a decoded rendition when the entity has no size.
+  void _aspectFrom(Uint8List bytes) {
+    final stream = MemoryImage(bytes).resolve(ImageConfiguration.empty);
+    late final ImageStreamListener listener;
+    listener = ImageStreamListener(
+      (info, _) {
+        stream.removeListener(listener);
+        final w = info.image.width, h = info.image.height;
+        if (mounted && _aspect == null && w > 0 && h > 0) {
+          setState(() => _aspect = w / h);
+        }
+      },
+      onError: (_, __) => stream.removeListener(listener),
+    );
+    stream.addListener(listener);
+  }
+
+  /// The photo's display frame: as large as fits, at the photo's aspect.
+  Widget _framed(Widget renditions) => _aspect == null
+      ? renditions
+      : AspectRatio(aspectRatio: _aspect!, child: renditions);
 
   Future<void> _load() async {
     final entity = await AssetEntityCache.load(
@@ -577,7 +636,10 @@ class _AssetPageState extends State<_AssetPage>
       cancelled: () => !mounted,
     );
     if (entity == null || !mounted) return;
-    setState(() => _entity = entity);
+    setState(() {
+      _entity = entity;
+      _aspect ??= _aspectOf(entity);
+    });
     _scheduleHiRes();
   }
 
@@ -600,6 +662,7 @@ class _AssetPageState extends State<_AssetPage>
           await _entity!.thumbnailDataWithSize(const ThumbnailSize.square(1080));
       if (mounted && widget.entry.id == id) {
         setState(() => _hiResBytes = data);
+        if (_aspect == null && data != null) _aspectFrom(data);
       }
     });
   }
@@ -613,6 +676,7 @@ class _AssetPageState extends State<_AssetPage>
 
   @override
   void dispose() {
+    widget.infoToggle.removeListener(_onInfoToggle);
     _zoomAnim.dispose();
     _dismissAnim.dispose();
     _infoAnim.dispose();
@@ -706,7 +770,11 @@ class _AssetPageState extends State<_AssetPage>
     final delta = e.position - start;
 
     if (_dragMode == _DragMode.idle) {
-      if (delta.dy.abs() < _dirLockSlop) return;
+      if (delta.distance < _dirLockSlop) return;
+      if (delta.dx.abs() >= delta.dy.abs()) {
+        _dragMode = _DragMode.horizontal;
+        return;
+      }
       _dragMode = delta.dy > 0 ? _DragMode.dismissDown : _DragMode.infoUp;
       _infoAnim.stop();
     }
@@ -721,6 +789,7 @@ class _AssetPageState extends State<_AssetPage>
         _notifyInfoProgress();
         break;
       case _DragMode.idle:
+      case _DragMode.horizontal:
         break;
     }
   }
@@ -789,6 +858,7 @@ class _AssetPageState extends State<_AssetPage>
         }
         break;
       case _DragMode.idle:
+      case _DragMode.horizontal:
         break;
     }
     _dragMode = _DragMode.idle;
@@ -829,6 +899,13 @@ class _AssetPageState extends State<_AssetPage>
     _infoAnim.forward().whenComplete(() {
       _infoAnim.removeListener(listener);
     });
+  }
+
+  /// The info button: the same sheet as the swipe up, opened or closed with
+  /// the same animation. Only the page on screen answers.
+  void _onInfoToggle() {
+    if (!widget.isActive || _entity == null) return;
+    _animateInfoTo(_infoY > 0 ? 0 : _infoMaxHeight);
   }
 
   void _notifyInfoProgress() {
@@ -905,16 +982,16 @@ class _AssetPageState extends State<_AssetPage>
         final infoProgress = (_infoY / _infoMaxHeight).clamp(0.0, 1.0);
 
         final imageContent = Center(
-          child: Hero(
-            tag: 'asset-${widget.entry.id}',
+          child: Hero(            tag: 'asset-${widget.entry.id}',
             // Straight rect tween → the tapped photo scales directly up to fill
             // the screen. (The default Material arc made it swoop, which read as
             // a janky entry.)
             createRectTween: (a, b) => RectTween(begin: a, end: b),
             child: isVideo
-                ? AssetVideoPlayer(asset: _entity!)
-                : Stack(
+                ? AssetVideoPlayer(asset: _entity!, muted: widget.muted)
+                : _framed(Stack(
                     alignment: Alignment.center,
+                    fit: _aspect != null ? StackFit.expand : StackFit.loose,
                     children: [
                       if (_lowResBytes != null)
                         Image.memory(
@@ -926,6 +1003,14 @@ class _AssetPageState extends State<_AssetPage>
                       AnimatedSwitcher(
                         duration: AppDuration.normal,
                         switchInCurve: AppCurves.decelerate,
+                        // Same frame as the placeholder beneath it.
+                        layoutBuilder: (current, previous) => Stack(
+                          alignment: Alignment.center,
+                          fit: _aspect != null
+                              ? StackFit.expand
+                              : StackFit.loose,
+                          children: [...previous, ?current],
+                        ),
                         child: _hiResBytes == null
                             ? const SizedBox.shrink(key: ValueKey('hi-empty'))
                             : Image.memory(
@@ -946,7 +1031,7 @@ class _AssetPageState extends State<_AssetPage>
                           errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                         ),
                     ],
-                  ),
+                  )),
           ),
         );
 
@@ -1123,19 +1208,7 @@ class _InlineInfoSheet extends StatelessWidget {
                 clipBehavior: Clip.antiAlias,
                 child: Column(
                   children: [
-                    // Drag handle
-                    Padding(
-                      padding: const EdgeInsets.only(
-                          top: AppSpacing.s2, bottom: AppSpacing.s1),
-                      child: Container(
-                        width: 36,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: hc.border,
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                    ),
+                    const HaynSheetHandle(),
                     Expanded(
                       // Pulling the content DOWN while it's already at the top
                       // (overscroll) closes the sheet — so a swipe-down anywhere
@@ -1185,12 +1258,18 @@ class _LoadingBlock extends StatelessWidget {
 class _DetailAppBar extends StatelessWidget {
   const _DetailAppBar({
     required this.title,
+    required this.muted,
+    required this.onToggleMute,
     required this.onInfo,
     required this.onShare,
     required this.onDuplicate,
     required this.onDelete,
   });
   final String title;
+
+  /// Sound state of the video on screen; null for a photo (no button).
+  final bool? muted;
+  final VoidCallback onToggleMute;
   final VoidCallback onInfo;
   final VoidCallback onShare;
   final VoidCallback onDuplicate;
@@ -1229,6 +1308,16 @@ class _DetailAppBar extends StatelessWidget {
           ),
         ),
         actions: [
+          if (muted case final muted?)
+            IconButton(
+              tooltip: muted
+                  ? AppLocalizations.of(context).videoUnmute
+                  : AppLocalizations.of(context).videoMute,
+              icon: Icon(
+                muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+              ),
+              onPressed: onToggleMute,
+            ),
           IconButton(
             icon: const Icon(Icons.info_outline_rounded),
             onPressed: onInfo,
@@ -1285,7 +1374,7 @@ class _DetailAppBar extends StatelessWidget {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // _DetailActionBar — bottom row of operations relevant to the asset type.
-// Translucent black with edge fade-in.
+// Translucent black with edge fade-in, down to the screen's bottom edge.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _DetailActionBar extends StatelessWidget {
@@ -1334,6 +1423,8 @@ class _DetailActionBar extends StatelessWidget {
             (Icons.more_horiz_rounded, l.selectionMore, onMore),
           ];
 
+    // The backdrop runs under the home indicator to the screen's bottom edge;
+    // only the buttons sit above the inset.
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -1345,7 +1436,10 @@ class _DetailActionBar extends StatelessWidget {
           ],
         ),
       ),
-      padding: const EdgeInsets.only(top: AppSpacing.md, bottom: AppSpacing.s2),
+      padding: EdgeInsets.only(
+        top: AppSpacing.md,
+        bottom: AppSpacing.s2 + MediaQuery.paddingOf(context).bottom,
+      ),
       child: Row(
         children: [
           for (final (icon, label, cb) in actions)
