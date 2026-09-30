@@ -183,3 +183,22 @@ bash tool/test_android_device.sh [serial]
 `HAYN_GALLERY=1` يفعّل اختبارات القص الفعلي، وهي تحفظ مصادرها ونواتجها في المعرض (`Pictures/`، أسماء `hayn-test-crop-*`) وتبقى للمستخدم. `flutter drive` يزيل التطبيق بعد كل تشغيل، فلا يسبق `pm grant` الاختبار؛ الإذن يُطلب في `setUpAll`، والسكربت يضغط «السماح بالكل» بـ`uiautomator` فقط حين تكون نافذة الإذن في المقدمة. تشغيل `uiautomator` أو طلب الإذن أثناء اختبار يفعّل accessibility فيفشل الاختبار بـ«SemanticsHandle was active»؛ هذا أثر البيئة لا عطل في التطبيق. الشاشة يجب أن تكون مفتوحة.
 
 فحص المعرض: `adb shell am start -a android.intent.action.VIEW -d content://media/external/images/media/<id> -p com.sec.android.gallery3d` ثم `adb exec-out screencap -p`، والمقارنة رقمية بين اللقطات لا بالعين. الشاشة يجب أن تكون مفتوحة.
+
+## اختبارات الأداء على الهاتف — 2026-09-30
+
+```sh
+tool/test_performance.sh [معرّف الجهاز]
+```
+
+**ما يشغّله:** `integration_test/performance_test.dart` بـ`flutter drive --profile --keep-app-running` على أول هاتف حقيقي، آيفون أو Android. المحاكي مرفوض، والتفاصيل والحدود في [18-PERFORMANCE](18-PERFORMANCE.md).
+
+**العينة:** صورة 12 ميقابكسل تُنزَّل إلى `build/perf-fixtures/` بعد التحقق من بصمتها. تصل إلى الهاتف كالتالي:
+- **Android:** عبر `adb reverse`، على المنفذ 8766.
+- **آيفون:** بـ`xcrun devicectl device copy to` إلى `Documents/perf-fixtures/` داخل حاوية التطبيق. النسخ يحتاج حاوية موجودة، فإن لم يكن التطبيق مثبتًا يبني السكربت نسخة profile ويثبتها أولًا.
+
+**بعد الاختبار:**
+- **الإبقاء على التطبيق:** `flutter drive` يحذف التطبيق بعد التشغيل ما لم يُمرَّر `--keep-app-running`. الحذف يمسح بيانات صاحب الهاتف، فالخيار إلزامي هنا.
+- **الاستعادة:** يثبّت السكربت نسخة release فوق نسخة الاختبار، بلا `--no-pub` حتى لا تبقى إضافة `integration_test` في `GeneratedPluginRegistrant`. `HAYN_RESTORE_APP=0` يتخطى الاستعادة.
+- **التقرير:** `build/performance/<المنصة>-<الوقت>/report.json` و`summary.txt`.
+
+**التوقيع على آيفون:** توقيع تلقائي بفريق المشروع `4KF43H9U64`، مع Developer Mode مفعّل على الهاتف. الشاشة يجب أن تبقى مفتوحة وغير مقفلة طوال التشغيل.
