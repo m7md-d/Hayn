@@ -38,10 +38,11 @@ class _AnimateFromPhotosScreenState
   }
 
   void _export() {
+    // Not implemented yet (PROD-01): say so rather than report an export
+    // that was never queued.
     HapticFeedback.lightImpact();
     final l = AppLocalizations.of(context);
-    HaynSnack.success(context, l.animatedPhotosExportQueued);
-    Navigator.of(context).pop();
+    HaynSnack.info(context, l.assetDetailComingSoon(l.toolAnimateFromPhotos));
   }
 
   @override

@@ -219,7 +219,12 @@ void main() {
       facts: const SourceFacts.sdr(alpha: true),
       keepMetadata: false,
     );
-    expect(result.diagnostics, isEmpty);
+    // DarkLib is not loaded in unit tests: its container probe reports
+    // itself unavailable and the alpha check falls back to decoding.
+    expect(
+      result.diagnostics.where((d) => d.backend != MediaBackend.darklib),
+      isEmpty,
+    );
     expect(img.decodePng(result.bytes)!.getPixel(0, 0).a, 64);
   });
   test(

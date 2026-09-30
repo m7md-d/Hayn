@@ -458,11 +458,12 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   Facts dco_decode_facts(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 2)
-      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
     return Facts(
       transfer: dco_decode_transfer(arr[0]),
       gainMap: dco_decode_presence(arr[1]),
+      alpha: dco_decode_presence(arr[2]),
     );
   }
 
@@ -604,7 +605,12 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_transfer = sse_decode_transfer(deserializer);
     var var_gainMap = sse_decode_presence(deserializer);
-    return Facts(transfer: var_transfer, gainMap: var_gainMap);
+    var var_alpha = sse_decode_presence(deserializer);
+    return Facts(
+      transfer: var_transfer,
+      gainMap: var_gainMap,
+      alpha: var_alpha,
+    );
   }
 
   @protected
@@ -753,6 +759,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_transfer(self.transfer, serializer);
     sse_encode_presence(self.gainMap, serializer);
+    sse_encode_presence(self.alpha, serializer);
   }
 
   @protected

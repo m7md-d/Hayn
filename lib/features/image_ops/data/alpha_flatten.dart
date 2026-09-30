@@ -5,6 +5,7 @@ import 'package:flutter_image_compress/flutter_image_compress.dart' as fic;
 import 'package:image/image.dart' as img;
 
 import '../../../core/darklib/darklib.dart';
+import '../../../core/diagnostics/media_diagnostics.dart';
 import 'image_probe.dart';
 import 'native_image_encoder.dart';
 
@@ -17,12 +18,27 @@ import 'native_image_encoder.dart';
 abstract final class AlphaFlatten {
   /// Opaque, upright PNG of [source] over white; null when nothing decodes it.
   /// [toSdr] asks the iOS bridge for the SDR rendition of an HDR source.
+  /// [alpha] is the source's transparency: when it is known present, a
+  /// decoder that returns no alpha channel is refused (`alphaLost`), since
+  /// compositing its output would show the hidden colours instead of white.
+  /// Android's HEIF decoder ignores the alpha plane (IMG-15).
   static Future<Uint8List?> toOpaquePng(
     Uint8List source, {
     required bool toSdr,
+    bool? alpha,
   }) async {
     final readable = await _readable(source, toSdr: toSdr);
     if (readable == null) return null;
+    if (alpha == true &&
+        !identical(readable, source) &&
+        await ImageProbe.hasAlpha(readable) != true) {
+      MediaDiagnostics.record(
+        MediaBackend.imageEncoder,
+        MediaOperation.bake,
+        MediaDiagnosticCode.alphaLost,
+      );
+      return null;
+    }
     return Isolate.run(() => flattenOnWhite(readable));
   }
 

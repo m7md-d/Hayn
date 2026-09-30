@@ -215,35 +215,57 @@ void main() {
     );
   });
 
-  // T-08 for HEIC: Android's decoder must read the alpha plane, or the
-  // hidden colour (80,120,160) would show instead of the white composite.
-  testWidgets('Transparent HEIC to JPEG flattens onto white', (_) async {
-    final source = await _fixture('apple_heic_alpha.heic');
-    final facts = await SourceInspector.inspect(source);
-    final result = await ImageEncoder.encode(
-      source: source,
-      target: DefaultFormat.jpeg,
-      quality: 95,
-      facts: facts,
-      keepMetadata: false,
-    );
-    expect(
-      result.diagnostics.map((d) => d.code),
-      contains(MediaDiagnosticCode.alphaFlattened),
-    );
-    device['flatten-heic'] = [facts.alpha, result.backend?.name];
-    await _artifact('flatten-heic.jpg', result.bytes);
-    final shown = await _platformDecode(result.bytes);
-    expect((shown.width, shown.height), (64, 48));
-    final translucent = shown.pixel(6, 6);
-    expect(translucent[0], closeTo(211, 10));
-    expect(translucent[1], closeTo(221, 10));
-    expect(translucent[2], closeTo(231, 10));
-    final opaque = shown.pixel(32, 24);
-    for (var c = 0; c < 3; c++) {
-      expect(opaque[c], lessThan(24));
-    }
-  });
+  // T-08 / IMG-15 for HEIC: Android's HEIF decoder ignores the alpha plane.
+  // DarkLib reads the alpha auxiliary from the container, so the plan knows
+  // the source is transparent: JPEG is composited onto white by a decoder
+  // that reads alpha, or refused as alphaLost; formats that keep alpha either
+  // keep it or are refused. Never the hidden colour (80,120,160) as opaque.
+  for (final target in [
+    DefaultFormat.jpeg,
+    DefaultFormat.png,
+    DefaultFormat.webp,
+  ]) {
+    testWidgets('Transparent HEIC to ${target.name}: alpha kept or refused', (
+      _,
+    ) async {
+      final source = await _fixture('apple_heic_alpha.heic');
+      final facts = await SourceInspector.inspect(source);
+      expect(facts.alpha, isTrue);
+      final EncodedImage result;
+      try {
+        result = await ImageEncoder.encode(
+          source: source,
+          target: target,
+          quality: 95,
+          facts: facts,
+          keepMetadata: false,
+        );
+      } on ImageEncodingFailure catch (e) {
+        expect(
+          e.diagnostics.map((d) => d.code),
+          contains(MediaDiagnosticCode.alphaLost),
+        );
+        device['heic-alpha-${target.name}'] = 'refused: alphaLost';
+        return;
+      }
+      device['heic-alpha-${target.name}'] = result.backend?.name;
+      await _artifact('heic-alpha.${result.extension}', result.bytes);
+      if (target != DefaultFormat.jpeg) {
+        expect(await ImageProbe.hasAlpha(result.bytes), isTrue);
+        return;
+      }
+      final shown = await _platformDecode(result.bytes);
+      expect((shown.width, shown.height), (64, 48));
+      final translucent = shown.pixel(6, 6);
+      expect(translucent[0], closeTo(211, 10));
+      expect(translucent[1], closeTo(221, 10));
+      expect(translucent[2], closeTo(231, 10));
+      final opaque = shown.pixel(32, 24);
+      for (var c = 0; c < 3; c++) {
+        expect(opaque[c], lessThan(24));
+      }
+    });
+  }
 
   // T-09: JPEG Ultra HDR (hdrgm XMP + MPF) to formats without its map gives
   // the SDR base, recorded as hdrToSdr.

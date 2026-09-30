@@ -3,18 +3,35 @@ import 'dart:typed_data';
 
 import 'package:image/image.dart' as img;
 
+import '../../../core/darklib/darklib.dart';
 import 'native_image_info.dart';
 
 // Alpha inspection is tri-state: true = present, false = confirmed absent,
 // null = unknown. Unknown must never authorize an opaque target or fallback.
 // Channel presence is conservative; it does not prove per-pixel equivalence.
+//
+// The container answers first (DarkLib `inspect`, no decode): PNG colour type
+// and tRNS, WebP alpha, the AVIF/HEIF alpha auxiliary. Decoding in Dart cost
+// seconds per 12 MP image and misreported every lossy WebP as transparent:
+// package:image allocates four channels for VP8 (IMG-16, PERF-01).
 
 enum SniffedFormat { jpeg, png, webp, gif, bmp, tiff, heic, avif, unknown }
 
 abstract final class ImageProbe {
   /// Inspect alpha off the UI isolate. Unavailable or failed probes stay null.
   static Future<bool?> hasAlpha(Uint8List bytes) async {
-    switch (sniff(bytes)) {
+    final format = sniff(bytes);
+    if (format != SniffedFormat.jpeg && format != SniffedFormat.unknown) {
+      switch ((await DarkLibCore.inspect(bytes))?.alpha) {
+        case Presence.present:
+          return true;
+        case Presence.absent:
+          return false;
+        case Presence.unknown || null:
+          break; // unreadable container or no DarkLib: the fallbacks below
+      }
+    }
+    switch (format) {
       case SniffedFormat.jpeg:
         return false;
       case SniffedFormat.heic:

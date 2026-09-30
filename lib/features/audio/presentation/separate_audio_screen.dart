@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import 'package:photo_manager/photo_manager.dart';
 import '../../../app/l10n/app_localizations.dart';
 import '../../../app/theme/app_theme_extension.dart';
@@ -14,8 +13,9 @@ import '../../library/presentation/providers/asset_entity_cache.dart';
 // Shows clip waveform + strength slider (with Auto badge) + live ETA + tip
 // banner + offline reassurance.
 //
-// "Start separation" routes to /audio-result/:id where the user previews
-// before saving. Real engine wiring happens in the implementation phase.
+// "Start separation" says it is coming: there is no engine yet. The preview
+// screen at /audio-result/:id stays unreachable until the engine lands
+// (docs/19-VIDEO-PLAN.md, PROD-01).
 // ─────────────────────────────────────────────────────────────────────────────
 
 class SeparateAudioScreen extends ConsumerStatefulWidget {
@@ -53,9 +53,12 @@ class _SeparateAudioScreenState extends ConsumerState<SeparateAudioScreen> {
     return '~$m:$s min';
   }
 
+  // No separation engine yet (docs/19-VIDEO-PLAN.md, PROD-01): the result
+  // screen would present a separation that never ran.
   void _start() {
     HapticFeedback.lightImpact();
-    context.replace('/audio-result/${Uri.encodeComponent(widget.assetId)}');
+    final l = AppLocalizations.of(context);
+    HaynSnack.info(context, l.assetDetailComingSoon(l.toolSeparateMusic));
   }
 
   @override

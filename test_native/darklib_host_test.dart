@@ -157,4 +157,57 @@ void main() {
       expect(decoded.getPixel(4, 4).a, 64);
     },
   );
+
+  // IMG-16: an opaque lossy WebP read as transparent (package:image gives VP8
+  // four channels), so AVIF/HEIC/PNG targets were refused as alphaLost on the
+  // iPhone. The fixtures come from libwebp through Pillow, not DarkLib.
+  Future<Uint8List> webp(String name) => File(
+    'native/darklib/tests/fixtures/pillow_webp_$name.webp',
+  ).readAsBytes();
+
+  test('opaque lossy WebP reads opaque and converts without refusal', () async {
+    final source = await webp('lossy_opaque');
+    final facts = await SourceInspector.inspect(source);
+    expect(facts.alpha, isFalse);
+    for (final target in [DefaultFormat.avif, DefaultFormat.webp]) {
+      final result = await ImageEncoder.encode(
+        source: source,
+        target: target,
+        quality: 80,
+        facts: facts,
+        keepMetadata: true,
+      );
+      expect(result.format, target);
+      expect(
+        result.diagnostics.map((d) => d.code),
+        isNot(
+          anyOf(
+            contains(MediaDiagnosticCode.alphaLost),
+            contains(MediaDiagnosticCode.alphaUnverified),
+          ),
+        ),
+        reason: '$target',
+      );
+    }
+  }, timeout: const Timeout(Duration(minutes: 3)));
+
+  test('translucent WebP keeps its alpha through AVIF', () async {
+    for (final name in ['lossy_alpha', 'lossless_alpha']) {
+      final source = await webp(name);
+      final facts = await SourceInspector.inspect(source);
+      expect(facts.alpha, isTrue, reason: name);
+      final result = await ImageEncoder.encode(
+        source: source,
+        target: DefaultFormat.avif,
+        quality: 90,
+        facts: facts,
+        keepMetadata: false,
+      );
+      expect(
+        await SourceInspector.inspect(result.bytes).then((f) => f.alpha),
+        isTrue,
+        reason: name,
+      );
+    }
+  }, timeout: const Timeout(Duration(minutes: 3)));
 }

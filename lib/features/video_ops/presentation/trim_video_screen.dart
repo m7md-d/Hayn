@@ -69,10 +69,11 @@ class _TrimVideoScreenState extends ConsumerState<TrimVideoScreen> {
   }
 
   Future<void> _apply() async {
+    // Not implemented yet (docs/19-VIDEO-PLAN.md, PROD-01): say so rather
+    // than report a task that was never queued.
     HapticFeedback.lightImpact();
     final l = AppLocalizations.of(context);
-    HaynSnack.success(context, l.trimQueued);
-    Navigator.of(context).pop();
+    HaynSnack.info(context, l.assetDetailComingSoon(l.toolTrim));
   }
 
   @override

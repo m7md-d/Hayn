@@ -9,11 +9,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 /// What a transcode did with an HDR gain map. The HDR policy (user decision,
 /// 2026-09-28): keep HDR where the path is proven, otherwise encode the SDR
 /// base without asking. The caller records anything but `None`/`GainMapKept`.
-///
-/// `GainMapKept`/`GainMapKeepFailed` are not produced today: the AVIF writer
-/// (`isobmff::build_hdr_avif`) is not recognised by an independent reader
-/// (ImageIO sees no gain map: no `tmap` brand, missing `tmap` properties, pixi
-/// ≠ av1C depth). Hayn IMG-09/IMG-10 re-enable keeping once it is verified.
+/// Keeping is proven by ImageIO reading the rebuilt ISO gain map (IMG-10).
 enum HdrOutcome {
   /// No gain map was recognised in the source.
   none,
@@ -21,8 +17,7 @@ enum HdrOutcome {
   /// The gain map was rebuilt next to the re-encoded base.
   gainMapKept,
 
-  /// The target, resize, orientation or an unverified writer cannot carry
-  /// it; SDR base only.
+  /// The target, resize or orientation cannot carry it; SDR base only.
   gainMapDropped,
 
   /// Keeping was attempted and failed; SDR base only.

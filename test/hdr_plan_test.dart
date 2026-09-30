@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hayn/core/darklib/darklib.dart';
 import 'package:hayn/core/diagnostics/media_diagnostics.dart';
 import 'package:hayn/features/image_ops/data/image_encoder.dart';
+import 'package:hayn/features/image_ops/data/image_probe.dart';
 import 'package:hayn/features/image_ops/data/source_facts.dart';
 import 'package:hayn/features/settings/providers/preferences_providers.dart';
 import 'package:hayn/src/rust/frb_generated.dart';
@@ -32,6 +33,7 @@ class _Api extends Fake implements DarkLibApi {
   Facts inspected = const Facts(
     transfer: Transfer.noHdrSignal,
     gainMap: Presence.absent,
+    alpha: Presence.unknown,
   );
 
   @override
@@ -89,6 +91,7 @@ void main() {
       ..inspected = const Facts(
         transfer: Transfer.noHdrSignal,
         gainMap: Presence.absent,
+        alpha: Presence.unknown,
       );
   });
 
@@ -213,6 +216,7 @@ void main() {
     api.inspected = const Facts(
       transfer: Transfer.noHdrSignal,
       gainMap: Presence.present,
+      alpha: Presence.unknown,
     );
     final kept = await ImageEncoder.encode(
       source: _heic,
@@ -227,6 +231,7 @@ void main() {
     api.inspected = const Facts(
       transfer: Transfer.noHdrSignal,
       gainMap: Presence.absent,
+      alpha: Presence.unknown,
     );
     final private = await ImageEncoder.encode(
       source: _heic,
@@ -287,12 +292,14 @@ void main() {
       api.inspected = const Facts(
         transfer: Transfer.pq,
         gainMap: Presence.absent,
+        alpha: Presence.unknown,
       );
       expect((await SourceInspector.inspect(_png)).directHdr, isTrue);
 
       api.inspected = const Facts(
         transfer: Transfer.noHdrSignal,
         gainMap: Presence.absent,
+        alpha: Presence.unknown,
       );
       native({'hdrTransfer': true, 'hasGainMap': true});
       final f = await SourceInspector.inspect(_png);
@@ -307,9 +314,72 @@ void main() {
       api.inspected = const Facts(
         transfer: Transfer.unknown,
         gainMap: Presence.unknown,
+        alpha: Presence.unknown,
       );
       final unknown = await SourceInspector.inspect(_png);
       expect((unknown.directHdr, unknown.gainMap), (null, null));
     });
+  });
+
+  // IMG-16: every lossy WebP read as transparent because package:image gives
+  // VP8 four channels; the container now answers first. IMG-15: Android's
+  // HEIF decoder drops the alpha plane, and compositing its output showed the
+  // hidden colours instead of white.
+  group('alpha from the container', () {
+    test('answers before any decode', () async {
+      // WebP magic around bytes no decoder reads: only the container answers.
+      final webp = Uint8List.fromList([
+        ...'RIFF'.codeUnits,
+        0,
+        0,
+        0,
+        0,
+        ...'WEBP'.codeUnits,
+        ...List.filled(16, 0),
+      ]);
+      for (final (presence, want) in [
+        (Presence.absent, false),
+        (Presence.present, true),
+        (Presence.unknown, null),
+      ]) {
+        api.inspected = Facts(
+          transfer: Transfer.noHdrSignal,
+          gainMap: Presence.absent,
+          alpha: presence,
+        );
+        expect(await ImageProbe.hasAlpha(webp), want, reason: '$presence');
+      }
+    });
+
+    test(
+      'a decoder that drops known alpha is refused, not flattened',
+      () async {
+        // The bake returns an opaque PNG for a source known to be transparent.
+        messenger.setMockMethodCallHandler(
+          imageChannel,
+          (call) async => call.method == 'bakeUpright' ? _png : null,
+        );
+        await expectLater(
+          ImageEncoder.encode(
+            source: _heic,
+            target: DefaultFormat.jpeg,
+            quality: 80,
+            facts: const SourceFacts(
+              alpha: true,
+              directHdr: false,
+              gainMap: false,
+            ),
+            keepMetadata: false,
+          ),
+          throwsA(
+            isA<ImageEncodingFailure>().having(
+              (e) => codes(e.diagnostics),
+              'codes',
+              contains(MediaDiagnosticCode.alphaLost),
+            ),
+          ),
+        );
+      },
+    );
   });
 }

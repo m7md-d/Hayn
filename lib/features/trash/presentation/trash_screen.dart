@@ -98,8 +98,14 @@ class TrashScreen extends ConsumerWidget {
       TrashItem item,
       AppLocalizations l) async {
     HapticFeedback.lightImpact();
-    await ref.read(trashProvider.notifier).restore(item.id);
-    if (context.mounted) HaynSnack.success(context, l.trashRestored(item.filename));
+    final ok = await ref.read(trashProvider.notifier).restore(item.id);
+    if (!context.mounted) return;
+    // restore() is false when the backup is gone or the save was refused.
+    if (ok) {
+      HaynSnack.success(context, l.trashRestored(item.filename));
+    } else {
+      HaynSnack.info(context, l.actionFailed);
+    }
   }
 
   Future<void> _deleteForever(

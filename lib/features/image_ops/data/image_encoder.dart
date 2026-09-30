@@ -141,7 +141,11 @@ abstract final class ImageEncoder {
     if (target == DefaultFormat.jpeg && plan.alpha != false) {
       Uint8List? flat;
       try {
-        flat = await AlphaFlatten.toOpaquePng(input, toSdr: plan.hasHdr);
+        flat = await AlphaFlatten.toOpaquePng(
+          input,
+          toSdr: plan.hasHdr,
+          alpha: plan.alpha,
+        );
       } on DarkLibPreservationFailure {
         flat = null;
       }

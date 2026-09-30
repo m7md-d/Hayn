@@ -79,10 +79,11 @@ class _VideoEditorScreenState extends ConsumerState<VideoEditorScreen> {
   }
 
   void _export() {
+    // Not implemented yet (docs/19-VIDEO-PLAN.md, PROD-01): say so rather
+    // than report a task that was never queued.
     HapticFeedback.lightImpact();
     final l = AppLocalizations.of(context);
-    HaynSnack.success(context, l.videoEditorExporting);
-    Navigator.of(context).pop();
+    HaynSnack.info(context, l.assetDetailComingSoon(l.videoEditorTitle));
   }
 
   @override

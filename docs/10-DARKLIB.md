@@ -84,7 +84,10 @@ verify(sourceFacts, plan, output) -> VerificationReport
 
 دفعة 2026-09-28 (IMG-05 جزئيًا، سياسة HDR للمستخدم):
 
-- `inspect_image` في DarkLib يقرأ من الحاوية دون فك البكسلات: transfer للعنصر الأساسي (PQ/HLG) ووجود gain map، مع `Unknown` للحاوية غير المقروءة. `SourceInspector` في Dart يدمجه مع ImageIO ويسلم `SourceFacts` قبل أي محرك.
+- `inspect_image` في DarkLib يقرأ من الحاوية دون فك البكسلات: transfer للعنصر الأساسي (PQ/HLG)، ووجود gain map، ووجود قناة ألفا (2026-09-30)، مع `Unknown` للحاوية غير المقروءة.
+  - **ألفا PNG:** نوع اللون أو `tRNS`.
+  - **ألفا WebP:** VP8X أو `ALPH` أو بت VP8L.
+  - **ألفا AVIF/HEIF:** عنصر مساعد بمعرّف ألفا لـAV1 أو HEVC، مرتبط بالأساسي أو ببلاطات شبكته. `SourceInspector` في Dart يدمجه مع ImageIO ويسلم `SourceFacts` قبل أي محرك.
 - `transcode` واحدة بخيار `keep_metadata` تعيد `Transcoded { bytes, hdr }`، وأزيلت `transcode_keep_metadata`. مصدر gain map يُرمَّز أساسه SDR ويُبلَّغ عنه، إلا AVIF→AVIF بالحجم الكامل بلا دوران: الخريطة تُحفظ منذ 2026-09-29 بعد إصلاح الكاتب (علامة `tmap`، خصائص البديل، `pixi` من `av1C`، معرّف `altr`)، ومثبتة بـImageIO حضورًا ودلالةً (IMG-10).
 - PQ/HLG: نسخة SDR من ImageIO (iOS 17+) قبل أي محرك، يُتحقق منها فإن بقيت PQ رُفضت، وإلا رفض مبكر. محاكي iOS 26.3 يتجاهل الطلب فيرفض. عتاد AVIF على Android مشروط بمصدر معروف أنه ليس PQ/HLG.
 - لا تحذير للمستخدم؛ التشخيص `hdrToSdr` و`hdrKeepFailed` و`hdrToneMapUnavailable` و`hdrUnverified`.

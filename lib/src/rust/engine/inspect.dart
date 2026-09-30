@@ -9,11 +9,16 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 class Facts {
   final Transfer transfer;
   final Presence gainMap;
+  final Presence alpha;
 
-  const Facts({required this.transfer, required this.gainMap});
+  const Facts({
+    required this.transfer,
+    required this.gainMap,
+    required this.alpha,
+  });
 
   @override
-  int get hashCode => transfer.hashCode ^ gainMap.hashCode;
+  int get hashCode => transfer.hashCode ^ gainMap.hashCode ^ alpha.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -21,7 +26,8 @@ class Facts {
       other is Facts &&
           runtimeType == other.runtimeType &&
           transfer == other.transfer &&
-          gainMap == other.gainMap;
+          gainMap == other.gainMap &&
+          alpha == other.alpha;
 }
 
 enum Presence { unknown, absent, present }

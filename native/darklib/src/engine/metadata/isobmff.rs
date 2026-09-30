@@ -802,6 +802,76 @@ pub fn alpha_item_id(b: &[u8]) -> Option<u32> {
     find_item_with_property(b, ipma, alpha_prop)
 }
 
+/// Whether the PRIMARY image has an alpha auxiliary: an item whose `auxC`
+/// aux type is an alpha URN (AV1's `urn:mpeg:mpegB:cicp:systems:auxiliary:alpha`
+/// or HEVC's `urn:mpeg:hevc:2015:auxid:1`, which Apple writes) and that an
+/// `auxl` reference ties to the primary item, or, for a grid primary, to every
+/// one of its tiles (allowed by the spec; libavif's
+/// `color_grid_alpha_nogrid.avif`). An alpha plane of some other item (a
+/// thumbnail) does not count. `None` when the item graph is unreadable.
+pub fn alpha_presence(b: &[u8]) -> Option<bool> {
+    const ALPHA_URNS: [&[u8]; 2] = [
+        b"urn:mpeg:mpegB:cicp:systems:auxiliary:alpha",
+        b"urn:mpeg:hevc:2015:auxid:1",
+    ];
+    let mc = meta_children(b)?;
+    let primary = parse_pitm(b, *mc.iter().find(|x| x.typ == *b"pitm")?)?;
+    let iprp = *mc.iter().find(|x| x.typ == *b"iprp")?;
+    let ipc = boxes_in(b, iprp.body, iprp.end)?;
+    let ipco = *ipc.iter().find(|x| x.typ == *b"ipco")?;
+    let ipma = *ipc.iter().find(|x| x.typ == *b"ipma")?;
+    let mut alpha_props = Vec::new();
+    for (i, prop) in boxes_in(b, ipco.body, ipco.end)?.iter().enumerate() {
+        if prop.typ == *b"auxC" {
+            // FullBox(4) then a null-terminated aux_type URN.
+            let urn = b.get(prop.body + 4..prop.end)?;
+            let urn = &urn[..urn.iter().position(|&c| c == 0).unwrap_or(urn.len())];
+            if ALPHA_URNS.contains(&urn) {
+                alpha_props.push((i + 1) as u16);
+            }
+        }
+    }
+    let alpha_items: Vec<u32> = parse_ipma(b, ipma)?
+        .into_iter()
+        .filter(|(_, idxs)| idxs.iter().any(|i| alpha_props.contains(i)))
+        .map(|(id, _)| id)
+        .collect();
+    if alpha_items.is_empty() {
+        return Some(false);
+    }
+    let Some(iref) = mc.iter().find(|x| x.typ == *b"iref") else {
+        return Some(false);
+    };
+    let version = *b.get(iref.body)?;
+    let id_bytes = if version == 0 { 2 } else { 4 };
+    let mut with_alpha = Vec::new(); // items an alpha auxiliary belongs to
+    for child in boxes_in(b, iref.body + 4, iref.end)? {
+        if child.typ != *b"auxl" {
+            continue;
+        }
+        let mut q = child.body;
+        let from = read_id(b, q, id_bytes)?;
+        q += id_bytes;
+        let count = be_u16(b, q)? as usize;
+        q += 2;
+        for _ in 0..count {
+            let to = read_id(b, q, id_bytes)?;
+            q += id_bytes;
+            if alpha_items.contains(&from) {
+                with_alpha.push(to);
+            }
+        }
+    }
+    if with_alpha.contains(&primary) {
+        return Some(true);
+    }
+    if item_type(b, primary) == Some(*b"grid") {
+        let tiles = dimg_targets(b, primary)?;
+        return Some(!tiles.is_empty() && tiles.iter().all(|t| with_alpha.contains(t)));
+    }
+    Some(false)
+}
+
 /// 1-based index (within `ipco`) of the `auxC` property whose aux-type URN names
 /// alpha. The URN is `urn:mpeg:mpegB:cicp:systems:auxiliary:alpha`.
 fn find_alpha_auxc_index(b: &[u8], ipco: Bx) -> Option<u16> {

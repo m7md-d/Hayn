@@ -448,9 +448,11 @@ impl SseDecode for crate::engine::inspect::Facts {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_transfer = <crate::engine::inspect::Transfer>::sse_decode(deserializer);
         let mut var_gainMap = <crate::engine::inspect::Presence>::sse_decode(deserializer);
+        let mut var_alpha = <crate::engine::inspect::Presence>::sse_decode(deserializer);
         return crate::engine::inspect::Facts {
             transfer: var_transfer,
             gain_map: var_gainMap,
+            alpha: var_alpha,
         };
     }
 }
@@ -688,6 +690,7 @@ impl flutter_rust_bridge::IntoDart for crate::engine::inspect::Facts {
         [
             self.transfer.into_into_dart().into_dart(),
             self.gain_map.into_into_dart().into_dart(),
+            self.alpha.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -909,6 +912,7 @@ impl SseEncode for crate::engine::inspect::Facts {
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <crate::engine::inspect::Transfer>::sse_encode(self.transfer, serializer);
         <crate::engine::inspect::Presence>::sse_encode(self.gain_map, serializer);
+        <crate::engine::inspect::Presence>::sse_encode(self.alpha, serializer);
     }
 }
 

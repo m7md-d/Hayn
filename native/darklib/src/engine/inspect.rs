@@ -4,6 +4,11 @@
 //! be read far enough to answer. `NoHdrSignal` / `Absent` mean it was read and
 //! carries no HDR signalling this inspector knows; that is not proof of SDR
 //! (docs/11-HDR-RESEARCH.md), only the absence of a known signal.
+//!
+//! Alpha is read from the container too, never from pixels: it says whether the
+//! image carries an alpha channel (PNG colour type or `tRNS`, WebP alpha,
+//! an AVIF/HEIF alpha auxiliary of the primary item). A channel that happens to
+//! be fully opaque still counts as present.
 
 use crate::engine::format::{detect, ImageFormat};
 use crate::engine::metadata::isobmff;
@@ -45,12 +50,24 @@ pub enum Presence {
 pub struct Facts {
     pub transfer: Transfer,
     pub gain_map: Presence,
+    pub alpha: Presence,
 }
 
 const UNKNOWN: Facts = Facts {
     transfer: Transfer::Unknown,
     gain_map: Presence::Unknown,
+    alpha: Presence::Unknown,
 };
+
+impl Presence {
+    fn of(found: Option<bool>) -> Self {
+        match found {
+            None => Presence::Unknown,
+            Some(true) => Presence::Present,
+            Some(false) => Presence::Absent,
+        }
+    }
+}
 
 pub fn inspect(b: &[u8]) -> Facts {
     match detect(b) {
@@ -61,6 +78,7 @@ pub fn inspect(b: &[u8]) -> Facts {
         ImageFormat::Webp => Facts {
             transfer: Transfer::NoHdrSignal,
             gain_map: Presence::Absent,
+            alpha: Presence::of(webp_alpha(b)),
         },
         _ => UNKNOWN,
     }
@@ -72,20 +90,54 @@ fn isobmff_facts(b: &[u8]) -> Facts {
         Some(None) => Transfer::NoHdrSignal,
         Some(Some((_, tc))) => Transfer::from_code(tc),
     };
-    let gain_map = match isobmff::gainmap_presence(b) {
-        None => Presence::Unknown,
-        Some(true) => Presence::Present,
-        Some(false) => Presence::Absent,
-    };
-    Facts { transfer, gain_map }
+    Facts {
+        transfer,
+        gain_map: Presence::of(isobmff::gainmap_presence(b)),
+        alpha: Presence::of(isobmff::alpha_presence(b)),
+    }
 }
 
-/// PNG signals PQ/HLG with `cICP`, which must precede the first `IDAT`.
+/// WebP carries alpha in a lossy file's `ALPH` chunk, in a lossless
+/// bitstream's `alpha_is_used` bit, and (extended files) in VP8X's alpha flag.
+/// A simple lossy file (`VP8 ` alone) has none.
+fn webp_alpha(b: &[u8]) -> Option<bool> {
+    if b.len() < 12 || &b[..4] != b"RIFF" || &b[8..12] != b"WEBP" {
+        return None;
+    }
+    let mut alpha = false;
+    let mut i = 12usize;
+    while i + 8 <= b.len() {
+        let kind = &b[i..i + 4];
+        let len = u32::from_le_bytes([b[i + 4], b[i + 5], b[i + 6], b[i + 7]]) as usize;
+        let data = i + 8;
+        let end = data.checked_add(len).filter(|&e| e <= b.len())?;
+        match kind {
+            b"VP8X" => alpha |= *b.get(data)? & 0x10 != 0,
+            b"ALPH" => alpha = true,
+            // Signature 0x2f, then width-1 (14 bits), height-1 (14), alpha (1).
+            b"VP8L" => {
+                if *b.get(data)? != 0x2f {
+                    return None;
+                }
+                let bits = u32::from_le_bytes(b.get(data + 1..data + 5)?.try_into().ok()?);
+                alpha |= (bits >> 28) & 1 == 1;
+            }
+            _ => {}
+        }
+        i = end + (len & 1); // chunks are padded to an even size
+    }
+    Some(alpha)
+}
+
+/// PNG signals PQ/HLG with `cICP`, which must precede the first `IDAT`. Alpha:
+/// colour type 4 or 6 in `IHDR`, or a `tRNS` chunk (also before `IDAT`).
 fn png_facts(b: &[u8]) -> Facts {
     const SIG: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
     if b.len() < 8 || b[..8] != SIG {
         return UNKNOWN;
     }
+    let mut transfer = Transfer::NoHdrSignal;
+    let mut alpha = None;
     let mut i = 8usize;
     while i + 8 <= b.len() {
         let len = u32::from_be_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]) as usize;
@@ -93,24 +145,21 @@ fn png_facts(b: &[u8]) -> Facts {
         let Some(data_end) = (i + 8).checked_add(len).filter(|e| e + 4 <= b.len()) else {
             return UNKNOWN;
         };
-        if kind == b"cICP" {
+        match kind {
+            b"IHDR" if len >= 13 => alpha = Some(matches!(b[i + 8 + 9], 4 | 6)),
+            b"tRNS" => alpha = Some(true),
             // primaries(1) transfer(1) matrix(1) full_range(1)
-            if len < 4 {
-                return UNKNOWN;
-            }
-            return Facts {
-                transfer: Transfer::from_code(b[i + 9] as u16),
-                gain_map: Presence::Absent,
-            };
-        }
-        if kind == b"IDAT" || kind == b"IEND" {
-            break;
+            b"cICP" if len < 4 => return UNKNOWN,
+            b"cICP" => transfer = Transfer::from_code(b[i + 9] as u16),
+            b"IDAT" | b"IEND" => break,
+            _ => {}
         }
         i = data_end + 4;
     }
     Facts {
-        transfer: Transfer::NoHdrSignal,
+        transfer,
         gain_map: Presence::Absent,
+        alpha: Presence::of(alpha),
     }
 }
 
@@ -170,6 +219,7 @@ fn jpeg_facts(b: &[u8]) -> Facts {
     Facts {
         transfer: Transfer::NoHdrSignal,
         gain_map,
+        alpha: Presence::Absent,
     }
 }
 

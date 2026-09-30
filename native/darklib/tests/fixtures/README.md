@@ -33,6 +33,17 @@
 | `apple_heic_alpha.heic` | HEIC بألفا، 64×48: اللون (80,120,160) بألفا 64 ومربع أسود معتم في الوسط، فيميّز ألفا مقروءة من ألفا متجاهلة | اصطناعي، بلا رخصة | IMG-15، PROD-02 |
 | `apple_png_p3_icc.png` | PNG بـICC ‏Display P3، ومعه `cICP` كتبه ImageIO | أساس `apple_gainmap_new.jpg` | IMG-08 |
 
+## WebP من libwebp عبر Pillow
+
+`test_native/make_webp_fixtures.py` يكتبها بـPillow 12.3.0 (libwebp 1.6.0)، كاتب مستقل عن DarkLib. المحتوى اصطناعي بلا رخصة: تدرج 64×48، والشفافة نصفها الأيسر بألفا 64. التوليد ثابت (أعيد فأعطى البايتات نفسها، 2026-09-30). ImageIO يرى الألفا في الشفافتين وحدهما.
+
+| الملف | القطع | البند |
+|---|---|---|
+| `pillow_webp_lossy_opaque.webp` | `VP8 ` وحدها | IMG-16 |
+| `pillow_webp_lossy_alpha.webp` | `VP8X`، `ALPH`، `VP8 ` | IMG-16 |
+| `pillow_webp_lossless_opaque.webp` | `VP8L`، بت ألفا 0 | IMG-16 |
+| `pillow_webp_lossless_alpha.webp` | `VP8L`، بت ألفا 1 | IMG-16 |
+
 P3 بـICC وحده بلا وسم لون آخر موجود في `apple_gainmap_*.jpg`؛ JPEG لا يحمل cICP.
 
 ## البصمات
@@ -56,7 +67,11 @@ P3 بـICC وحده بلا وسم لون آخر موجود في `apple_gainmap_*
 | `apple_heic_10bit_p3.heic` | 77952 | `1b73a555c824ff7a8cc99d7ca14d9d3f53fbb4b3587f755c59a177ae8bda15b4` |
 | `apple_heic_alpha.heic` | 830 | `2eaff577ba577254db2b4110c4f86e3dab46e4af777090229138f1beb0bb18ca` |
 | `apple_heic_hlg.heic` | 73083 | `d699edef45fa92d93331b3de94b8285372c89681a58a1a857d254175cbebafd6` |
+| `pillow_webp_lossless_alpha.webp` | 72 | `ea86ca4d8c1020b91f0ad3db4784a2cfdc617d51e16f6de6638c6c9d7b5b99ca` |
+| `pillow_webp_lossless_opaque.webp` | 60 | `08deddec4ba383d688bcf571e20faada915e99f7e4b4bd1b4abd4281375b62f9` |
+| `pillow_webp_lossy_alpha.webp` | 314 | `d223a2fdcd9976431443eba88252fc5134e564262fff2b8872e9c4a5e2e809eb` |
+| `pillow_webp_lossy_opaque.webp` | 266 | `beafd7b54b8f03cf37dbc5b1800f2d2a9482a6df6041e8001a64d933bebf21c4` |
 
 ## الاستخدام الحالي
 
-`preservation.rs` يستخدم الأولين، وينشئ منهما مشتقين في الذاكرة فقط: تعطيل اسم علاقة dimg، وتغيير أول خانة IFD0 في EXIF إلى Orientation=6 دون تحريك offsets. كلاهما اختبار رفض، لا صورة مرجعية للعرض. القارئ المستقل في `test_native/inspect_preservation.swift`. اختبار الهاتف (`integration_test/android_device_test.dart`) يستخدم عينات HEIC الثلاث و`seine_sdr_gainmap_srgb.jpg` (Ultra HDR: XMP `hdrgm` وMPF). بقية العينات مُحضَّرة للبنود المذكورة ولم تدخل اختبارًا بعد؛ وجودها هنا لا يعني أن بندها مختبر. لا عينة HLG من كاتب ثالث مستقل عن Apple بعد.
+`preservation.rs` يستخدم الأولين، وينشئ منهما مشتقين في الذاكرة فقط: تعطيل اسم علاقة dimg، وتغيير أول خانة IFD0 في EXIF إلى Orientation=6 دون تحريك offsets. كلاهما اختبار رفض، لا صورة مرجعية للعرض. القارئ المستقل في `test_native/inspect_preservation.swift`. اختبار الهاتف (`integration_test/android_device_test.dart`) يستخدم عينات HEIC الثلاث و`seine_sdr_gainmap_srgb.jpg` (Ultra HDR: XMP `hdrgm` وMPF). `tests/alpha_facts.rs` يقرأ ألفا كل العينات من الحاوية ويقارنها بما يراه ImageIO. `color_grid_alpha_nogrid.avif` هو الاستثناء: ImageIO لا يرى ألفا البلاطات فيه، والمواصفة تجيزها، ووصف libavif يعدّه ملفًا بألفا (IMG-02). بقية العينات مُحضَّرة للبنود المذكورة ولم تدخل اختبارًا بعد؛ وجودها هنا لا يعني أن بندها مختبر. لا عينة HLG من كاتب ثالث مستقل عن Apple بعد.
