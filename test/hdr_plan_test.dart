@@ -62,6 +62,27 @@ class _Api extends Fake implements DarkLibApi {
   @override
   Future<Facts> crateApiInspectInspectImage({required List<int> bytes}) async =>
       inspected;
+
+  /// Metadata steps seen, in order ('transplant' / 'strip').
+  final metadataCalls = <String>[];
+
+  @override
+  Future<Uint8List> crateApiMetadataTransplantMetadata({
+    required List<int> source,
+    required List<int> target,
+  }) async {
+    metadataCalls.add('transplant');
+    return Uint8List.fromList(target);
+  }
+
+  @override
+  Future<Uint8List> crateApiMetadataStripMetadata({
+    required List<int> bytes,
+    required bool stripIcc,
+  }) async {
+    metadataCalls.add(stripIcc ? 'strip+icc' : 'strip');
+    return Uint8List.fromList(bytes);
+  }
 }
 
 void main() {
@@ -87,6 +108,7 @@ void main() {
     messenger.setMockMethodCallHandler(avifChannel, null);
     api
       ..received.clear()
+      ..metadataCalls.clear()
       ..hdr = HdrOutcome.none
       ..inspected = const Facts(
         transfer: Transfer.noHdrSignal,
@@ -282,6 +304,9 @@ void main() {
     expect(hardwareEncodes, hasLength(1));
     expect(r.backend, MediaBackend.androidAvif);
     expect(r.diagnostics, isEmpty);
+    // IMG-08: without metadata the colour profile is still carried, then
+    // the private metadata stripped; the profile itself is kept.
+    expect(api.metadataCalls, ['transplant', 'strip']);
   });
 
   group('SourceInspector', () {

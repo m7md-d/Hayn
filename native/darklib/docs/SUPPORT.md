@@ -13,7 +13,7 @@ DarkLib builds on **stable Rust** for every target it supports.
 | iOS simulator | `aarch64-apple-ios-sim`, `x86_64-apple-ios` | — | ✅ |
 | Desktop / host | `aarch64-*`, `x86_64-*` | — | ✅ |
 
-**MSRV discrepancy:** the manifest declares 1.79, but locked `image 0.25.10` requires 1.88. The minimum is not certified until tested and reconciled.
+**MSRV: Rust 1.88.** Set by locked `image 0.25.10` (the highest `rust-version` among the dependencies) and verified on 2026-09-30: `cargo +1.88.0 check --locked --all-targets` and `cargo +1.88.0 test --locked` pass. Raise it only with a lockfile change that needs it, and re-verify.
 
 ## Why no 32-bit ARM (`armeabi-v7a`)
 

@@ -2,7 +2,7 @@
 name = "darklib"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.79"
+rust-version = "1.88"
 description = "Offline, royalty-free image core — lossless metadata surgery (strip/extract/carry), colour management (ICC + CICP→ICC synthesis), and AV1/WebP/JPEG/PNG decode·encode behind one engine."
 keywords = ["image", "avif", "metadata", "exif", "icc"]
 categories = ["multimedia::images", "encoding"]

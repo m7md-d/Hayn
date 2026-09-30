@@ -17,5 +17,5 @@ paths:
 - `ffmpeg_kit_flutter_new_min` مثبّت بدقة على `3.6.2` (LGPL، دون x264/x265): أول نسخة بمقطع arm64 لمحاكي iOS 26 وبلا arm64e الذي يرفضه App Store، ومعها FFmpeg 8.1.2. مع SPM المفعّل يدمجه Flutter عبر Swift Package Manager لا CocoaPods. لا ترفعه ضمن تعديل آخر.
 - FRB runtime وcodegen متطابقان (`2.12.0` حاليًا). أعد التوليد عند تغيير API؛ لا تعدّل `frb_generated` أو Dart المولد يدويًا.
 - راجع `native/darklib/CONTRIBUTING.md` و`docs/BUILD.md` و`docs/SUPPORT.md` داخل المكتبة. لا تضف nightly أو ABI جديدًا ضمن إصلاح جانبي.
-- `rust-version = 1.79` الحالي ادعاء غير مثبت مع القفل الحالي: `image 0.25.10` يطلب 1.88. لا تعلن دعم MSRV حتى يُثبت على ذلك الإصدار.
+- **الحد الأدنى لـRust هو 1.88** (`rust-version` في Cargo.toml)، مثبت مع القفل (`cargo +1.88.0 test --locked`، 2026-09-30). يفرضه `image 0.25.10`. تغيير اعتمادية يرفعه يُحدّث manifest والوثائق معًا بعد اختبار الإصدار الجديد.
 - قبل إضافة backend: قِس فرق حجم الحزمة المثبتة لكل ABI، زمن البناء، الذاكرة، زمن التشغيل والجودة، وحدد codec المكرر الذي سيزال. لا تخلط حجم مجلدات build بحجم ما يشحن للمستخدم.

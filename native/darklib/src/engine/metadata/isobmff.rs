@@ -495,6 +495,18 @@ pub struct TmapInfo {
     pub alt_props: Vec<Vec<u8>>,
 }
 
+/// Output size of the primary item, read without decoding: its `ispe`
+/// property (for a grid, the canvas), else a grid descriptor's output size.
+/// `None` when neither is there.
+pub fn primary_extent(b: &[u8]) -> Option<(u32, u32)> {
+    let primary = primary_item_id(b)?;
+    let ispe = item_properties(b, primary).and_then(|props| {
+        let ispe = props.into_iter().find(|p| p.get(4..8) == Some(b"ispe"))?;
+        Some((be_u32(&ispe, 12)?, be_u32(&ispe, 16)?))
+    });
+    ispe.or_else(|| read_grid(b, primary).map(|g| (g.width, g.height)))
+}
+
 /// Raw property boxes associated with item `id` via `ipma`, in order.
 fn item_properties(b: &[u8], id: u32) -> Option<Vec<Vec<u8>>> {
     let mc = meta_children(b)?;
@@ -787,39 +799,44 @@ pub fn extract_av1c_config_obus(b: &[u8]) -> Option<Vec<u8>> {
     None
 }
 
-/// The item ID of the **alpha** auxiliary image, if any. Identified rigorously by
-/// its `auxC` aux-type URN (`…:auxiliary:alpha`) mapped to an item via `ipma` —
-/// NOT by "the other av01 item", because an Apple HDR gain map is also an `auxl`
-/// auxiliary and must never be mistaken for alpha. The item may be a plain `av01`
-/// or itself a `grid` (large images); decode it like the primary.
-pub fn alpha_item_id(b: &[u8]) -> Option<u32> {
-    let mc = meta_children(b)?;
-    let iprp = *mc.iter().find(|x| x.typ == *b"iprp")?;
-    let ipc = boxes_in(b, iprp.body, iprp.end)?;
-    let ipco = *ipc.iter().find(|x| x.typ == *b"ipco")?;
-    let ipma = *ipc.iter().find(|x| x.typ == *b"ipma")?;
-    let alpha_prop = find_alpha_auxc_index(b, ipco)?; // 1-based index in ipco
-    find_item_with_property(b, ipma, alpha_prop)
+/// Where the primary image's alpha plane lives.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PrimaryAlpha {
+    None,
+    /// One alpha item (an `av01`, or itself a grid) for the whole primary.
+    Item(u32),
+    /// A grid primary whose tiles each carry their own alpha item, in tile
+    /// order (allowed by the spec; libavif's `color_grid_alpha_nogrid.avif`).
+    Tiles(Vec<u32>),
 }
 
-/// Whether the PRIMARY image has an alpha auxiliary: an item whose `auxC`
-/// aux type is an alpha URN (AV1's `urn:mpeg:mpegB:cicp:systems:auxiliary:alpha`
-/// or HEVC's `urn:mpeg:hevc:2015:auxid:1`, which Apple writes) and that an
-/// `auxl` reference ties to the primary item, or, for a grid primary, to every
-/// one of its tiles (allowed by the spec; libavif's
-/// `color_grid_alpha_nogrid.avif`). An alpha plane of some other item (a
-/// thumbnail) does not count. `None` when the item graph is unreadable.
-pub fn alpha_presence(b: &[u8]) -> Option<bool> {
+/// The primary image's alpha: an item whose `auxC` aux type is an alpha URN
+/// (AV1's `urn:mpeg:mpegB:cicp:systems:auxiliary:alpha` or HEVC's
+/// `urn:mpeg:hevc:2015:auxid:1`, which Apple writes) tied by an `auxl`
+/// reference to the primary item, or to every tile of a grid primary. An alpha
+/// plane of some other item (a thumbnail) does not count, and a gain map is
+/// never mistaken for alpha. `None` when the item graph is unreadable, or only
+/// some tiles carry alpha.
+pub fn primary_alpha(b: &[u8]) -> Option<PrimaryAlpha> {
     const ALPHA_URNS: [&[u8]; 2] = [
         b"urn:mpeg:mpegB:cicp:systems:auxiliary:alpha",
         b"urn:mpeg:hevc:2015:auxid:1",
     ];
     let mc = meta_children(b)?;
     let primary = parse_pitm(b, *mc.iter().find(|x| x.typ == *b"pitm")?)?;
-    let iprp = *mc.iter().find(|x| x.typ == *b"iprp")?;
+    // No property boxes means no `auxC`, hence no alpha; a box that is there
+    // but does not parse is unreadable.
+    let Some(iprp) = mc.iter().find(|x| x.typ == *b"iprp") else {
+        return Some(PrimaryAlpha::None);
+    };
     let ipc = boxes_in(b, iprp.body, iprp.end)?;
-    let ipco = *ipc.iter().find(|x| x.typ == *b"ipco")?;
-    let ipma = *ipc.iter().find(|x| x.typ == *b"ipma")?;
+    let (Some(ipco), Some(ipma)) = (
+        ipc.iter().find(|x| x.typ == *b"ipco"),
+        ipc.iter().find(|x| x.typ == *b"ipma"),
+    ) else {
+        return Some(PrimaryAlpha::None);
+    };
+    let (ipco, ipma) = (*ipco, *ipma);
     let mut alpha_props = Vec::new();
     for (i, prop) in boxes_in(b, ipco.body, ipco.end)?.iter().enumerate() {
         if prop.typ == *b"auxC" {
@@ -837,14 +854,14 @@ pub fn alpha_presence(b: &[u8]) -> Option<bool> {
         .map(|(id, _)| id)
         .collect();
     if alpha_items.is_empty() {
-        return Some(false);
+        return Some(PrimaryAlpha::None);
     }
     let Some(iref) = mc.iter().find(|x| x.typ == *b"iref") else {
-        return Some(false);
+        return Some(PrimaryAlpha::None);
     };
     let version = *b.get(iref.body)?;
     let id_bytes = if version == 0 { 2 } else { 4 };
-    let mut with_alpha = Vec::new(); // items an alpha auxiliary belongs to
+    let mut links = Vec::new(); // (alpha item, the item it belongs to)
     for child in boxes_in(b, iref.body + 4, iref.end)? {
         if child.typ != *b"auxl" {
             continue;
@@ -858,32 +875,34 @@ pub fn alpha_presence(b: &[u8]) -> Option<bool> {
             let to = read_id(b, q, id_bytes)?;
             q += id_bytes;
             if alpha_items.contains(&from) {
-                with_alpha.push(to);
+                links.push((from, to));
             }
         }
     }
-    if with_alpha.contains(&primary) {
-        return Some(true);
+    let alpha_of = |item: u32| links.iter().find(|(_, to)| *to == item).map(|(a, _)| *a);
+    if let Some(a) = alpha_of(primary) {
+        return Some(PrimaryAlpha::Item(a));
     }
     if item_type(b, primary) == Some(*b"grid") {
-        let tiles = dimg_targets(b, primary)?;
-        return Some(!tiles.is_empty() && tiles.iter().all(|t| with_alpha.contains(t)));
+        let per_tile: Vec<Option<u32>> = dimg_targets(b, primary)?
+            .into_iter()
+            .map(alpha_of)
+            .collect();
+        if per_tile.iter().all(Option::is_none) {
+            return Some(PrimaryAlpha::None);
+        }
+        // Alpha on some tiles only: not a layout this reader answers for.
+        return per_tile
+            .into_iter()
+            .collect::<Option<Vec<u32>>>()
+            .map(PrimaryAlpha::Tiles);
     }
-    Some(false)
+    Some(PrimaryAlpha::None)
 }
 
-/// 1-based index (within `ipco`) of the `auxC` property whose aux-type URN names
-/// alpha. The URN is `urn:mpeg:mpegB:cicp:systems:auxiliary:alpha`.
-fn find_alpha_auxc_index(b: &[u8], ipco: Bx) -> Option<u16> {
-    for (i, prop) in boxes_in(b, ipco.body, ipco.end)?.iter().enumerate() {
-        if prop.typ == *b"auxC" {
-            let payload = b.get(prop.body..prop.end)?;
-            if contains_ascii_ci(payload, b"auxiliary:alpha") {
-                return Some((i + 1) as u16);
-            }
-        }
-    }
-    None
+/// [`primary_alpha`] as yes/no; `None` when it cannot answer.
+pub fn alpha_presence(b: &[u8]) -> Option<bool> {
+    primary_alpha(b).map(|a| a != PrimaryAlpha::None)
 }
 
 /// Parse `ipma` into `(item_id, [1-based ipco property indices])` pairs.
@@ -916,14 +935,6 @@ fn parse_ipma(b: &[u8], ipma: Bx) -> Option<Vec<(u32, Vec<u16>)>> {
         out.push((item_id, idxs));
     }
     Some(out)
-}
-
-/// Item ID associated with the 1-based `ipco` property index `want`, per `ipma`.
-fn find_item_with_property(b: &[u8], ipma: Bx, want: u16) -> Option<u32> {
-    parse_ipma(b, ipma)?
-        .into_iter()
-        .find(|(_, idxs)| idxs.contains(&want))
-        .map(|(id, _)| id)
 }
 
 /// Read the primary image's orientation transform from its `irot`/`imir` item
@@ -2960,7 +2971,7 @@ mod tests {
 
         // Two real self-contained tile streams (av1C config + frame OBUs).
         let tile_stream = |rgba: [u8; 4]| -> Vec<u8> {
-            let px: Vec<u8> = std::iter::repeat(rgba).take(16 * 16).flatten().collect();
+            let px: Vec<u8> = std::iter::repeat_n(rgba, 16 * 16).flatten().collect();
             let avif = encode(
                 &Decoded {
                     width: 16,

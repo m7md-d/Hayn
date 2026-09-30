@@ -39,6 +39,12 @@ abstract final class AlphaFlatten {
       );
       return null;
     }
+    // DarkLib composites in Rust: seconds faster per 12 MP image than
+    // package:image (PERF-01). Dart remains for what DarkLib cannot decode
+    // (GIF, BMP, TIFF) and for when the library is unavailable; DarkLib's
+    // wrapper records either case (darklib.bake.*).
+    final rust = await DarkLibCore.flattenOnWhite(readable);
+    if (rust != null) return rust;
     return Isolate.run(() => flattenOnWhite(readable));
   }
 

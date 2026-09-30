@@ -35,6 +35,12 @@ fn target_of(format: CodecFormat, quality: u32) -> codec::Target {
     }
 }
 
+/// Opaque, upright PNG of `bytes` over white, for a JPEG of a transparent
+/// source. Throws on a container the codec cannot decode, or past the budget.
+pub fn flatten_on_white(bytes: Vec<u8>) -> Result<Vec<u8>, String> {
+    codec::flatten_on_white(&bytes).map_err(|e| e.to_string())
+}
+
 /// Decode → optional downscale → encode at `quality` (1..=100; PNG ignores it).
 /// `keep_metadata` carries EXIF/XMP/ICC. The result says what happened to an
 /// HDR gain map. Throws `preservation_required:…` for PQ/HLG, which this

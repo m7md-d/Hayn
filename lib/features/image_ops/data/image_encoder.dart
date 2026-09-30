@@ -233,10 +233,13 @@ abstract final class ImageEncoder {
         }
         if (plan.gainMap == true) await _recordGainMap(encoded);
         var bytes = encoded.bytes;
-        if (flattened && keepMetadata) {
-          final carried = await DarkLibCore.transplantMetadata(
-            source: source,
-            target: bytes,
+        // The flattened PNG came out of package:image with no profile at all:
+        // carry the original's back, the colour profile even without metadata.
+        if (flattened) {
+          final carried = await carryMetadata(
+            source,
+            bytes,
+            keepMetadata: keepMetadata,
           );
           if (carried == null) {
             MediaDiagnostics.record(
@@ -343,10 +346,10 @@ abstract final class ImageEncoder {
             ? await NativeAvifEncoder.encode(source: source, quality: quality)
             : null;
         if (hw != null && hw.isNotEmpty) {
-          if (!keepMetadata) return EncodedImage(hw, format, backend: backend);
-          final withMetadata = await DarkLibCore.transplantMetadata(
-            source: source,
-            target: hw,
+          final withMetadata = await carryMetadata(
+            source,
+            hw,
+            keepMetadata: keepMetadata,
           );
           if (withMetadata == null || withMetadata.isEmpty) {
             MediaDiagnostics.record(
@@ -584,6 +587,23 @@ abstract final class ImageEncoder {
   /// The plugin can request JPEG EXIF copying. This is not a full metadata,
   /// orientation, colour or HDR preservation contract.
   static bool _supportsKeepExif(DefaultFormat f) => f == DefaultFormat.jpeg;
+
+  /// The source's metadata onto [target]: all of it, or with [keepMetadata]
+  /// off only the colour profile. It says what the pixel values mean, so
+  /// dropping it recolours a P3 image as sRGB (IMG-08); DarkLib's strip keeps
+  /// it and removes EXIF/XMP/IPTC. Null when either step failed.
+  static Future<Uint8List?> carryMetadata(
+    Uint8List source,
+    Uint8List target, {
+    required bool keepMetadata,
+  }) async {
+    final carried = await DarkLibCore.transplantMetadata(
+      source: source,
+      target: target,
+    );
+    if (carried == null || carried.isEmpty || keepMetadata) return carried;
+    return DarkLibCore.stripMetadata(carried);
+  }
 }
 
 class ImageEncodingFailure implements Exception {

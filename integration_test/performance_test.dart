@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -16,6 +17,7 @@ import 'package:hayn/app/app.dart';
 import 'package:hayn/app/l10n/app_localizations.dart';
 import 'package:hayn/app/shell/swipeable_tabs.dart';
 import 'package:hayn/core/darklib/darklib.dart';
+import 'package:hayn/features/image_ops/data/alpha_flatten.dart';
 import 'package:hayn/features/image_ops/data/image_encoder.dart';
 import 'package:hayn/features/image_ops/data/image_probe.dart';
 import 'package:hayn/features/image_ops/data/platform_pixels.dart';
@@ -473,9 +475,11 @@ void main() {
       'jpeg': await _fixture('photo-12mp.jpg'),
       'heic': await _fixture('photo-12mp.heic'),
       'png': await _fixture('photo-12mp.png'),
+      // Transparent: its JPEG goes through the flatten onto white (PERF-01).
+      'pngAlpha': await _fixture('photo-12mp-alpha.png'),
     };
     await _warmUp(targets);
-    for (final name in ['jpeg', 'heic', 'png', 'webp', 'avif']) {
+    for (final name in ['jpeg', 'heic', 'png', 'pngAlpha', 'webp', 'avif']) {
       final source = sources[name];
       if (source == null) {
         r[name] = {'skipped': 'No $name output from the JPEG row'};
@@ -569,6 +573,24 @@ void main() {
       }
       r[e.key] = row;
     }
+
+    // PERF-01: the JPEG flatten of a transparent source, in DarkLib (now)
+    // and in package:image (before), on the same 12 MP image.
+    final alpha = await _fixture('photo-12mp-alpha.png');
+    Future<List<int>> twice(Future<Object?> Function() run) async => [
+      for (var i = 0; i < 2; i++)
+        await () async {
+          final sw = Stopwatch()..start();
+          expect(await run(), isNotNull);
+          return _ms(sw.elapsed);
+        }(),
+    ];
+    r['flattenOnWhite'] = {
+      'darklibMs': _stats(await twice(() => DarkLibCore.flattenOnWhite(alpha))),
+      'dartMs': _stats(
+        await twice(() => Isolate.run(() => flattenOnWhite(alpha))),
+      ),
+    };
   });
 }
 

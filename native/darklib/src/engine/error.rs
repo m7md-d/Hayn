@@ -12,6 +12,9 @@ pub enum DarkError {
     Malformed(&'static str),
     /// A supported pixel path would violate a source preservation requirement.
     PreservationRequired(&'static str),
+    /// Decoding would need more pixels than the decode budget; refused before
+    /// any pixel buffer is allocated.
+    TooLarge,
 }
 
 impl fmt::Display for DarkError {
@@ -20,6 +23,7 @@ impl fmt::Display for DarkError {
             DarkError::PreservationRequired(why) => write!(f, "preservation_required:{why}"),
             DarkError::UnsupportedFormat => write!(f, "unsupported image format"),
             DarkError::Malformed(why) => write!(f, "malformed image: {why}"),
+            DarkError::TooLarge => write!(f, "too_large"),
         }
     }
 }

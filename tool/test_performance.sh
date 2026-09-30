@@ -50,10 +50,11 @@ if [ ! -f "$FIXTURES/photo-12mp.jpg" ]; then
   curl -sfL -A "HaynDev (performance fixtures)" -o "$FIXTURES/photo-12mp.jpg" "$PHOTO_URL"
 fi
 echo "$PHOTO_SHA  $FIXTURES/photo-12mp.jpg" | shasum -a 256 -c --quiet
-if [ ! -f "$FIXTURES/photo-12mp.heic" ] || [ ! -f "$FIXTURES/photo-12mp.png" ]; then
+if [ ! -f "$FIXTURES/photo-12mp.heic" ] || [ ! -f "$FIXTURES/photo-12mp.png" ] \
+  || [ ! -f "$FIXTURES/photo-12mp-alpha.png" ]; then
   swift test_native/make_perf_fixtures.swift "$FIXTURES"
 fi
-FILES=(photo-12mp.jpg photo-12mp.heic photo-12mp.png)
+FILES=(photo-12mp.jpg photo-12mp.heic photo-12mp.png photo-12mp-alpha.png)
 
 OUT="$ROOT/build/performance/$PLATFORM-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$OUT"

@@ -36,9 +36,11 @@ Cross-compile sanity (`cargo ndk -t arm64-v8a build`) and, when embedded,
 - **Test on real, awkward files.** HEIC from iPhones, HDR, transparency, odd
   dimensions, profile-less `nclx` images. Add a golden test with each feature.
 - **Comments in English**, matching the existing code.
-- **Stable Rust only.** The manifest currently declares 1.79, but locked
-  `image 0.25.10` requires 1.88. Treat this as a known MSRV defect, not verified
-  support. Do not introduce nightly requirements; 32-bit ARM remains unsupported.
+- **Stable Rust only, 1.88 or newer** (the verified MSRV, see
+  [docs/SUPPORT.md](docs/SUPPORT.md)). A dependency change that needs a newer
+  compiler raises it in `Cargo.toml` and the docs together, after
+  `cargo +<version> test --locked` passes. Do not introduce nightly
+  requirements; 32-bit ARM remains unsupported.
 
 ## Adding a format or codec
 

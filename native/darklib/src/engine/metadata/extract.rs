@@ -116,6 +116,15 @@ fn png(b: &[u8]) -> Canonical {
         let data = &b[i + 8..i + 8 + len];
         if kind == b"eXIf" {
             c.exif.get_or_insert_with(|| data.to_vec());
+        } else if kind == b"cICP" && data.len() >= 4 {
+            // PNG gives cICP precedence over iCCP; an SDR one becomes a matrix
+            // profile, as for an AVIF nclx, so a cICP-only P3 PNG keeps its
+            // gamut on convert (Hayn IMG-08).
+            if let Some(profile) =
+                crate::engine::color::synthesize_from_cicp(data[0] as u16, data[1] as u16)
+            {
+                c.icc = Some(profile);
+            }
         } else if kind == b"iCCP" {
             // Decompress to the raw ICC so Canonical.icc is the uniform
             // uncompressed profile across every container (JPEG/WebP store it

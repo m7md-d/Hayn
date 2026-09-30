@@ -58,6 +58,10 @@ enum MediaDiagnosticCode {
   hdrUnverified,
   incompleteBatch,
   missingResult,
+
+  /// The source's header claims more pixels than the engine decodes; refused
+  /// before any pixel buffer (RUN-01).
+  tooLarge,
 }
 
 /// Codes only: never retain media, paths, asset IDs, metadata or raw exceptions.

@@ -9,6 +9,11 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `target_of`
 
+/// Opaque, upright PNG of `bytes` over white, for a JPEG of a transparent
+/// source. Throws on a container the codec cannot decode, or past the budget.
+Future<Uint8List> flattenOnWhite({required List<int> bytes}) =>
+    DarkLib.instance.api.crateApiCodecFlattenOnWhite(bytes: bytes);
+
 /// Decode → optional downscale → encode at `quality` (1..=100; PNG ignores it).
 /// `keep_metadata` carries EXIF/XMP/ICC. The result says what happened to an
 /// HDR gain map. Throws `preservation_required:…` for PQ/HLG, which this

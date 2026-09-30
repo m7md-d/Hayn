@@ -4,9 +4,11 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:image/image.dart' as img;
 import 'package:hayn/core/darklib/darklib.dart';
 import 'package:hayn/core/diagnostics/media_diagnostics.dart';
+import 'package:hayn/features/image_ops/data/alpha_flatten.dart';
 import 'package:hayn/features/image_ops/data/image_encoder.dart';
 import 'package:hayn/features/image_ops/data/source_facts.dart';
 import 'package:hayn/features/settings/providers/preferences_providers.dart';
+import 'package:hayn/src/rust/api/metadata.dart' as rust_meta;
 import 'package:hayn/src/rust/frb_generated.dart';
 
 // Explicit host smoke test. Requires a real, matching Rust library; never mocks
@@ -210,4 +212,110 @@ void main() {
       );
     }
   }, timeout: const Timeout(Duration(minutes: 3)));
+
+  // IMG-08: without metadata the colour profile stays. The JPEG flatten and
+  // Android's hardware AVIF produce output with no profile and restore it
+  // through carryMetadata; it runs here on a DarkLib JPEG, since this host has
+  // no platform JPEG encoder for the full path.
+  test('carryMetadata without metadata keeps the P3 profile only', () async {
+    final camera = await File(
+      'native/darklib/tests/fixtures/apple_gainmap_new.jpg',
+    ).readAsBytes();
+    final before = rust_meta.readMetadataSummary(bytes: camera);
+    expect((before.hasIcc, before.hasExif, before.hasGps), (true, true, true));
+    final bare = (await DarkLibCore.transcode(
+      camera,
+      format: DarkLibFormat.jpeg,
+      quality: 90,
+      keepMetadata: false,
+    ))!.bytes;
+    for (final keep in [false, true]) {
+      final out = (await ImageEncoder.carryMetadata(
+        camera,
+        bare,
+        keepMetadata: keep,
+      ))!;
+      final after = rust_meta.readMetadataSummary(bytes: out);
+      expect(
+        (after.hasIcc, after.hasExif, after.hasGps),
+        (true, keep, keep),
+        reason: 'keepMetadata: $keep',
+      );
+    }
+  });
+
+  // RUN-01: a header past the decode budget is refused before any pixel
+  // buffer, and classified.
+  test('oversized header is refused as tooLarge', () async {
+    int crc(List<int> data) {
+      var c = 0xFFFFFFFF;
+      for (final b in data) {
+        c ^= b;
+        for (var k = 0; k < 8; k++) {
+          c = c & 1 == 1 ? (c >> 1) ^ 0xEDB88320 : c >> 1;
+        }
+      }
+      return c ^ 0xFFFFFFFF;
+    }
+
+    List<int> be(int v) => [
+      v >> 24 & 255,
+      v >> 16 & 255,
+      v >> 8 & 255,
+      v & 255,
+    ];
+    List<int> chunk(String kind, List<int> data) => [
+      ...be(data.length),
+      ...kind.codeUnits,
+      ...data,
+      ...be(crc([...kind.codeUnits, ...data])),
+    ];
+    final png = Uint8List.fromList([
+      137,
+      80,
+      78,
+      71,
+      13,
+      10,
+      26,
+      10,
+      ...chunk('IHDR', [...be(20000), ...be(20000), 8, 6, 0, 0, 0]),
+      ...chunk('IDAT', [0x78, 0x9c, 0x03, 0, 0, 0, 0, 1]),
+      ...chunk('IEND', []),
+    ]);
+    final trace = await MediaDiagnostics.trace((trace) async {
+      expect(
+        await DarkLibCore.transcode(
+          png,
+          format: DarkLibFormat.webp,
+          quality: 80,
+          keepMetadata: false,
+        ),
+        isNull,
+      );
+      return trace.events;
+    });
+    expect(trace.map((d) => d.code), contains(MediaDiagnosticCode.tooLarge));
+  });
+
+  // PERF-01: the JPEG flatten runs in Rust. The composite must match the one
+  // the phone test checks, and nothing may fall back to Dart for a PNG.
+  test('flatten onto white runs in DarkLib with the same composite', () async {
+    final input = img.Image(width: 64, height: 48, numChannels: 4);
+    img.fill(input, color: img.ColorRgba8(80, 120, 160, 64));
+    final png = Uint8List.fromList(img.encodePng(input));
+    final trace = await MediaDiagnostics.trace((trace) async {
+      final flat = (await AlphaFlatten.toOpaquePng(
+        png,
+        toSdr: false,
+        alpha: true,
+      ))!;
+      final shown = img.decodePng(flat)!;
+      expect(shown.numChannels, 3);
+      final p = shown.getPixel(8, 6);
+      expect((p.r, p.g, p.b), (211, 221, 231));
+      return trace.events;
+    });
+    expect(trace, isEmpty, reason: 'no DarkLib failure, no Dart fallback');
+  });
 }

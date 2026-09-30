@@ -21,3 +21,23 @@ func write(_ name: String, _ type: UTType, _ props: [CFString: Any] = [:]) {
 
 write("photo-12mp.heic", .heic, [kCGImageDestinationLossyCompressionQuality: 0.8])
 write("photo-12mp.png", .png)
+
+// The same photo with its left half at alpha 128: a transparent source for the
+// JPEG flatten onto white (PERF-01), which opaque sources never reach.
+func translucentLeftHalf(_ img: CGImage) -> CGImage {
+  let (w, h) = (img.width, img.height)
+  let ctx = CGContext(
+    data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+    space: img.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!,
+    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+  ctx.draw(img, in: CGRect(x: 0, y: 0, width: w, height: h))
+  ctx.setBlendMode(.destinationIn)
+  ctx.setFillColor(gray: 0, alpha: 0.5)
+  ctx.fill(CGRect(x: 0, y: 0, width: w / 2, height: h))
+  return ctx.makeImage()!
+}
+let alphaURL = dir.appendingPathComponent("photo-12mp-alpha.png")
+let alphaDest = CGImageDestinationCreateWithURL(alphaURL as CFURL, UTType.png.identifier as CFString, 1, nil)!
+CGImageDestinationAddImage(alphaDest, translucentLeftHalf(image), nil)
+precondition(CGImageDestinationFinalize(alphaDest), "photo-12mp-alpha.png: write failed")
+print("wrote photo-12mp-alpha.png")

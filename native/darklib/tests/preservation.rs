@@ -24,8 +24,10 @@ fn mean_diff(a: &codec::Decoded, b: &codec::Decoded) -> f64 {
     assert_eq!((a.width, a.height), (b.width, b.height));
     let total: u64 = a
         .rgba
-        .chunks_exact(4)
-        .zip(b.rgba.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(b.rgba.as_chunks::<4>().0)
         .map(|(p, q)| (0..3).map(|c| p[c].abs_diff(q[c]) as u64).sum::<u64>())
         .sum();
     total as f64 / (a.rgba.len() / 4 * 3) as f64

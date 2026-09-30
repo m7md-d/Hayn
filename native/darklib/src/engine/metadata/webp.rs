@@ -5,18 +5,19 @@
 //! the `EXIF` and `XMP ` chunks — drop them and clear the matching VP8X flag
 //! bits (EXIF=0x08, XMP=0x04). `ICCP` (+ flag 0x20) is kept unless the policy
 //! strips colour. Coded chunks (VP8/VP8L/ALPH/ANMF…) are copied byte-for-byte.
-//! On malformation returns the input untouched.
+//! A file with nothing to remove comes back as it is; a malformed one is an
+//! error, since returning it would hand its private data back as "clean".
 
 use super::{exif, inject::riff_chunk, IccPolicy, StripPolicy};
-use crate::engine::error::Result;
+use crate::engine::error::{DarkError, Result};
 
 pub fn strip(b: &[u8], policy: StripPolicy) -> Result<Vec<u8>> {
-    Ok(strip_bytes(b, policy))
+    strip_bytes(b, policy).ok_or(DarkError::Malformed("webp: cannot strip safely"))
 }
 
-fn strip_bytes(b: &[u8], policy: StripPolicy) -> Vec<u8> {
+fn strip_bytes(b: &[u8], policy: StripPolicy) -> Option<Vec<u8>> {
     if b.len() < 16 || &b[0..4] != b"RIFF" || &b[8..12] != b"WEBP" {
-        return b.to_vec();
+        return None;
     }
     let strip_icc = policy.icc == IccPolicy::Strip;
     // Written in place of the EXIF chunk, keeping the VP8X EXIF flag
@@ -41,7 +42,7 @@ fn strip_bytes(b: &[u8], policy: StripPolicy) -> Vec<u8> {
         let padded = size + (size & 1); // chunks are padded to an even length
         let chunk_end = i + 8 + padded;
         if chunk_end > b.len() {
-            return b.to_vec();
+            return None;
         }
 
         if fourcc == b"EXIF" {
@@ -69,7 +70,7 @@ fn strip_bytes(b: &[u8], policy: StripPolicy) -> Vec<u8> {
         i = chunk_end;
     }
     if !changed {
-        return b.to_vec();
+        return Some(b.to_vec()); // nothing to remove
     }
 
     let riff_size = (4 + body.len()) as u32; // 'WEBP' + chunks
@@ -78,7 +79,7 @@ fn strip_bytes(b: &[u8], policy: StripPolicy) -> Vec<u8> {
     out.extend_from_slice(&riff_size.to_le_bytes());
     out.extend_from_slice(b"WEBP");
     out.extend_from_slice(&body);
-    out
+    Some(out)
 }
 
 /// Whether a top-level RIFF chunk `fourcc` exists (bounds-safe scan).
@@ -173,5 +174,15 @@ mod tests {
         assert!(!contains(&out, b"fake-icc-profile"), "ICCP removed");
         assert_eq!(vp8x_flags(&out) & 0x20, 0, "ICCP flag cleared");
         assert!(contains(&out, &[0xAA, 0xBB, 0xCC, 0xDD]), "pixels intact");
+    }
+
+    #[test]
+    fn malformed_is_an_error_clean_is_unchanged() {
+        let mut cut = sample();
+        cut.truncate(cut.len() - 3); // last chunk runs past the end
+        assert!(strip(&cut, StripPolicy::default()).is_err());
+        assert!(strip(b"not a webp at all", StripPolicy::default()).is_err());
+        let clean = strip(&sample(), StripPolicy::default()).unwrap();
+        assert_eq!(strip(&clean, StripPolicy::default()).unwrap(), clean);
     }
 }

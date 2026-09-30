@@ -4,21 +4,21 @@
 //! `tIME`); keep IHDR/PLTE/IDAT/IEND and the colour chunks (gAMA/cHRM/sRGB).
 //! `iCCP` (ICC) is kept unless the policy strips colour. IDAT is copied
 //! byte-for-byte. `eXIf` is replaced by a minimal one holding only a
-//! non-upright Orientation (IMG-07). On malformation returns the input
-//! untouched.
+//! non-upright Orientation (IMG-07). A malformed or truncated file is an
+//! error: returning the input would hand its private data back as "clean".
 
 use super::{exif, inject::png_chunk, IccPolicy, StripPolicy};
-use crate::engine::error::Result;
+use crate::engine::error::{DarkError, Result};
 
 const SIG: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
 
 pub fn strip(b: &[u8], policy: StripPolicy) -> Result<Vec<u8>> {
-    Ok(strip_bytes(b, policy))
+    strip_bytes(b, policy).ok_or(DarkError::Malformed("png: cannot strip safely"))
 }
 
-fn strip_bytes(b: &[u8], policy: StripPolicy) -> Vec<u8> {
+fn strip_bytes(b: &[u8], policy: StripPolicy) -> Option<Vec<u8>> {
     if b.len() < 8 || b[..8] != SIG {
-        return b.to_vec();
+        return None;
     }
     let strip_icc = policy.icc == IccPolicy::Strip;
     // Written in place of the eXIf chunk; OrientationPolicy::Keep.
@@ -35,7 +35,7 @@ fn strip_bytes(b: &[u8], policy: StripPolicy) -> Vec<u8> {
         let kind = &b[i + 4..i + 8];
         let chunk_end = i + 12 + len; // length(4) + type(4) + data(len) + crc(4)
         if chunk_end > b.len() {
-            return b.to_vec();
+            return None;
         }
         let drop = kind == b"tEXt"
             || kind == b"zTXt"
@@ -52,11 +52,11 @@ fn strip_bytes(b: &[u8], policy: StripPolicy) -> Vec<u8> {
             out.extend_from_slice(&b[i..chunk_end]);
         }
         if kind == b"IEND" {
-            break;
+            return Some(out);
         }
         i = chunk_end;
     }
-    out
+    None // no IEND: truncated
 }
 
 #[cfg(test)]
@@ -125,8 +125,11 @@ mod tests {
     }
 
     #[test]
-    fn not_a_png_returns_input() {
+    fn malformed_or_truncated_is_an_error() {
         let junk = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-        assert_eq!(strip(&junk, StripPolicy::default()).unwrap(), junk);
+        assert!(strip(&junk, StripPolicy::default()).is_err());
+        let mut cut = sample();
+        cut.truncate(cut.len() - 12); // drops IEND
+        assert!(strip(&cut, StripPolicy::default()).is_err());
     }
 }

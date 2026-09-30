@@ -71,10 +71,17 @@ decode = perf.get("decode")
 if decode:
     print("\ndecode median ms (full / 1080 px / app display path)")
     for source, row in decode.items():
+        if source == "flattenOnWhite":
+            continue
         full = row.get("flutterFullMs", {}).get("median", row.get("flutterFailed", "-"))
         small = row.get("flutter1080Ms", {}).get("median", "-")
         app = row.get("appDisplayMs", {}).get("median", "-")
         print(f"  {source:<6} {full} / {small} / {app}")
+
+flatten = (decode or {}).get("flattenOnWhite")
+if flatten:
+    print(f"\nflatten onto white, 12 MP (median ms): DarkLib {flatten['darklibMs'].get('median')} · "
+          f"Dart {flatten['dartMs'].get('median')}")
 
 over = data.get("overBudget") or []
 print(f"\nOver budget: {len(over)}")

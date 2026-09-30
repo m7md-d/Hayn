@@ -72,7 +72,7 @@ class DarkLib extends BaseEntrypoint<DarkLibApi, DarkLibApiImpl, DarkLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 844787946;
+  int get rustContentHash => -2050621774;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -91,6 +91,8 @@ abstract class DarkLibApi extends BaseApi {
   FormatInfo crateApiMetadataDescribeFormat({required List<int> bytes});
 
   ImageFormat crateApiMetadataDetectFormat({required List<int> bytes});
+
+  Future<Uint8List> crateApiCodecFlattenOnWhite({required List<int> bytes});
 
   String crateApiSimpleGreet({required String name});
 
@@ -221,13 +223,41 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
       const TaskConstMeta(debugName: "detect_format", argNames: ["bytes"]);
 
   @override
+  Future<Uint8List> crateApiCodecFlattenOnWhite({required List<int> bytes}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(bytes, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 5,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiCodecFlattenOnWhiteConstMeta,
+        argValues: [bytes],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiCodecFlattenOnWhiteConstMeta =>
+      const TaskConstMeta(debugName: "flatten_on_white", argNames: ["bytes"]);
+
+  @override
   String crateApiSimpleGreet({required String name}) {
     return handler.executeSync(
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(name, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 5)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 6)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -252,7 +282,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 6,
+            funcId: 7,
             port: port_,
           );
         },
@@ -280,7 +310,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 7,
+            funcId: 8,
             port: port_,
           );
         },
@@ -307,7 +337,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(bytes, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 8)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_metadata_summary,
@@ -340,7 +370,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 9,
+            funcId: 10,
             port: port_,
           );
         },
@@ -381,7 +411,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 10,
+            funcId: 11,
             port: port_,
           );
         },
@@ -415,7 +445,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 11,
+            funcId: 12,
             port: port_,
           );
         },

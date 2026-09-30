@@ -71,6 +71,14 @@ abstract final class DarkLibCore {
         );
         throw const DarkLibPreservationFailure();
       }
+      if (error == 'too_large') {
+        MediaDiagnostics.record(
+          MediaBackend.darklib,
+          operation,
+          MediaDiagnosticCode.tooLarge,
+        );
+        return null;
+      }
       MediaDiagnostics.record(
         MediaBackend.darklib,
         operation,
@@ -117,6 +125,14 @@ abstract final class DarkLibCore {
       keepMetadata: keepMetadata,
     ),
     isEmpty: (t) => t.bytes.isEmpty,
+  );
+
+  /// Opaque, upright PNG of [bytes] over white (JPEG of a transparent source).
+  /// Null when DarkLib is unavailable or cannot decode the container.
+  static Future<Uint8List?> flattenOnWhite(Uint8List bytes) => _call(
+    MediaOperation.bake,
+    () => rust_codec.flattenOnWhite(bytes: bytes),
+    isEmpty: (b) => b.isEmpty,
   );
 
   /// HDR facts read from the container, without decoding pixels. Null when

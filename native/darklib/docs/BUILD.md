@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- A stable Rust toolchain (MSRV **1.79**) via `rustup`.
+- A stable Rust toolchain via `rustup`, **1.88 or newer** (MSRV, verified with the lockfile: `cargo +1.88.0 test --locked`, 2026-09-30).
 - For mobile cross-compilation, the relevant targets and helpers:
   ```sh
   rustup target add aarch64-linux-android \

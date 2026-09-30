@@ -37,10 +37,76 @@ pub enum Target {
     Avif { quality: u8 },
 }
 
+/// Largest image DarkLib decodes: 256 MP, about 1 GiB of RGBA8, which every
+/// real camera fits (200 MP included). A file claiming more is refused from
+/// its header before any pixel buffer is allocated (Hayn RUN-01); the AVIF
+/// grid canvas has the same ceiling. It is a fixed ceiling, not a budget for
+/// the device's memory, which is not measured yet.
+pub const MAX_DECODE_PIXELS: u64 = 256 * 1024 * 1024;
+
+/// Pixel dimensions from the container header, without decoding pixels.
+/// `None` when the header does not say.
+pub fn header_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    use crate::engine::format::{detect, ImageFormat};
+    match detect(bytes) {
+        ImageFormat::Webp => webp::BitstreamFeatures::new(bytes).map(|f| (f.width(), f.height())),
+        ImageFormat::Avif | ImageFormat::Heic => {
+            crate::engine::metadata::isobmff::primary_extent(bytes)
+        }
+        ImageFormat::Jpeg => jpeg_dimensions(bytes),
+        _ => image::ImageReader::new(Cursor::new(bytes))
+            .with_guessed_format()
+            .ok()?
+            .into_dimensions()
+            .ok(),
+    }
+}
+
+/// Width and height from a JPEG's frame header (any SOFn), walking the marker
+/// segments from SOI. `None` when no frame header precedes the scan.
+fn jpeg_dimensions(b: &[u8]) -> Option<(u32, u32)> {
+    let mut i = 2usize;
+    loop {
+        if *b.get(i)? != 0xFF {
+            return None;
+        }
+        let marker = *b.get(i + 1)?;
+        if marker == 0xFF {
+            i += 1; // fill byte
+            continue;
+        }
+        if marker == 0xDA || marker == 0xD9 {
+            return None;
+        }
+        let len = u16::from_be_bytes([*b.get(i + 2)?, *b.get(i + 3)?]) as usize;
+        // SOF0..SOF15, except DHT (C4), JPG (C8) and DAC (CC).
+        if (0xC0..=0xCF).contains(&marker) && !matches!(marker, 0xC4 | 0xC8 | 0xCC) {
+            let h = u16::from_be_bytes([*b.get(i + 5)?, *b.get(i + 6)?]) as u32;
+            let w = u16::from_be_bytes([*b.get(i + 7)?, *b.get(i + 8)?]) as u32;
+            return Some((w, h));
+        }
+        i = i.checked_add(2 + len)?;
+    }
+}
+
+/// Refuses a decode past [`MAX_DECODE_PIXELS`] from the header alone.
+fn check_decode_budget(bytes: &[u8]) -> Result<()> {
+    let (w, h) = header_dimensions(bytes).ok_or(DarkError::Malformed("no dimensions"))?;
+    if w == 0 || h == 0 {
+        return Err(DarkError::Malformed("empty image"));
+    }
+    if (w as u64) * (h as u64) > MAX_DECODE_PIXELS {
+        return Err(DarkError::TooLarge);
+    }
+    Ok(())
+}
+
 /// Decode any supported container to RGBA, optionally downscaling so the long
 /// edge is at most `max_edge` (for previews). The rule against downscaling the
-/// SAVED output lives at the call site — this is a primitive.
+/// SAVED output lives at the call site — this is a primitive. The full image
+/// is decoded first (then scaled), so the budget is on the source's size.
 pub fn decode(bytes: &[u8], max_edge: Option<u32>) -> Result<Decoded> {
+    check_decode_budget(bytes)?;
     // Unified orientation: bake the source's EXIF orientation into the pixels so
     // every re-encode is upright (the encoders write no orientation tag),
     // preventing the classic flip. Single source of truth — never applied twice.
@@ -86,7 +152,17 @@ pub fn decode(bytes: &[u8], max_edge: Option<u32>) -> Result<Decoded> {
         }
         _ => {}
     }
-    let img = image::load_from_memory(bytes).map_err(|_| DarkError::Malformed("decode failed"))?;
+    // The image crate's own default allocation limit (512 MiB) would refuse a
+    // 200 MP JPEG as a decode failure; align it with the budget instead.
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(MAX_DECODE_PIXELS * 4);
+    let mut reader = image::ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|_| DarkError::Malformed("decode failed"))?;
+    reader.limits(limits);
+    let img = reader
+        .decode()
+        .map_err(|_| DarkError::Malformed("decode failed"))?;
     finish(img, orientation, max_edge)
 }
 
@@ -108,6 +184,27 @@ fn finish(mut img: DynamicImage, orientation: u16, max_edge: Option<u32>) -> Res
     })
 }
 
+/// Opaque, upright 8-bit RGB PNG of `bytes` composited over white: what a JPEG
+/// shows for a transparent source (user decision, 2026-09-29). The EXIF
+/// orientation is baked in by [`decode`]; the budget applies. Replaces the
+/// pure-Dart composite, which took seconds per 12 MP image (Hayn PERF-01).
+pub fn flatten_on_white(bytes: &[u8]) -> Result<Vec<u8>> {
+    let img = decode(bytes, None)?;
+    let mut rgb = Vec::with_capacity(img.rgba.len() / 4 * 3);
+    for px in img.rgba.as_chunks::<4>().0 {
+        let a = px[3] as u32;
+        for &c in &px[..3] {
+            // c·a + white·(1 − a), rounded, in 0..=255.
+            rgb.push(((c as u32 * a + 255 * (255 - a) + 127) / 255) as u8);
+        }
+    }
+    let mut out = Cursor::new(Vec::new());
+    image::codecs::png::PngEncoder::new(&mut out)
+        .write_image(&rgb, img.width, img.height, ExtendedColorType::Rgb8)
+        .map_err(|_| DarkError::Malformed("png encode failed"))?;
+    Ok(out.into_inner())
+}
+
 /// Above this many pixels an opaque AVIF encode goes tile-by-tile as an
 /// ImageGrid: bounded memory at FULL resolution — never a downscale (DarkLib §5).
 const AVIF_GRID_THRESHOLD_PX: u64 = 16 * 1024 * 1024;
@@ -124,7 +221,9 @@ pub fn encode(img: &Decoded, target: Target) -> Result<Vec<u8>> {
             // the single-item path for now (a grid alpha plane is a later step);
             // any grid failure falls back to the proven single-item encode.
             let px = (img.width as u64) * (img.height as u64);
-            if px > AVIF_GRID_THRESHOLD_PX && img.rgba.chunks_exact(4).all(|p| p[3] == 255) {
+            if px > AVIF_GRID_THRESHOLD_PX
+                && img.rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 255)
+            {
                 if let Ok(out) = encode_avif_grid(img, quality, AVIF_GRID_TILE) {
                     return Ok(out);
                 }
@@ -259,7 +358,10 @@ pub struct Transcoded {
 }
 
 /// Decode → (optional resize) → encode to `target`. With `keep_metadata` the
-/// source's EXIF/XMP/ICC are carried (orientation baked into the pixels). An
+/// source's EXIF/XMP/ICC are carried (orientation baked into the pixels).
+/// Without it the private metadata goes but the ICC profile stays: it says
+/// what the pixel values mean, and dropping it would recolour a P3 image as
+/// sRGB (Hayn IMG-08). An
 /// ISO 21496-1 gain map survives a full-resolution, unrotated AVIF→AVIF
 /// convert (with or without metadata: it is image data, not private data);
 /// elsewhere the SDR base is encoded and the outcome says so. PQ/HLG is
@@ -279,6 +381,14 @@ pub fn transcode(
         return Err(DarkError::PreservationRequired("hdr_transfer_unsupported"));
     }
     let meta = metadata::extract(bytes);
+    let carried = if keep_metadata {
+        meta.clone()
+    } else {
+        Canonical {
+            icc: meta.icc.clone(),
+            ..Canonical::default()
+        }
+    };
 
     let mut hdr = HdrOutcome::None;
     if facts.gain_map == Presence::Present {
@@ -290,11 +400,6 @@ pub fn transcode(
             && isobmff::read_orientation(bytes).is_none();
         hdr = HdrOutcome::GainMapDropped;
         if let (true, Target::Avif { quality }) = (keepable, target) {
-            let carried = if keep_metadata {
-                meta.clone()
-            } else {
-                Canonical::default()
-            };
             match transcode_hdr_avif(bytes, quality, &carried) {
                 Some(out) => {
                     return Ok(Transcoded {
@@ -308,12 +413,10 @@ pub fn transcode(
     }
 
     let out = encode(&decode(bytes, max_edge)?, target)?;
-    let out = if keep_metadata {
-        metadata::inject(&out, &meta)
-    } else {
-        out
-    };
-    Ok(Transcoded { bytes: out, hdr })
+    Ok(Transcoded {
+        bytes: metadata::inject(&out, &carried),
+        hdr,
+    })
 }
 
 /// Carry an ISO 21496-1 gain map through an AVIF→AVIF re-encode: decode + encode
@@ -372,6 +475,26 @@ mod tests {
         let png2 = encode(&d, Target::Png).unwrap();
         let d2 = decode(&png2, None).unwrap();
         assert_eq!(d.rgba, d2.rgba);
+    }
+
+    /// The composite the phone test checks: (80,120,160) at alpha 64 over
+    /// white is (211,221,231); an opaque pixel is untouched; no alpha remains.
+    #[test]
+    fn flatten_on_white_composites_and_drops_alpha() {
+        let src = Decoded {
+            width: 2,
+            height: 1,
+            rgba: vec![80, 120, 160, 64, 10, 20, 30, 255],
+        };
+        let png = encode(&src, Target::Png).unwrap();
+        let flat = flatten_on_white(&png).unwrap();
+        let out = decode(&flat, None).unwrap();
+        assert_eq!(&out.rgba[..4], &[211, 221, 231, 255]);
+        assert_eq!(&out.rgba[4..], &[10, 20, 30, 255]);
+        assert_eq!(
+            crate::engine::inspect::inspect(&flat).alpha,
+            crate::engine::inspect::Presence::Absent
+        );
     }
 
     #[test]
@@ -580,8 +703,7 @@ mod tests {
         use crate::engine::metadata::{extract, isobmff, Canonical};
 
         let coded = |w: u32, h: u32, rgba: [u8; 4]| -> isobmff::CodedItem {
-            let px: Vec<u8> = std::iter::repeat(rgba)
-                .take((w * h) as usize)
+            let px: Vec<u8> = std::iter::repeat_n(rgba, (w * h) as usize)
                 .flatten()
                 .collect();
             let avif = encode_avif_single(

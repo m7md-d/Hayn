@@ -1,13 +1,21 @@
-# Golden CI — the same green gate that every stage must pass locally
-# (docs/10-DARKLIB.md §11): the Rust core's fmt/clippy/tests (the golden
-# round-trip suite) and the Flutter analyze + unit tests. Pure checks only —
-# no signing, no publishing, nothing leaves the runner.
+# CI — the gates every change passes locally (.claude/rules/workflow.md):
+# DarkLib's fmt/clippy/tests on the locked dependencies and its MSRV, the
+# Flutter analyze + unit tests on the locked packages, and the real Rust
+# bridge loaded by Dart (the unit suite runs without it). Pull requests and
+# manual runs also build both platforms, since a host check alone does not
+# prove the packaging. No signing, no publishing, nothing leaves the runner.
 name: CI
 
 on:
   push:
     branches: [main, bedrock]
   pull_request:
+  workflow_dispatch:
+
+env:
+  # Match the development machine (docs/13-DEVELOPMENT.md); analyzer results
+  # and generated code drift between versions.
+  FLUTTER_VERSION: 3.47.2
 
 jobs:
   darklib:
@@ -25,8 +33,19 @@ jobs:
         with:
           workspaces: native/darklib
       - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+
+  msrv:
+    name: DarkLib MSRV (Rust 1.88)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: native/darklib
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - run: cargo check --locked --all-targets
 
   flutter:
     name: App (Flutter)
@@ -35,13 +54,71 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          # Match the development machines (see memory/docs) — analyzer results
-          # can drift between Flutter versions.
-          flutter-version: 3.44.0
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
-      - run: flutter pub get
+      - run: flutter pub get --enforce-lockfile
       - run: flutter analyze
-      # The unit suite runs on the Dart VM; DarkLib calls degrade gracefully
-      # when the native library isn't present, which the tests account for.
       - run: flutter test
+
+  bridge:
+    name: Real DarkLib bridge (host)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/darklib
+      - run: cargo build --locked
+        working-directory: native/darklib
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get --enforce-lockfile
+      # Fails, never skips, when the library is missing or does not match.
+      - run: >
+          flutter test --no-pub test_native/darklib_host_test.dart
+          --dart-define=DARKLIB_TEST_LIBRARY=$GITHUB_WORKSPACE/native/darklib/target/debug/libdarklib.so
+
+  android:
+    name: Android release build (arm64)
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get --enforce-lockfile
+      - run: flutter build apk --release
+      # arm64-v8a only (BUILD-03): any other ABI in the APK is a regression.
+      - run: |
+          abis=$(unzip -l build/app/outputs/flutter-apk/app-release.apk \
+            | awk '{print $4}' | grep '^lib/' | cut -d/ -f2 | sort -u)
+          echo "ABIs: $abis"
+          test "$abis" = "arm64-v8a"
+
+  ios:
+    name: iOS release build (no signing)
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get --enforce-lockfile
+      - run: flutter build ios --release --no-codesign

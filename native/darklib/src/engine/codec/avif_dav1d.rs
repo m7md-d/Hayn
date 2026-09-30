@@ -21,7 +21,7 @@ use rav1d::src::lib::{
 };
 
 use crate::engine::error::{DarkError, Result};
-use crate::engine::metadata::isobmff;
+use crate::engine::metadata::isobmff::{self, PrimaryAlpha};
 
 fn fail() -> DarkError {
     DarkError::Malformed("avif decode failed")
@@ -36,16 +36,28 @@ pub fn decode(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>)> {
     let (w, h, mut rgba) = decode_item(bytes, primary, 0)?;
 
     // Transparency: AVIF stores alpha as a separate monochrome auxiliary image
-    // (an av01 item, or a grid of them for large images). Decode it and copy its
-    // luma into the alpha channel. Any failure or size mismatch leaves the image
-    // opaque — alpha is never allowed to corrupt the colour decode.
-    if let Some(alpha_id) = isobmff::alpha_item_id(bytes) {
-        if let Ok((aw, ah, argba)) = decode_item(bytes, alpha_id, 0) {
-            if aw == w && ah == h {
-                for px in 0..(w as usize * h as usize) {
-                    rgba[px * 4 + 3] = argba[px * 4]; // mono luma → alpha
-                }
-            }
+    // for the primary (an av01 item, or a grid of them), or one per tile of a
+    // grid primary. Its luma becomes the alpha channel. A declared alpha that
+    // fails to decode or does not match the image is an error: returning the
+    // image opaque would silently drop its transparency (Hayn IMG-02).
+    let alpha = match isobmff::primary_alpha(bytes) {
+        None => return Err(DarkError::Malformed("avif: alpha references unreadable")),
+        Some(PrimaryAlpha::None) => None,
+        Some(PrimaryAlpha::Item(id)) => Some(decode_item(bytes, id, 0)?),
+        Some(PrimaryAlpha::Tiles(ids)) => {
+            let grid = isobmff::read_grid(bytes, primary)
+                .ok_or(DarkError::Malformed("avif: per-tile alpha without a grid"))?;
+            Some(assemble_grid(bytes, &grid, &ids)?)
+        }
+    };
+    if let Some((aw, ah, argba)) = alpha {
+        if (aw, ah) != (w, h) {
+            return Err(DarkError::Malformed(
+                "avif: alpha size differs from the image",
+            ));
+        }
+        for px in 0..(w as usize * h as usize) {
+            rgba[px * 4 + 3] = argba[px * 4]; // mono luma → alpha
         }
     }
 
@@ -93,16 +105,29 @@ pub(super) fn decode_item(bytes: &[u8], id: u32, depth: u8) -> Result<(u32, u32,
     unsafe { decode_obus(&stream) }
 }
 
-/// Assemble an ImageGrid: decode each tile and paste it row-major, cropping the
-/// right/bottom tiles to the canvas (the grid's output size is authoritative).
+/// Assemble an ImageGrid from its own tiles.
 fn decode_grid(bytes: &[u8], g: &isobmff::GridInfo) -> Result<(u32, u32, Vec<u8>)> {
+    assemble_grid(bytes, g, &g.tiles)
+}
+
+/// Decode `tiles` (one per cell of `g`, row-major) and paste them onto `g`'s
+/// canvas, cropping the right/bottom tiles to it (the grid's output size is
+/// authoritative). The tiles are `g`'s own, or its tiles' alpha items.
+fn assemble_grid(
+    bytes: &[u8],
+    g: &isobmff::GridInfo,
+    tiles: &[u32],
+) -> Result<(u32, u32, Vec<u8>)> {
+    if tiles.len() != g.tiles.len() {
+        return Err(DarkError::Malformed("avif grid: wrong tile count"));
+    }
     let (cw, ch) = (g.width as usize, g.height as usize);
     if cw == 0 || ch == 0 || (cw as u64) * (ch as u64) > MAX_GRID_PIXELS {
         return Err(DarkError::Malformed("avif grid: bad canvas size"));
     }
     let mut canvas = vec![0u8; cw * ch * 4];
     let (mut tw, mut th) = (0usize, 0usize);
-    for (i, &tile_id) in g.tiles.iter().enumerate() {
+    for (i, &tile_id) in tiles.iter().enumerate() {
         let (w, h, px) = decode_item(bytes, tile_id, 1)?;
         let (w, h) = (w as usize, h as usize);
         if i == 0 {
