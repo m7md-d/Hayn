@@ -260,7 +260,10 @@ class _AssetMetadataSheetState extends State<AssetMetadataSheet> {
                 children: [
                   HaynSheetHeader(
                     alignLeft: true,
-                    title: facts?.filename ?? asset.id,
+                    // Android reports a missing name as '', not null.
+                    title: (facts?.filename ?? '').isEmpty
+                        ? asset.id
+                        : facts!.filename!,
                     subtitle: _formatDate(asset.createDateTime,
                         Localizations.localeOf(context).languageCode),
                   ),
