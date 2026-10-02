@@ -58,6 +58,24 @@ func translucent() -> CGImage {
   return ctx.makeImage()!
 }
 write(translucent(), "apple_heic_alpha.heic", .heic, [kCGImageDestinationLossyCompressionQuality: 0.95])
+// The same pattern at 1280x960 (20x), big enough that ImageIO tiles it into a
+// grid, plus a fully transparent square away from every tile edge (x 1090-1190,
+// bottom-up y 100-200) so a misplaced tile shows up as a moved hole. The black
+// square (x 480-800, y 320-640) straddles the 512 px tile edges on purpose.
+func translucentGrid() -> CGImage {
+  let ctx = CGContext(
+    data: nil, width: 1280, height: 960, bitsPerComponent: 8, bytesPerRow: 0,
+    space: CGColorSpace(name: CGColorSpace.sRGB)!,
+    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+  ctx.setFillColor(red: 80 / 255, green: 120 / 255, blue: 160 / 255, alpha: 64 / 255)
+  ctx.fill(CGRect(x: 0, y: 0, width: 1280, height: 960))
+  ctx.setFillColor(red: 0, green: 0, blue: 0, alpha: 1)
+  ctx.fill(CGRect(x: 480, y: 320, width: 320, height: 320))
+  ctx.setBlendMode(.clear)
+  ctx.fill(CGRect(x: 1090, y: 100, width: 100, height: 100))
+  return ctx.makeImage()!
+}
+write(translucentGrid(), "apple_heic_alpha_grid.heic", .heic, [kCGImageDestinationLossyCompressionQuality: 0.95])
 // PNG with a Display P3 ICC profile, from Apple's P3 gain-map JPEG base.
 // ImageIO also writes cICP; ICC-only P3 is covered by apple_gainmap_*.jpg.
 write(source("apple_gainmap_new.jpg"), "apple_png_p3_icc.png", .png)

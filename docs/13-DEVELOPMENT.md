@@ -22,6 +22,7 @@
 | `~/.cargo/registry` و`~/.cargo/git` | `Development/caches/cargo` |
 | `~/.dartServer` (ذاكرة محلل Dart) | `Development/caches/dartServer` |
 | `flutter_rust_bridge_codegen` 2.12.0 (مطابق للـruntime) و`cargo-expand` 1.0.126 الذي يحتاجه | `Development/tools/<الأداة>-<النسخة>/bin`؛ ليسا في PATH |
+| بيئة Python لعينات الأداء (Pillow 12.3.0 وpillow-heif 1.8.0): تولّد `photo-12mp-alpha.heic` وصورة 200 ميقابكسل لـ`tool/test_performance.sh` (2026-10-03) | `Development/tools/perf-venv`؛ ليست في PATH. شغّل السكربت بـ`PATH=/Volumes/CUSU/Development/tools/perf-venv/bin:$PATH` وإلا تُتخطى صفوف `heicAlpha` والقياس الكبير |
 | مجلدات Xcode وCocoaPods وSwiftPM | انظر [iOS وXcode](#ios-وxcode) |
 
 **انقطاع القرص تحت الحمل (2026-09-29):** القرص NVMe في علبة Realtek RTL9210 (MD202) عبر Hub نوع USB-C فيه محول HDMI، ويطلب 896 mA من 900 متاحة. في 19:16 و19:26 اختفى من الناقل أثناء بناء Xcode/Rust والمحاكي مع مفهرسي Dart وSpotlight. سجل النظام يُظهر `Disappear` ثم `removed disk` قبل أي unmount، فهو انقطاع عتادي لا إخراج برمجي. البرامج التي تعمل من القرص تتعطل حينها بـSIGBUS. التوصية: وصله مباشرة بمنفذ الماك أو بمصدر طاقة مستقل، مع تهوية. الوكلاء يشغّلون الفحوص الثقيلة خطوة خطوة، لا سلسلة كاملة في أمر خلفي واحد، ويتحققون من `mount | grep CUSU` قبل كل خطوة. فهرسة Spotlight على الوحدة كانت مفعلة عند آخر فحص (`mdutil -s`)؛ تعطيلها يحتاج `sudo mdutil -i off /Volumes/CUSU` أو إضافتها لقائمة الخصوصية في إعدادات Spotlight.
