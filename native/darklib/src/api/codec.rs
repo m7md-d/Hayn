@@ -4,6 +4,7 @@
 //! Stage 3a: PNG/JPEG transcode (pure-Rust). More formats slot in behind the
 //! same call as the codec layer grows.
 
+use crate::engine::codec::heif_alpha::{self, AlphaStream};
 use crate::engine::codec::{self, Transcoded};
 
 /// Target encode format for [`transcode`].
@@ -56,4 +57,19 @@ pub fn transcode(
     let edge = if max_edge == 0 { None } else { Some(max_edge) };
     codec::transcode(&bytes, target_of(format, quality), edge, keep_metadata)
         .map_err(|e| e.to_string())
+}
+
+/// The alpha plane of a HEIF image's primary item as an Annex-B HEVC stream,
+/// one frame per tile, for an HEVC decoder outside DarkLib; `None` when the
+/// image has no alpha. Throws on HEIF whose alpha it cannot lay out (Hayn
+/// IMG-15: Android's HEIF decoder drops the plane).
+pub fn heif_alpha_stream(bytes: Vec<u8>) -> Result<Option<AlphaStream>, String> {
+    heif_alpha::alpha_stream(&bytes).map_err(|e| e.to_string())
+}
+
+/// `base` (the platform's upright decode of `source`) with `grey`, the
+/// stream's frames decoded to 8-bit full-range grey, as its alpha: an RGBA
+/// PNG. Throws when the plane does not fit the image.
+pub fn heif_attach_alpha(source: Vec<u8>, base: Vec<u8>, grey: Vec<u8>) -> Result<Vec<u8>, String> {
+    heif_alpha::attach_alpha(&source, &base, &grey).map_err(|e| e.to_string())
 }

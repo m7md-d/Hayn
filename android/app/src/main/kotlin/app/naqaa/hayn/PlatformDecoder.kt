@@ -13,8 +13,11 @@ import java.nio.ByteBuffer
 // Flutter hands AVIF/HEIC to Android's ImageDecoder and reads a 10-bit result
 // (RGBA_1010102 / RGBA_F16) as if it were 8-bit, so 10-bit images come back
 // with scrambled colours. Here the platform decodes them itself into an 8-bit
-// sRGB ARGB_8888 bitmap, orientation applied, and returns a PNG that Flutter
-// reads correctly.
+// ARGB_8888 bitmap, orientation applied, and returns a PNG that Flutter reads
+// correctly. [srgb] converts the colours to sRGB, for what Flutter shows or
+// crops; without it a conversion keeps the source's colour space (Display P3
+// stays P3, its profile in the PNG), since the source's own profile is carried
+// onto the result afterwards and must describe these pixels (IMG-08/IMG-15).
 //
 // No tone mapper is verified on Android, so a PQ/HLG source never yields an
 // "SDR rendition": with toSdr it returns null and the caller refuses, as
@@ -26,7 +29,7 @@ import java.nio.ByteBuffer
 // ─────────────────────────────────────────────────────────────────────────────
 
 object PlatformDecoder {
-    fun bakeUprightPng(src: ByteArray, toSdr: Boolean, maxEdge: Int): ByteArray? {
+    fun bakeUprightPng(src: ByteArray, toSdr: Boolean, maxEdge: Int, srgb: Boolean): ByteArray? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return null
         return try {
             val source = ImageDecoder.createSource(ByteBuffer.wrap(src))
@@ -34,7 +37,11 @@ object PlatformDecoder {
                 // Stop at the header: the pixels would be thrown away.
                 if (toSdr && isHdrTransfer(info.colorSpace)) throw HdrWithoutToneMap()
                 decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-                decoder.setTargetColorSpace(ColorSpace.get(ColorSpace.Named.SRGB))
+                // An 8-bit bitmap holds an SDR RGB space as is; anything else
+                // (no profile, extended or linear ranges) goes to sRGB.
+                if (srgb || !isSdrRgb(info.colorSpace)) {
+                    decoder.setTargetColorSpace(ColorSpace.get(ColorSpace.Named.SRGB))
+                }
                 if (maxEdge > 0) {
                     val longEdge = maxOf(info.size.width, info.size.height)
                     var sample = 1
@@ -56,6 +63,10 @@ object PlatformDecoder {
     }
 
     private class HdrWithoutToneMap : Exception()
+
+    private fun isSdrRgb(space: ColorSpace?): Boolean =
+        space is ColorSpace.Rgb && space.transferParameters != null &&
+            space.getMinValue(0) == 0f && space.getMaxValue(0) == 1f
 
     /// PQ and HLG have no parametric transfer; sRGB, Display P3, BT.709 and
     /// SDR BT.2020 do. API 34 also names the two HDR spaces directly.

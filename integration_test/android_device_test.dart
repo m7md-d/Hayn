@@ -176,10 +176,10 @@ void main() {
           isA<ImageEncodingFailure>().having(
             (e) => e.diagnostics.map((d) => d.toString()).toList(),
             'refused before any engine',
-            // Android has no verified tone mapper; with metadata requested
-            // the bridge is not even asked, and no engine is tried.
+            // Android has no verified tone mapper: the bridge declines the
+            // SDR rendition at the header, and no engine is tried.
             [
-              'androidDecoder.bake.unavailable',
+              'androidDecoder.bake.emptyOutput',
               'imageEncoder.encode.hdrToneMapUnavailable',
             ],
           ),
@@ -215,54 +215,153 @@ void main() {
     );
   });
 
-  // T-08 / IMG-15 for HEIC: Android's HEIF decoder ignores the alpha plane.
-  // DarkLib reads the alpha auxiliary from the container, so the plan knows
-  // the source is transparent: JPEG is composited onto white by a decoder
-  // that reads alpha, or refused as alphaLost; formats that keep alpha either
-  // keep it or are refused. Never the hidden colour (80,120,160) as opaque.
-  for (final target in [
-    DefaultFormat.jpeg,
-    DefaultFormat.png,
-    DefaultFormat.webp,
-  ]) {
-    testWidgets('Transparent HEIC to ${target.name}: alpha kept or refused', (
-      _,
-    ) async {
-      final source = await _fixture('apple_heic_alpha.heic');
-      final facts = await SourceInspector.inspect(source);
-      expect(facts.alpha, isTrue);
-      final EncodedImage result;
-      try {
-        result = await ImageEncoder.encode(
+  // T-08 / IMG-15 for HEIC: Android's HEIF decoder ignores the alpha plane,
+  // which Apple codes as monochrome HEVC. DarkLib extracts it, the FFmpeg the
+  // app ships decodes it, and DarkLib puts it back (HeifAlpha). Every target
+  // must now succeed with the real transparency: JPEG composited onto white,
+  // the others keeping alpha 64. Never the hidden colour (80,120,160).
+  // With metadata (the compress screen's default) the bridge decodes without
+  // it and DarkLib carries the source's onto the result.
+  for (final keepMetadata in [false, true]) {
+    for (final target in [
+      DefaultFormat.jpeg,
+      DefaultFormat.png,
+      DefaultFormat.webp,
+      DefaultFormat.avif,
+    ]) {
+      _transparentHeic(target, keepMetadata, device);
+    }
+  }
+
+  // IMG-08 through the Android bridge: a P3 HEIC to WebP and PNG, with and
+  // without metadata. The bridge keeps P3 and its profile; DarkLib carries the
+  // source's. Before, the bridge turned pixels to sRGB while the source's P3
+  // profile was carried onto them, oversaturating the result.
+  for (final keepMetadata in [false, true]) {
+    for (final target in [DefaultFormat.webp, DefaultFormat.png]) {
+      final label = '${target.name}${keepMetadata ? ' with metadata' : ''}';
+      testWidgets('P3 HEIC to $label keeps its colours', (_) async {
+        final source = await _fixture('apple_heic_10bit_p3.heic');
+        final result = await ImageEncoder.encode(
           source: source,
           target: target,
           quality: 95,
-          facts: facts,
+          facts: await SourceInspector.inspect(source),
+          keepMetadata: keepMetadata,
+        );
+        device['p3heic-$label'] = result.backend?.name;
+        Future<_Shown> managed(Uint8List bytes) async => _flutterDecode(
+          (await NativeImageEncoder.bakeUpright(
+            source: bytes,
+            keepMetadata: false,
+            keepOriginalTime: true,
+            srgb: true,
+          ))!,
+        );
+        _expectSameImage(await managed(source), await managed(result.bytes));
+      });
+    }
+  }
+
+  // IMG-15 in the viewer and previews: the display path gets the plane back
+  // too, scaled to a preview sampled down.
+  for (final maxEdge in [0, 32]) {
+    testWidgets('Transparent HEIC shows its transparency (maxEdge $maxEdge)', (
+      _,
+    ) async {
+      final source = await _fixture('apple_heic_alpha.heic');
+      final shown = img.decodePng(
+        await PlatformPixels.forDisplay(source, maxEdge: maxEdge),
+      )!;
+      final scale = shown.width / 64;
+      expect(shown.height, (48 * scale).round());
+      expect(
+        shown.getPixel((6 * scale).round(), (6 * scale).round()).a,
+        closeTo(64, 12),
+      );
+      expect(shown.getPixel((32 * scale).round(), (24 * scale).round()).a, 255);
+    });
+  }
+
+  // IMG-08 on Android: without metadata, a P3 source must keep its colour
+  // meaning in each target, through whichever engine Android picks (JPEG goes
+  // through flutter_image_compress). Both sides are read by Android's
+  // colour-managed decoder into sRGB. The patches move 10 to 24 levels between
+  // P3 and sRGB (ImageCms), so a dropped profile shows; the control proves it.
+  for (final target in [DefaultFormat.jpeg, DefaultFormat.png]) {
+    testWidgets('P3 to ${target.name} without metadata keeps its colours', (
+      _,
+    ) async {
+      final p3 = img.decodePng(await _fixture('apple_png_p3_icc.png'))!;
+      final patches = img.Image(width: 64, height: 64)
+        ..iccProfile = p3.iccProfile;
+      const colours = [
+        (200, 100, 50),
+        (60, 170, 90),
+        (180, 60, 140),
+        (230, 200, 60),
+      ];
+      for (var i = 0; i < 4; i++) {
+        final (r, g, b) = colours[i];
+        img.fillRect(
+          patches,
+          x1: (i % 2) * 32,
+          y1: (i ~/ 2) * 32,
+          x2: (i % 2) * 32 + 31,
+          y2: (i ~/ 2) * 32 + 31,
+          color: img.ColorRgb8(r, g, b),
+        );
+      }
+      final source = Uint8List.fromList(img.encodePng(patches));
+      final result = await ImageEncoder.encode(
+        source: source,
+        target: target,
+        quality: 95,
+        facts: await SourceInspector.inspect(source),
+        keepMetadata: false,
+      );
+      device['p3-${target.name}'] = result.backend?.name;
+      await _artifact('p3.${result.extension}', result.bytes);
+
+      Future<img.Image> managed(Uint8List bytes) async => img.decodePng(
+        (await NativeImageEncoder.bakeUpright(
+          source: bytes,
           keepMetadata: false,
-        );
-      } on ImageEncodingFailure catch (e) {
-        expect(
-          e.diagnostics.map((d) => d.code),
-          contains(MediaDiagnosticCode.alphaLost),
-        );
-        device['heic-alpha-${target.name}'] = 'refused: alphaLost';
-        return;
+          keepOriginalTime: true,
+          srgb: true,
+        ))!,
+      )!;
+      double meanShift(img.Image a, img.Image b) {
+        var total = 0.0;
+        for (var i = 0; i < 4; i++) {
+          final x = (i % 2) * 32 + 16, y = (i ~/ 2) * 32 + 16;
+          final p = a.getPixel(x, y), q = b.getPixel(x, y);
+          total += (p.r - q.r).abs() + (p.g - q.g).abs() + (p.b - q.b).abs();
+        }
+        return total / 12;
       }
-      device['heic-alpha-${target.name}'] = result.backend?.name;
-      await _artifact('heic-alpha.${result.extension}', result.bytes);
-      if (target != DefaultFormat.jpeg) {
-        expect(await ImageProbe.hasAlpha(result.bytes), isTrue);
-        return;
-      }
-      final shown = await _platformDecode(result.bytes);
-      expect((shown.width, shown.height), (64, 48));
-      final translucent = shown.pixel(6, 6);
-      expect(translucent[0], closeTo(211, 10));
-      expect(translucent[1], closeTo(221, 10));
-      expect(translucent[2], closeTo(231, 10));
-      final opaque = shown.pixel(32, 24);
-      for (var c = 0; c < 3; c++) {
-        expect(opaque[c], lessThan(24));
+
+      final want = await managed(source);
+      // The decoder manages colour: P3 (200,100,50) reads as sRGB (215,93,31).
+      final first = want.getPixel(16, 16);
+      expect(
+        [first.r, first.g, first.b],
+        [closeTo(215, 4), closeTo(93, 4), closeTo(31, 4)],
+      );
+      final shift = meanShift(want, await managed(result.bytes));
+      device['p3-${target.name}-shift'] = shift.toStringAsFixed(1);
+      expect(shift, lessThan(4));
+      // Control: the same output without a profile reads visibly different,
+      // unless the engine converted the pixels to sRGB already.
+      final bare = await DarkLibCore.stripMetadata(
+        result.bytes,
+        stripIcc: true,
+      );
+      if (bare != null) {
+        device['p3-${target.name}-bare-shift'] = meanShift(
+          want,
+          await managed(bare),
+        ).toStringAsFixed(1);
       }
     });
   }
@@ -605,4 +704,65 @@ void _expectSameImage(_Shown a, _Shown b) {
     }
   }
   expect(total / samples, lessThan(4));
+}
+
+/// T-08 / IMG-15: a transparent HEIC to [target] must succeed with its real
+/// transparency (see the loop in main).
+void _transparentHeic(
+  DefaultFormat target,
+  bool keepMetadata,
+  Map<String, Object?> device,
+) {
+  final label = '${target.name}${keepMetadata ? ' with metadata' : ''}';
+  testWidgets('Transparent HEIC to $label keeps its transparency', (_) async {
+    final source = await _fixture('apple_heic_alpha.heic');
+    final facts = await SourceInspector.inspect(source);
+    expect(facts.alpha, isTrue);
+    final sw = Stopwatch()..start();
+    final result = await ImageEncoder.encode(
+      source: source,
+      target: target,
+      quality: 95,
+      facts: facts,
+      keepMetadata: keepMetadata,
+    );
+    device['heic-alpha-$label-ms'] = sw.elapsedMilliseconds;
+    device['heic-alpha-$label'] = result.backend?.name;
+    await _artifact(
+      'heic-alpha${keepMetadata ? '-meta' : ''}.${result.extension}',
+      result.bytes,
+    );
+    if (target != DefaultFormat.jpeg) {
+      // Alpha values, not channel presence: Android's decoder returned an
+      // alpha channel 255 everywhere, which a presence check passed.
+      final kept = target == DefaultFormat.avif
+          ? img.decodePng(
+              (await DarkLibCore.transcode(
+                result.bytes,
+                format: DarkLibFormat.png,
+                quality: 100,
+                keepMetadata: false,
+              ))!.bytes,
+            )!
+          : img.decodeImage(result.bytes)!;
+      final p = kept.getPixel(6, 6);
+      expect(p.a, closeTo(64, 10));
+      expect(
+        [p.r, p.g, p.b],
+        [closeTo(80, 10), closeTo(120, 10), closeTo(160, 10)],
+      );
+      expect(kept.getPixel(32, 24).a, 255);
+      return;
+    }
+    final shown = await _platformDecode(result.bytes);
+    expect((shown.width, shown.height), (64, 48));
+    final translucent = shown.pixel(6, 6);
+    expect(translucent[0], closeTo(211, 10));
+    expect(translucent[1], closeTo(221, 10));
+    expect(translucent[2], closeTo(231, 10));
+    final opaque = shown.pixel(32, 24);
+    for (var c = 0; c < 3; c++) {
+      expect(opaque[c], lessThan(24));
+    }
+  });
 }

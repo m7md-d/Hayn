@@ -76,16 +76,16 @@ flutter doctor -v
 flutter pub get --enforce-lockfile
 flutter gen-l10n
 flutter analyze                         # نظيف
-flutter test                            # 199 ناجحًا
+flutter test                            # 205 ناجحًا
 cd native/darklib
 cargo fmt --check
 cargo clippy --all-targets --locked -- -D warnings
-cargo test --locked                     # 109 ناجحًا
-cargo +1.88.0 test --locked             # 109 على الحد الأدنى
+cargo test --locked                     # 120 ناجحًا
+cargo +1.88.0 test --locked             # 120 على الحد الأدنى
 cargo build --locked                    # target/debug/libdarklib.so
 cd ../..
 flutter test --no-pub test_native/darklib_host_test.dart \
-  --dart-define=DARKLIB_TEST_LIBRARY=$PWD/native/darklib/target/debug/libdarklib.so   # 10 ناجحة
+  --dart-define=DARKLIB_TEST_LIBRARY=$PWD/native/darklib/target/debug/libdarklib.so   # 12 ناجحة
 flutter build apk --release             # arm64 وحدها، نحو 50MB
 ```
 

@@ -7,12 +7,15 @@ import 'api/codec.dart';
 import 'api/inspect.dart';
 import 'api/metadata.dart';
 import 'api/simple.dart';
+import 'api/verify.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' as ffi;
 import 'engine/codec.dart';
+import 'engine/codec/heif_alpha.dart';
 import 'engine/format.dart';
 import 'engine/inspect.dart';
+import 'engine/verify.dart';
 import 'frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated_io.dart';
 
@@ -28,7 +31,16 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   String dco_decode_String(dynamic raw);
 
   @protected
+  AlphaKept dco_decode_alpha_kept(dynamic raw);
+
+  @protected
+  AlphaStream dco_decode_alpha_stream(dynamic raw);
+
+  @protected
   bool dco_decode_bool(dynamic raw);
+
+  @protected
+  AlphaStream dco_decode_box_autoadd_alpha_stream(dynamic raw);
 
   @protected
   CodecFormat dco_decode_codec_format(dynamic raw);
@@ -58,6 +70,9 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   MetadataSummary dco_decode_metadata_summary(dynamic raw);
 
   @protected
+  AlphaStream? dco_decode_opt_box_autoadd_alpha_stream(dynamic raw);
+
+  @protected
   Presence dco_decode_presence(dynamic raw);
 
   @protected
@@ -82,7 +97,16 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   String sse_decode_String(SseDeserializer deserializer);
 
   @protected
+  AlphaKept sse_decode_alpha_kept(SseDeserializer deserializer);
+
+  @protected
+  AlphaStream sse_decode_alpha_stream(SseDeserializer deserializer);
+
+  @protected
   bool sse_decode_bool(SseDeserializer deserializer);
+
+  @protected
+  AlphaStream sse_decode_box_autoadd_alpha_stream(SseDeserializer deserializer);
 
   @protected
   CodecFormat sse_decode_codec_format(SseDeserializer deserializer);
@@ -112,6 +136,11 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   MetadataSummary sse_decode_metadata_summary(SseDeserializer deserializer);
 
   @protected
+  AlphaStream? sse_decode_opt_box_autoadd_alpha_stream(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   Presence sse_decode_presence(SseDeserializer deserializer);
 
   @protected
@@ -136,7 +165,19 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   void sse_encode_String(String self, SseSerializer serializer);
 
   @protected
+  void sse_encode_alpha_kept(AlphaKept self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_alpha_stream(AlphaStream self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bool(bool self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_alpha_stream(
+    AlphaStream self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_codec_format(CodecFormat self, SseSerializer serializer);
@@ -168,6 +209,12 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   @protected
   void sse_encode_metadata_summary(
     MetadataSummary self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_alpha_stream(
+    AlphaStream? self,
     SseSerializer serializer,
   );
 

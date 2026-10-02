@@ -2,8 +2,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hayn/core/darklib/darklib.dart';
 import 'package:hayn/core/diagnostics/media_diagnostics.dart';
+import 'package:hayn/features/image_ops/data/heif_alpha.dart';
 import 'package:hayn/features/image_ops/data/image_encoder.dart';
 import 'package:hayn/features/image_ops/data/image_probe.dart';
+import 'package:hayn/features/image_ops/data/native_image_encoder.dart';
 import 'package:hayn/features/image_ops/data/source_facts.dart';
 import 'package:hayn/features/settings/providers/preferences_providers.dart';
 import 'package:hayn/src/rust/frb_generated.dart';
@@ -62,6 +64,48 @@ class _Api extends Fake implements DarkLibApi {
   @override
   Future<Facts> crateApiInspectInspectImage({required List<int> bytes}) async =>
       inspected;
+
+  /// What `heif_alpha_stream` returns; null = no alpha.
+  AlphaStream? alphaStream;
+
+  @override
+  Future<AlphaStream?> crateApiCodecHeifAlphaStream({
+    required List<int> bytes,
+  }) async => alphaStream;
+
+  /// Like the engine: the grey plane becomes the base's alpha.
+  @override
+  Future<Uint8List> crateApiCodecHeifAttachAlpha({
+    required List<int> source,
+    required List<int> base,
+    required List<int> grey,
+  }) async {
+    final out = img
+        .decodePng(Uint8List.fromList(base))!
+        .convert(numChannels: 4, alpha: 255);
+    var i = 0;
+    for (final p in out) {
+      p.a = grey[i++];
+    }
+    return Uint8List.fromList(img.encodePng(out));
+  }
+
+  /// Like the engine: decoded alpha values answer; an output showing no
+  /// transparency is a loss when the source (here, its container) had some.
+  @override
+  Future<AlphaKept> crateApiVerifyAlphaKept({
+    required List<int> source,
+    required List<int> output,
+  }) async {
+    final decoded = img.decodeImage(Uint8List.fromList(output));
+    if (decoded == null) return AlphaKept.unknown;
+    if (decoded.any((p) => p.a < p.maxChannelValue)) return AlphaKept.kept;
+    return switch (inspected.alpha) {
+      Presence.present => AlphaKept.lost,
+      Presence.absent => AlphaKept.kept,
+      Presence.unknown => AlphaKept.unknown,
+    };
+  }
 
   /// Metadata steps seen, in order ('transplant' / 'strip').
   final metadataCalls = <String>[];
@@ -380,6 +424,11 @@ void main() {
       'a decoder that drops known alpha is refused, not flattened',
       () async {
         // The bake returns an opaque PNG for a source known to be transparent.
+        api.inspected = const Facts(
+          transfer: Transfer.noHdrSignal,
+          gainMap: Presence.absent,
+          alpha: Presence.present,
+        );
         messenger.setMockMethodCallHandler(
           imageChannel,
           (call) async => call.method == 'bakeUpright' ? _png : null,
@@ -406,5 +455,163 @@ void main() {
         );
       },
     );
+
+    // What Android's HEIF decoder actually returns (S25 Edge, 2026-10-02):
+    // an alpha channel, every sample 255, over the hidden colours. A check on
+    // channel presence passed it, so JPEG showed the hidden colours and PNG
+    // saved an opaque image as if transparency had survived.
+    group('an alpha channel opaque everywhere', () {
+      final opaqueRgba = Uint8List.fromList(
+        img.encodePng(
+          img.Image(width: 2, height: 2, numChannels: 4)
+            ..clear(img.ColorRgba8(80, 120, 158, 255)),
+        ),
+      );
+      const transparent = SourceFacts(
+        alpha: true,
+        directHdr: false,
+        gainMap: false,
+      );
+      setUp(() {
+        api.inspected = const Facts(
+          transfer: Transfer.noHdrSignal,
+          gainMap: Presence.absent,
+          alpha: Presence.present,
+        );
+        messenger.setMockMethodCallHandler(
+          imageChannel,
+          (call) async => call.method == 'bakeUpright' ? opaqueRgba : null,
+        );
+      });
+
+      for (final target in [DefaultFormat.jpeg, DefaultFormat.png]) {
+        test('is refused for ${target.name}', () async {
+          await expectLater(
+            ImageEncoder.encode(
+              source: _heic,
+              target: target,
+              quality: 80,
+              facts: transparent,
+              keepMetadata: false,
+            ),
+            throwsA(
+              isA<ImageEncodingFailure>().having(
+                (e) => codes(e.diagnostics),
+                'codes',
+                contains(MediaDiagnosticCode.alphaLost),
+              ),
+            ),
+          );
+        });
+      }
+
+      // IMG-15 fixed: the plane comes back through FFmpeg and DarkLib.
+      group('on Android', () {
+        final decodeGrey = HeifAlpha.decodeGrey;
+        setUp(() {
+          NativeImageEncoder.onAndroid = true;
+          api.alphaStream = AlphaStream(
+            hevc: Uint8List(0),
+            frames: 1,
+            width: 2,
+            height: 2,
+          );
+        });
+        tearDown(() {
+          NativeImageEncoder.onAndroid = false;
+          HeifAlpha.decodeGrey = decodeGrey;
+          api.alphaStream = null;
+        });
+
+        test('the alpha plane is restored, not refused', () async {
+          HeifAlpha.decodeGrey = (_) async =>
+              Uint8List.fromList([64, 64, 64, 64]);
+          final out = await ImageEncoder.encode(
+            source: _heic,
+            target: DefaultFormat.png,
+            quality: 80,
+            facts: transparent,
+            keepMetadata: false,
+          );
+          final shown = img.decodePng(out.bytes)!;
+          expect(shown.getPixel(1, 1).a, 64);
+          expect(shown.getPixel(1, 1).r, 80);
+          expect(
+            codes(out.diagnostics),
+            isNot(contains(MediaDiagnosticCode.alphaLost)),
+          );
+        });
+
+        // The compress screen keeps metadata by default: the bridge decodes
+        // without it, and DarkLib carries the source's onto the result.
+        test(
+          'with metadata the plane is restored and metadata carried',
+          () async {
+            HeifAlpha.decodeGrey = (_) async =>
+                Uint8List.fromList([64, 64, 64, 64]);
+            final out = await ImageEncoder.encode(
+              source: _heic,
+              target: DefaultFormat.png,
+              quality: 80,
+              facts: transparent,
+              keepMetadata: true,
+            );
+            expect(img.decodePng(out.bytes)!.getPixel(1, 1).a, 64);
+            expect(api.metadataCalls, contains('transplant'));
+          },
+        );
+
+        test(
+          'a failed decode is still refused, never hidden colours',
+          () async {
+            HeifAlpha.decodeGrey = (_) async => null;
+            await expectLater(
+              ImageEncoder.encode(
+                source: _heic,
+                target: DefaultFormat.png,
+                quality: 80,
+                facts: transparent,
+                keepMetadata: false,
+              ),
+              throwsA(
+                isA<ImageEncodingFailure>().having(
+                  (e) => codes(e.diagnostics),
+                  'codes',
+                  containsAll([
+                    MediaDiagnosticCode.emptyOutput,
+                    MediaDiagnosticCode.alphaLost,
+                  ]),
+                ),
+              ),
+            );
+          },
+        );
+      });
+
+      test('real transparency from the bridge is kept', () async {
+        final rgba = Uint8List.fromList(
+          img.encodePng(
+            img.Image(width: 2, height: 2, numChannels: 4)
+              ..clear(img.ColorRgba8(80, 120, 158, 64)),
+          ),
+        );
+        messenger.setMockMethodCallHandler(
+          imageChannel,
+          (call) async => call.method == 'bakeUpright' ? rgba : null,
+        );
+        final out = await ImageEncoder.encode(
+          source: _heic,
+          target: DefaultFormat.png,
+          quality: 80,
+          facts: transparent,
+          keepMetadata: false,
+        );
+        expect(out.bytes, rgba);
+        expect(
+          codes(out.diagnostics),
+          isNot(contains(MediaDiagnosticCode.alphaLost)),
+        );
+      });
+    });
   });
 }

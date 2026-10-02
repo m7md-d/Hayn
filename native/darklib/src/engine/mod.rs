@@ -11,3 +11,4 @@ pub mod error;
 pub mod format;
 pub mod inspect;
 pub mod metadata;
+pub mod verify;

@@ -183,7 +183,7 @@ pub fn item_type(b: &[u8], id: u32) -> Option<[u8; 4]> {
 /// Read item `id`'s data, supporting construction_method 0 (absolute file
 /// offsets) and 1 (offsets into the `idat` box payload — how grid descriptors
 /// are usually stored).
-fn read_item_by_id(b: &[u8], id: u32) -> Option<Vec<u8>> {
+pub fn read_item_by_id(b: &[u8], id: u32) -> Option<Vec<u8>> {
     let mc = meta_children(b)?;
     let loc = parse_iloc(b, *mc.iter().find(|x| x.typ == *b"iloc")?)?;
     let l = loc.items.iter().find(|x| x.id == id)?;
@@ -266,12 +266,19 @@ pub fn read_grid(b: &[u8], id: u32) -> Option<GridInfo> {
 /// The `dimg` (derived-image) reference targets of item `from`, in reference
 /// order — for a grid, its tiles row-major.
 fn dimg_targets(b: &[u8], from: u32) -> Option<Vec<u32>> {
+    iref_targets(b, b"dimg", from)
+}
+
+/// The targets of item `from`'s `typ` reference (`dimg`, `auxl`, `prem`…), in
+/// reference order. `None` when there is no such reference or `iref` is
+/// unreadable.
+pub fn iref_targets(b: &[u8], typ: &[u8; 4], from: u32) -> Option<Vec<u32>> {
     let mc = meta_children(b)?;
     let iref = *mc.iter().find(|x| x.typ == *b"iref")?;
     let version = *b.get(iref.body)?;
     let id_bytes = if version == 0 { 2 } else { 4 };
     for child in boxes_in(b, iref.body + 4, iref.end)? {
-        if child.typ != *b"dimg" {
+        if child.typ != *typ {
             continue;
         }
         let mut q = child.body;
@@ -508,7 +515,7 @@ pub fn primary_extent(b: &[u8]) -> Option<(u32, u32)> {
 }
 
 /// Raw property boxes associated with item `id` via `ipma`, in order.
-fn item_properties(b: &[u8], id: u32) -> Option<Vec<Vec<u8>>> {
+pub fn item_properties(b: &[u8], id: u32) -> Option<Vec<Vec<u8>>> {
     let mc = meta_children(b)?;
     let iprp = *mc.iter().find(|x| x.typ == *b"iprp")?;
     let ipc = boxes_in(b, iprp.body, iprp.end)?;
@@ -943,10 +950,12 @@ fn parse_ipma(b: &[u8], ipma: Bx) -> Option<Vec<(u32, Vec<u16>)>> {
 /// are AVIF/HEIF's native orientation mechanism (distinct from EXIF orientation).
 /// `None` when the primary carries neither. Read-only and bounds-safe.
 pub fn read_orientation(b: &[u8]) -> Option<(u8, Option<u8>)> {
-    let top = boxes_in(b, 0, b.len())?;
-    let meta = *top.iter().find(|x| x.typ == *b"meta")?;
-    let mc = boxes_in(b, meta.body + 4, meta.end)?;
-    let primary = parse_pitm(b, *mc.iter().find(|x| x.typ == *b"pitm")?)?;
+    item_orientation(b, primary_item_id(b)?)
+}
+
+/// [`read_orientation`] for any item `id` (an alpha auxiliary carries its own).
+pub fn item_orientation(b: &[u8], primary: u32) -> Option<(u8, Option<u8>)> {
+    let mc = meta_children(b)?;
     let iprp = *mc.iter().find(|x| x.typ == *b"iprp")?;
     let ipc = boxes_in(b, iprp.body, iprp.end)?;
     let ipco = *ipc.iter().find(|x| x.typ == *b"ipco")?;

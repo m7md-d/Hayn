@@ -88,6 +88,9 @@ class ImageCropTask extends MediaTask {
         keepMetadata: false,
         keepOriginalTime: true,
         toSdr: facts.hasHdr,
+        // Flutter decodes these pixels below as sRGB, and the crop is saved
+        // without the source's profile.
+        srgb: true,
       );
       if (facts.hasHdr) {
         if (baked == null && facts.directHdr == true) {
@@ -106,6 +109,19 @@ class ImageCropTask extends MediaTask {
       }
       // Without the bridge (Android before 9) the platform decodes neither
       // AVIF nor HEIC, so Flutter's decode below is the only remaining path.
+      // Android's HEIF decoder drops the alpha plane yet returns an alpha
+      // channel, opaque everywhere (IMG-15): a crop would save the hidden
+      // colours as if they were the image.
+      if (baked != null &&
+          facts.alpha == true &&
+          !await ImageProbe.keepsAlpha(
+            source: src,
+            output: baked,
+            backend: NativeImageEncoder.bakeBackend,
+            operation: MediaOperation.bake,
+          )) {
+        throw StateError('Crop source lost its transparency');
+      }
       pixels = baked ?? src;
     }
     if (_cancelled) return;

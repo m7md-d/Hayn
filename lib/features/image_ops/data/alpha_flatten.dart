@@ -19,9 +19,10 @@ abstract final class AlphaFlatten {
   /// Opaque, upright PNG of [source] over white; null when nothing decodes it.
   /// [toSdr] asks the iOS bridge for the SDR rendition of an HDR source.
   /// [alpha] is the source's transparency: when it is known present, a
-  /// decoder that returns no alpha channel is refused (`alphaLost`), since
-  /// compositing its output would show the hidden colours instead of white.
-  /// Android's HEIF decoder ignores the alpha plane (IMG-15).
+  /// decode that shows none is refused (`alphaLost`), since compositing it
+  /// would show the hidden colours instead of white. Android's HEIF decoder
+  /// ignores the alpha plane and returns an alpha channel opaque everywhere
+  /// (IMG-15), so the decoded values are compared, not the channel.
   static Future<Uint8List?> toOpaquePng(
     Uint8List source, {
     required bool toSdr,
@@ -31,12 +32,12 @@ abstract final class AlphaFlatten {
     if (readable == null) return null;
     if (alpha == true &&
         !identical(readable, source) &&
-        await ImageProbe.hasAlpha(readable) != true) {
-      MediaDiagnostics.record(
-        MediaBackend.imageEncoder,
-        MediaOperation.bake,
-        MediaDiagnosticCode.alphaLost,
-      );
+        !await ImageProbe.keepsAlpha(
+          source: source,
+          output: readable,
+          backend: MediaBackend.imageEncoder,
+          operation: MediaOperation.bake,
+        )) {
       return null;
     }
     // DarkLib composites in Rust: seconds faster per 12 MP image than

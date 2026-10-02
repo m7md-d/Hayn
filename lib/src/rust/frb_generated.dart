@@ -7,11 +7,14 @@ import 'api/codec.dart';
 import 'api/inspect.dart';
 import 'api/metadata.dart';
 import 'api/simple.dart';
+import 'api/verify.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'engine/codec.dart';
+import 'engine/codec/heif_alpha.dart';
 import 'engine/format.dart';
 import 'engine/inspect.dart';
+import 'engine/verify.dart';
 import 'frb_generated.dart';
 import 'frb_generated.io.dart'
     if (dart.library.js_interop) 'frb_generated.web.dart';
@@ -72,7 +75,7 @@ class DarkLib extends BaseEntrypoint<DarkLibApi, DarkLibApiImpl, DarkLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -2050621774;
+  int get rustContentHash => 282570315;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -84,6 +87,11 @@ class DarkLib extends BaseEntrypoint<DarkLibApi, DarkLibApiImpl, DarkLibWire> {
 }
 
 abstract class DarkLibApi extends BaseApi {
+  Future<AlphaKept> crateApiVerifyAlphaKept({
+    required List<int> source,
+    required List<int> output,
+  });
+
   bool crateApiMetadataCanStripLossless({required List<int> bytes});
 
   String crateApiSimpleDarklibVersion();
@@ -95,6 +103,14 @@ abstract class DarkLibApi extends BaseApi {
   Future<Uint8List> crateApiCodecFlattenOnWhite({required List<int> bytes});
 
   String crateApiSimpleGreet({required String name});
+
+  Future<AlphaStream?> crateApiCodecHeifAlphaStream({required List<int> bytes});
+
+  Future<Uint8List> crateApiCodecHeifAttachAlpha({
+    required List<int> source,
+    required List<int> base,
+    required List<int> grey,
+  });
 
   Future<void> crateApiSimpleInitApp();
 
@@ -132,13 +148,47 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   });
 
   @override
+  Future<AlphaKept> crateApiVerifyAlphaKept({
+    required List<int> source,
+    required List<int> output,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(source, serializer);
+          sse_encode_list_prim_u_8_loose(output, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 1,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_alpha_kept,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiVerifyAlphaKeptConstMeta,
+        argValues: [source, output],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVerifyAlphaKeptConstMeta => const TaskConstMeta(
+    debugName: "alpha_kept",
+    argNames: ["source", "output"],
+  );
+
+  @override
   bool crateApiMetadataCanStripLossless({required List<int> bytes}) {
     return handler.executeSync(
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(bytes, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 1)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 2)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -160,7 +210,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 2)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 3)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -183,7 +233,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(bytes, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 3)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 4)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_format_info,
@@ -206,7 +256,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(bytes, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 4)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 5)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_image_format,
@@ -232,7 +282,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 5,
+            funcId: 6,
             port: port_,
           );
         },
@@ -257,7 +307,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(name, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 6)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 7)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -274,6 +324,73 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
       const TaskConstMeta(debugName: "greet", argNames: ["name"]);
 
   @override
+  Future<AlphaStream?> crateApiCodecHeifAlphaStream({
+    required List<int> bytes,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(bytes, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 8,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_opt_box_autoadd_alpha_stream,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiCodecHeifAlphaStreamConstMeta,
+        argValues: [bytes],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiCodecHeifAlphaStreamConstMeta =>
+      const TaskConstMeta(debugName: "heif_alpha_stream", argNames: ["bytes"]);
+
+  @override
+  Future<Uint8List> crateApiCodecHeifAttachAlpha({
+    required List<int> source,
+    required List<int> base,
+    required List<int> grey,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(source, serializer);
+          sse_encode_list_prim_u_8_loose(base, serializer);
+          sse_encode_list_prim_u_8_loose(grey, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 9,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiCodecHeifAttachAlphaConstMeta,
+        argValues: [source, base, grey],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiCodecHeifAttachAlphaConstMeta =>
+      const TaskConstMeta(
+        debugName: "heif_attach_alpha",
+        argNames: ["source", "base", "grey"],
+      );
+
+  @override
   Future<void> crateApiSimpleInitApp() {
     return handler.executeNormal(
       NormalTask(
@@ -282,7 +399,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 7,
+            funcId: 10,
             port: port_,
           );
         },
@@ -310,7 +427,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 8,
+            funcId: 11,
             port: port_,
           );
         },
@@ -337,7 +454,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(bytes, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 12)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_metadata_summary,
@@ -370,7 +487,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 10,
+            funcId: 13,
             port: port_,
           );
         },
@@ -411,7 +528,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 11,
+            funcId: 14,
             port: port_,
           );
         },
@@ -445,7 +562,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 12,
+            funcId: 15,
             port: port_,
           );
         },
@@ -473,9 +590,35 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   }
 
   @protected
+  AlphaKept dco_decode_alpha_kept(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return AlphaKept.values[raw as int];
+  }
+
+  @protected
+  AlphaStream dco_decode_alpha_stream(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return AlphaStream(
+      hevc: dco_decode_list_prim_u_8_strict(arr[0]),
+      frames: dco_decode_u_32(arr[1]),
+      width: dco_decode_u_32(arr[2]),
+      height: dco_decode_u_32(arr[3]),
+    );
+  }
+
+  @protected
   bool dco_decode_bool(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as bool;
+  }
+
+  @protected
+  AlphaStream dco_decode_box_autoadd_alpha_stream(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_alpha_stream(raw);
   }
 
   @protected
@@ -563,6 +706,12 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   }
 
   @protected
+  AlphaStream? dco_decode_opt_box_autoadd_alpha_stream(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_alpha_stream(raw);
+  }
+
+  @protected
   Presence dco_decode_presence(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return Presence.values[raw as int];
@@ -618,9 +767,39 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   }
 
   @protected
+  AlphaKept sse_decode_alpha_kept(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return AlphaKept.values[inner];
+  }
+
+  @protected
+  AlphaStream sse_decode_alpha_stream(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_hevc = sse_decode_list_prim_u_8_strict(deserializer);
+    var var_frames = sse_decode_u_32(deserializer);
+    var var_width = sse_decode_u_32(deserializer);
+    var var_height = sse_decode_u_32(deserializer);
+    return AlphaStream(
+      hevc: var_hevc,
+      frames: var_frames,
+      width: var_width,
+      height: var_height,
+    );
+  }
+
+  @protected
   bool sse_decode_bool(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint8() != 0;
+  }
+
+  @protected
+  AlphaStream sse_decode_box_autoadd_alpha_stream(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_alpha_stream(deserializer));
   }
 
   @protected
@@ -722,6 +901,19 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   }
 
   @protected
+  AlphaStream? sse_decode_opt_box_autoadd_alpha_stream(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_alpha_stream(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   Presence sse_decode_presence(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
@@ -773,9 +965,33 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   }
 
   @protected
+  void sse_encode_alpha_kept(AlphaKept self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_alpha_stream(AlphaStream self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_list_prim_u_8_strict(self.hevc, serializer);
+    sse_encode_u_32(self.frames, serializer);
+    sse_encode_u_32(self.width, serializer);
+    sse_encode_u_32(self.height, serializer);
+  }
+
+  @protected
   void sse_encode_bool(bool self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint8(self ? 1 : 0);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_alpha_stream(
+    AlphaStream self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_alpha_stream(self, serializer);
   }
 
   @protected
@@ -858,6 +1074,19 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
     sse_encode_bool(self.hasCamera, serializer);
     sse_encode_u_16(self.orientation, serializer);
     sse_encode_u_32(self.tagCount, serializer);
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_alpha_stream(
+    AlphaStream? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_alpha_stream(self, serializer);
+    }
   }
 
   @protected

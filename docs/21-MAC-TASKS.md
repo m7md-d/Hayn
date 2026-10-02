@@ -30,7 +30,7 @@
 | **F3** | قارئ ImageIO المستقل على نواتج F2 | `xcrun swift -module-cache-path /Volumes/CUSU/Development/caches/swift-preservation test_native/inspect_ios_outputs.swift build/ios-preservation/<الجولة>` | يوافق على كل الملفات. وسكربتات `test_native/compare_*.swift` المتعلقة بما تغيّر |
 | **F4** | اختبار الأداء على الآيفون | `tool/test_performance.sh <معرّف الجهاز>` | **8 من 8** بلا تجاوز للحدود ([18-PERFORMANCE](18-PERFORMANCE.md)). يحتاج iPhone 13 Pro موصولًا ومفتوحًا؛ يبقي التطبيق ويثبّت release بعده |
 | **F5** | لقطات README | `tool/screenshots/generate.sh` | لقطات جديدة من محاكي، بلا تعديل يدوي ([presentation.md](../.claude/rules/presentation.md)) |
-| **F6** | الجسر الحقيقي على الماك | `cargo build --locked` في `native/darklib` ثم `flutter test --no-pub test_native/darklib_host_test.dart --dart-define=DARKLIB_TEST_LIBRARY=<المسار>/libdarklib.dylib` | **10 ناجحة** |
+| **F6** | الجسر الحقيقي على الماك | `cargo build --locked` في `native/darklib` ثم `flutter test --no-pub test_native/darklib_host_test.dart --dart-define=DARKLIB_TEST_LIBRARY=<المسار>/libdarklib.dylib` | **12 ناجحة** (منذ 2026-10-02؛ كانت 10) |
 
 **أحد هذه لا يُعاد بلا سبب:** المحاكي (F2) والبناء (F1) يستغرقان وقتًا ويثقلان الماك. لا تضف F2 إلى مهمة إن لم تمس الشفرة التي يغطيها (الجدول التالي).
 
@@ -70,7 +70,35 @@
 
 ## المفتوحة
 
-لا شيء مفتوح.
+### M-03 · فحص الألفا بالقيم بعد IMG-15
+- **الحالة:** مفتوحة
+- **طلبها:** وكيل لينكس، 2026-10-02
+- **ما تغيّر:**
+  - **DarkLib:** وحدة جديدة `engine/verify.rs`، فيها `alpha_kept(source, output)`: تفك الناتج وتحكم بقيم الألفا لا بوجود القناة. ودالة FFI جديدة `api::verify::alpha_kept`، فأُعيد توليد الروابط بـcodegen 2.12.0 على لينكس. لم يتغير الفك ولا الترميز.
+  - **Dart:** `ImageProbe.keepsAlpha` يستعمله فحص ناتج `ImageEncoder` (بدل `hasAlpha`)، و`AlphaFlatten`، وجسر القص.
+  - **الأثر على iOS:** ImageIO يعيد ألفا حقيقية، فالمتوقع ألا يتغير شيء. لكن ناتج HEIC من ImageIO لا تفكه DarkLib، فيُقبل بإعلان الحاوية (`Declared`) كما كان يُقبل بوجود القناة. وصورة PNG بقناة ألفا قيمها كلها 255 صارت تُقبل في وجهة بلا ألفا، لأنه لا شفافية تضيع.
+  - **IMG-18 (لون جسر Android):** `bakeUpright` صار يأخذ `srgb`، ويقبل حفظ البيانات على Android بنقلها بـDarkLib. iOS يتجاهل `srgb`، ومساره مع البيانات لم يتغير، لكن ملفات Dart تغيرت.
+  - **بعدها في الدفعة نفسها (الحل الكامل لـIMG-15):** `engine/codec/heif_alpha.rs` (استخراج تيار ألفا HEIF وإلصاقه)، ودالتا FFI `heif_alpha_stream` و`heif_attach_alpha`، و`apply_orientation` في `avif_dav1d.rs` صار يقبل عدد البايتات لكل بكسل (السلوك نفسه لـRGBA). في Dart: `HeifAlpha.restore` يعمل بعد `bakeUpright` على Android وحده (`androidDecoder`)، فلا يمر به iOS.
+- **البنود:** IMG-15، IMG-05.
+- **يلزم:** توصيل الآيفون لـF4 فقط.
+- **الخطوات:** F1، ثم F6، ثم F2. ثم F4 (قسم التحويل وحده يكفي إن أمكن، وإلا كاملًا).
+- **النجاح:** بناء نظيف، والجسر 12 ناجحة (أضيف اختبار `alpha_kept` واختبار ألفا HEIF)، والمحاكي 11 ناجحة، واتجاه AVIF في F3 كما كان، والأداء بلا تجاوز. والتحويل من صورة شفافة لا يتباطأ أكثر من زمن فك الناتج.
+- **يُعاد إلى لينكس:** الأعداد، وزمن التحويلات التي مصدرها شفاف في الأداء مقارنة بـM-02، وأي فشل باسمه.
+- **النتيجة:**
+
+### M-04 · عينة HEIC شفافة كبيرة من مرمّز Apple
+- **الحالة:** مفتوحة
+- **طلبها:** وكيل لينكس، 2026-10-02
+- **لماذا:** IMG-15 صار يعيد ألفا HEIC على Android بفك طبقتها بـFFmpeg ولصقها في DarkLib. عينتنا الوحيدة من Apple صغيرة (64×48، عنصر واحد). صورة Apple الكبيرة تُقسَّم شبكة، فطبقة ألفاها شبكة أيضًا أو ألفا لكل بلاطة، ومسار الشبكة في `heif_alpha.rs` بلا عينة حقيقية. ولينكس لا يملك مرمّز Apple.
+- **البنود:** IMG-15، T-12.
+- **يلزم:** لا شيء.
+- **الخطوات:**
+  1. أضف إلى `test_native/make_platform_fixtures.swift` ملف `apple_heic_alpha_grid.heic`: 1280×960، المحتوى الاصطناعي نفسه للعينة الصغيرة (اللون (80,120,160) بألفا 64، ومربع أسود معتم)، ومعه مربع آخر بألفا 0 في زاوية لا تقع على حد بلاطة، ليظهر خطأ موضع البلاطات. واجعل التوليد ثابتًا كبقية الملفات.
+  2. افحص بنيته: هل الأساسي `grid`؟ وهل الألفا عنصر `grid` أو ألفا لكل بلاطة؟ وما أبعاد البلاطات؟ اكتب ذلك في `tests/fixtures/README.md` مع الحجم وSHA-256. إن لم يقسّمه ImageIO شبكة فكبّره حتى يقسّمه، وسجل الحد.
+  3. انسخ الملف إلى `native/darklib/tests/fixtures/`.
+- **النجاح:** ملف يقرؤه ImageIO بالألفا (`sips -g hasAlpha` = yes) وبنيته شبكة.
+- **يُعاد إلى لينكس:** الملف ووصف بنيته. لينكس يفك ألفاه بـFFmpeg ويضيف اختبار Rust واختبار الهاتف.
+- **النتيجة:**
 
 ## المنفذة
 

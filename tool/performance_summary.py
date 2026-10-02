@@ -8,6 +8,27 @@ import json
 import sys
 
 data = json.load(open(sys.argv[1]))
+
+# HAYN_PERF_LARGE=1 runs only the 200 MP test (RUN-01): its own short summary.
+large = data.get("large")
+if large is not None:
+    device = large.get("device", {})
+    source = large.get("source", {})
+    print(f"{device.get('model')} · RAM {device.get('memTotalMb')} MB · source "
+          f"{source.get('size')} ({source.get('kb')} KB, RSS {source.get('rssMb')} MB)")
+    print("target  ms / peak RSS MB (above before) / output / backend / full size")
+    for target in ("jpeg", "webp", "png", "heic", "avif"):
+        r = large.get(target)
+        if r is None:
+            print(f"  {target:<6} not reached (killed before it?)")
+        elif "failed" in r:
+            print(f"  {target:<6} {r['ms']} / {r['peakRssMb']} ({r['peakAboveBeforeMb']}) / "
+                  f"failed: {', '.join(r['failed'])}")
+        else:
+            print(f"  {target:<6} {r['ms']} / {r['peakRssMb']} ({r['peakAboveBeforeMb']}) / "
+                  f"{r['size']} {r['outKb']} KB / {r['backend']} / {r['fullSize']}")
+    sys.exit(0)
+
 perf = data.get("performance", {})
 device = perf.get("device", {})
 print(

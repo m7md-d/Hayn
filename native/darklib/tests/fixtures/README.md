@@ -33,6 +33,10 @@
 | `apple_heic_alpha.heic` | HEIC بألفا، 64×48: اللون (80,120,160) بألفا 64 ومربع أسود معتم في الوسط، فيميّز ألفا مقروءة من ألفا متجاهلة | اصطناعي، بلا رخصة | IMG-15، PROD-02 |
 | `apple_png_p3_icc.png` | PNG بـICC ‏Display P3، ومعه `cICP` كتبه ImageIO | أساس `apple_gainmap_new.jpg` | IMG-08 |
 
+## ألفا HEIC مفكوكة بـFFmpeg
+
+`apple_heic_alpha.gray`: طبقة الألفا في `apple_heic_alpha.heic` مفكوكة بمفكك HEVC في FFmpeg 7.1.3 على لينكس، مفكك مستقل عن DarkLib (2026-10-02). 64×48 بايتًا رماديًا بالمدى الكامل، صف بعد صف: 64 حيث الصورة شبه شفافة و255 في المربع المعتم. الأمر: استخرج تيار Annex-B من `hvcC` والعنصر 2، ثم `ffmpeg -f hevc -i alpha.hevc -frames:v 1 -f rawvideo -pix_fmt gray alpha.gray`. وفك FFmpeg المشحون مع التطبيق على S25 Edge أعطى القيم نفسها. يستعمله `tests/heif_alpha.rs` (IMG-15).
+
 ## WebP من libwebp عبر Pillow
 
 `test_native/make_webp_fixtures.py` يكتبها بـPillow 12.3.0 (libwebp 1.6.0)، كاتب مستقل عن DarkLib. المحتوى اصطناعي بلا رخصة: تدرج 64×48، والشفافة نصفها الأيسر بألفا 64. التوليد ثابت (أعيد فأعطى البايتات نفسها، 2026-09-30). ImageIO يرى الألفا في الشفافتين وحدهما.
@@ -66,6 +70,7 @@ P3 بـICC وحده بلا وسم لون آخر موجود في `apple_gainmap_*
 | `apple_png_p3_icc.png` | 165136 | `d74a964e751c39ba180f9096fe772047ec5ecd351cf6edc0d89afa6679e19db7` |
 | `apple_heic_10bit_p3.heic` | 77952 | `1b73a555c824ff7a8cc99d7ca14d9d3f53fbb4b3587f755c59a177ae8bda15b4` |
 | `apple_heic_alpha.heic` | 830 | `2eaff577ba577254db2b4110c4f86e3dab46e4af777090229138f1beb0bb18ca` |
+| `apple_heic_alpha.gray` | 3072 | `2b8c6694d3d953e5a08f0ffa3c092fde12b7b6417678580f2cdf59bd26beb535` |
 | `apple_heic_hlg.heic` | 73083 | `d699edef45fa92d93331b3de94b8285372c89681a58a1a857d254175cbebafd6` |
 | `pillow_webp_lossless_alpha.webp` | 72 | `ea86ca4d8c1020b91f0ad3db4784a2cfdc617d51e16f6de6638c6c9d7b5b99ca` |
 | `pillow_webp_lossless_opaque.webp` | 60 | `08deddec4ba383d688bcf571e20faada915e99f7e4b4bd1b4abd4281375b62f9` |

@@ -478,9 +478,25 @@ void main() {
       // Transparent: its JPEG goes through the flatten onto white (PERF-01).
       'pngAlpha': await _fixture('photo-12mp-alpha.png'),
     };
+    // Transparent HEIC: on Android its alpha comes back through FFmpeg and
+    // DarkLib (IMG-15). Absent when the host could not write it.
+    try {
+      sources['heicAlpha'] = await _fixture('photo-12mp-alpha.heic');
+    } catch (_) {
+      r['heicAlpha'] = {'skipped': 'No photo-12mp-alpha.heic fixture'};
+    }
     await _warmUp(targets);
-    for (final name in ['jpeg', 'heic', 'png', 'pngAlpha', 'webp', 'avif']) {
+    for (final name in [
+      'jpeg',
+      'heic',
+      'png',
+      'pngAlpha',
+      'heicAlpha',
+      'webp',
+      'avif',
+    ]) {
       final source = sources[name];
+      if (source == null && r[name] != null) continue;
       if (source == null) {
         r[name] = {'skipped': 'No $name output from the JPEG row'};
         continue;

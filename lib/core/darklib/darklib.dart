@@ -4,12 +4,17 @@ import '../diagnostics/media_diagnostics.dart';
 import '../../src/rust/api/codec.dart' as rust_codec;
 import '../../src/rust/api/inspect.dart' as rust_inspect;
 import '../../src/rust/api/metadata.dart' as rust;
+import '../../src/rust/api/verify.dart' as rust_verify;
 import '../../src/rust/engine/codec.dart';
+import '../../src/rust/engine/codec/heif_alpha.dart';
 import '../../src/rust/engine/inspect.dart';
+import '../../src/rust/engine/verify.dart';
 import '../../src/rust/frb_generated.dart';
 
 export '../../src/rust/engine/codec.dart' show HdrOutcome, Transcoded;
+export '../../src/rust/engine/codec/heif_alpha.dart' show AlphaStream;
 export '../../src/rust/engine/inspect.dart' show Facts, Presence, Transfer;
+export '../../src/rust/engine/verify.dart' show AlphaKept;
 
 /// Encode targets DarkLib can produce (mirrors the Rust `CodecFormat`).
 typedef DarkLibFormat = rust_codec.CodecFormat;
@@ -135,11 +140,44 @@ abstract final class DarkLibCore {
     isEmpty: (b) => b.isEmpty,
   );
 
+  /// The alpha plane of a HEIF primary image as an HEVC stream for FFmpeg
+  /// (IMG-15). Null when DarkLib is unavailable, the layout is unreadable, or
+  /// the image has no alpha; check [inspect] first to tell them apart.
+  static Future<AlphaStream?> heifAlphaStream(Uint8List bytes) =>
+      _call<AlphaStream?>(
+        MediaOperation.bake,
+        () => rust_codec.heifAlphaStream(bytes: bytes),
+      );
+
+  /// [base] (the platform's decode of [source]) with [grey], the stream's
+  /// frames decoded to 8-bit grey, as its alpha: an RGBA PNG. Null when the
+  /// plane does not fit or DarkLib is unavailable.
+  static Future<Uint8List?> heifAttachAlpha({
+    required Uint8List source,
+    required Uint8List base,
+    required Uint8List grey,
+  }) => _call(
+    MediaOperation.bake,
+    () => rust_codec.heifAttachAlpha(source: source, base: base, grey: grey),
+    isEmpty: (b) => b.isEmpty,
+  );
+
   /// HDR facts read from the container, without decoding pixels. Null when
   /// DarkLib is unavailable; unreadable containers come back as unknown.
   static Future<Facts?> inspect(Uint8List bytes) => _call(
     MediaOperation.probe,
     () => rust_inspect.inspectImage(bytes: bytes),
+  );
+
+  /// Whether [output] keeps the transparency of [source], from decoded alpha
+  /// values: a channel whose samples are all opaque is not transparency
+  /// (IMG-15). Null when DarkLib is unavailable.
+  static Future<AlphaKept?> alphaKept({
+    required Uint8List source,
+    required Uint8List output,
+  }) => _call(
+    MediaOperation.probe,
+    () => rust_verify.alphaKept(source: source, output: output),
   );
 
   /// Best-effort metadata transfer. Rust may return an unchanged target without

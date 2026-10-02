@@ -318,4 +318,50 @@ void main() {
     });
     expect(trace, isEmpty, reason: 'no DarkLib failure, no Dart fallback');
   });
+
+  // IMG-15: Android's HEIF decoder gives a transparent HEIC back with an alpha
+  // channel opaque everywhere. The real library judges by decoded values.
+  test('an opaque alpha channel from a transparent HEIC is lost', () async {
+    final heic = await File(
+      'native/darklib/tests/fixtures/apple_heic_alpha.heic',
+    ).readAsBytes();
+    Uint8List rgba(int alpha) {
+      final image = img.Image(width: 64, height: 48, numChannels: 4);
+      img.fill(image, color: img.ColorRgba8(80, 120, 158, alpha));
+      return Uint8List.fromList(img.encodePng(image));
+    }
+
+    expect(
+      await DarkLibCore.alphaKept(source: heic, output: rgba(255)),
+      AlphaKept.lost,
+    );
+    expect(
+      await DarkLibCore.alphaKept(source: heic, output: rgba(64)),
+      AlphaKept.kept,
+    );
+  });
+
+  // IMG-15 fixed: the real library extracts the alpha stream and attaches
+  // the plane FFmpeg decoded (the fixture is FFmpeg's output).
+  test('a HEIC alpha plane goes out as HEVC and comes back as alpha', () async {
+    const dir = 'native/darklib/tests/fixtures';
+    final heic = await File('$dir/apple_heic_alpha.heic').readAsBytes();
+    final grey = await File('$dir/apple_heic_alpha.gray').readAsBytes();
+    final stream = (await DarkLibCore.heifAlphaStream(heic))!;
+    expect((stream.frames, stream.width, stream.height), (1, 64, 48));
+    final base = img.Image(width: 64, height: 48, numChannels: 4);
+    img.fill(base, color: img.ColorRgba8(80, 120, 158, 255));
+    final png = (await DarkLibCore.heifAttachAlpha(
+      source: heic,
+      base: Uint8List.fromList(img.encodePng(base)),
+      grey: grey,
+    ))!;
+    final shown = img.decodePng(png)!;
+    expect(shown.getPixel(6, 6).a, 64);
+    expect(shown.getPixel(32, 24).a, 255);
+    expect(
+      await DarkLibCore.alphaKept(source: heic, output: png),
+      AlphaKept.kept,
+    );
+  });
 }

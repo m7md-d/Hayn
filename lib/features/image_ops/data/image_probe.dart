@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:image/image.dart' as img;
 
 import '../../../core/darklib/darklib.dart';
+import '../../../core/diagnostics/media_diagnostics.dart';
 import 'native_image_info.dart';
 
 // Alpha inspection is tri-state: true = present, false = confirmed absent,
@@ -53,6 +54,33 @@ abstract final class ImageProbe {
           }
         });
     }
+  }
+
+  /// Whether [output] keeps the transparency of [source], whose alpha is
+  /// known present. DarkLib compares decoded alpha values: Android's HEIF
+  /// decoder returns an alpha channel that is opaque everywhere, which a
+  /// channel check passed (IMG-15). Without DarkLib the output's channel
+  /// presence answers, as before. A refusal is recorded against [backend].
+  static Future<bool> keepsAlpha({
+    required Uint8List source,
+    required Uint8List output,
+    required MediaBackend backend,
+    MediaOperation operation = MediaOperation.encode,
+  }) async {
+    final kept = await DarkLibCore.alphaKept(source: source, output: output);
+    final code = switch (kept) {
+      AlphaKept.kept || AlphaKept.declared => null,
+      AlphaKept.lost => MediaDiagnosticCode.alphaLost,
+      AlphaKept.unknown => MediaDiagnosticCode.alphaUnverified,
+      null => switch (await hasAlpha(output)) {
+        true => null,
+        false => MediaDiagnosticCode.alphaLost,
+        null => MediaDiagnosticCode.alphaUnverified,
+      },
+    };
+    if (code == null) return true;
+    MediaDiagnostics.record(backend, operation, code);
+    return false;
   }
 
   /// Identify the container from its leading magic bytes. Pure + synchronous.

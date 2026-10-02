@@ -12,8 +12,8 @@ import 'support/encoded_headers.dart';
 
 // IMG-13: Flutter misreads 10-bit AVIF/HEIC decoded by Android's ImageDecoder
 // (on-device probe, docs/14-ISSUES.md). On Android those two containers go
-// through the platform bridge; its PNG carries no metadata, so it answers
-// only requests without metadata. iOS and other formats are unchanged.
+// through the platform bridge. Its PNG carries no metadata, so DarkLib carries
+// the source's onto it when asked. iOS and other formats are unchanged.
 
 final _heic = Uint8List.fromList([
   0,
@@ -73,6 +73,7 @@ void main() {
     expect(shown, _png);
     expect(calls.single['keepMetadata'], false);
     expect(calls.single['maxEdge'], 4096);
+    expect(calls.single['srgb'], true); // Flutter shows sRGB
 
     // A failed bridge leaves the original and a recorded reason.
     answer = null;
@@ -88,18 +89,21 @@ void main() {
     expect(calls, isEmpty);
   });
 
-  test('Android bridge declines metadata before any call', () async {
+  // The bridge itself carries no metadata: DarkLib carries the source's onto
+  // its PNG. Without DarkLib that cannot happen, and the request gets nothing
+  // rather than an image silently stripped.
+  test('Android bridge with metadata needs DarkLib to carry it', () async {
     NativeImageEncoder.onAndroid = true;
     final (out, events) = await traced(
       () => NativeImageEncoder.bakeUpright(
-        source: _heic,
+        source: encodedHeader(DefaultFormat.avif),
         keepMetadata: true,
         keepOriginalTime: true,
       ),
     );
     expect(out, isNull);
-    expect(calls, isEmpty);
-    expect(events, ['androidDecoder.bake.unavailable']);
+    expect(calls.single['srgb'], false);
+    expect(events, contains('androidDecoder.transplant.unavailable'));
   });
 
   test('PNG output names the engine that produced it', () async {

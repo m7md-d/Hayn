@@ -66,7 +66,7 @@ pub fn decode(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>)> {
     // writes no orientation tag — matching how every other format is handled.
     if let Some((angle, mirror)) = isobmff::read_orientation(bytes) {
         return Ok(apply_orientation(
-            w as usize, h as usize, rgba, angle, mirror,
+            w as usize, h as usize, rgba, angle, mirror, 4,
         ));
     }
     Ok((w, h, rgba))
@@ -338,17 +338,23 @@ fn kr_kb(mtrx: u32) -> (f32, f32) {
     }
 }
 
-/// Rotate a `w×h` RGBA buffer by `angle`×90° counter-clockwise (1/2/3), returning
-/// `(new_w, new_h, pixels)`.
-fn rotate_rgba(w: usize, h: usize, src: &[u8], angle: u8) -> (usize, usize, Vec<u8>) {
+/// Rotate a `w×h` buffer of `bpp`-byte pixels by `angle`×90° counter-clockwise
+/// (1/2/3), returning `(new_w, new_h, pixels)`.
+pub(super) fn rotate(
+    w: usize,
+    h: usize,
+    src: &[u8],
+    angle: u8,
+    bpp: usize,
+) -> (usize, usize, Vec<u8>) {
     let mut dst = vec![0u8; src.len()];
     match angle {
         2 => {
             // 180°: reverse pixel order.
             let n = w * h;
             for i in 0..n {
-                let (s, d) = (i * 4, (n - 1 - i) * 4);
-                dst[d..d + 4].copy_from_slice(&src[s..s + 4]);
+                let (s, d) = (i * bpp, (n - 1 - i) * bpp);
+                dst[d..d + bpp].copy_from_slice(&src[s..s + bpp]);
             }
             (w, h, dst)
         }
@@ -356,14 +362,14 @@ fn rotate_rgba(w: usize, h: usize, src: &[u8], angle: u8) -> (usize, usize, Vec<
             // 90° CCW (1) or CW (3); the destination is h×w.
             for y in 0..h {
                 for x in 0..w {
-                    let s = (y * w + x) * 4;
+                    let s = (y * w + x) * bpp;
                     let (dx, dy) = if angle == 1 {
                         (y, w - 1 - x) // counter-clockwise
                     } else {
                         (h - 1 - y, x) // clockwise (= 270° CCW)
                     };
-                    let d = (dy * h + dx) * 4; // dst width = h
-                    dst[d..d + 4].copy_from_slice(&src[s..s + 4]);
+                    let d = (dy * h + dx) * bpp; // dst width = h
+                    dst[d..d + bpp].copy_from_slice(&src[s..s + bpp]);
                 }
             }
             (h, w, dst)
@@ -372,14 +378,14 @@ fn rotate_rgba(w: usize, h: usize, src: &[u8], angle: u8) -> (usize, usize, Vec<
     }
 }
 
-/// Mirror a `w×h` RGBA buffer in place: `horizontal` flips left↔right, otherwise
-/// top↔bottom.
-fn flip_rgba(w: usize, h: usize, px: &mut [u8], horizontal: bool) {
+/// Mirror a `w×h` buffer of `bpp`-byte pixels in place: `horizontal` flips
+/// left↔right, otherwise top↔bottom.
+pub(super) fn flip(w: usize, h: usize, px: &mut [u8], horizontal: bool, bpp: usize) {
     if horizontal {
         for y in 0..h {
             for x in 0..w / 2 {
-                let (a, b) = ((y * w + x) * 4, (y * w + (w - 1 - x)) * 4);
-                for k in 0..4 {
+                let (a, b) = ((y * w + x) * bpp, (y * w + (w - 1 - x)) * bpp);
+                for k in 0..bpp {
                     px.swap(a + k, b + k);
                 }
             }
@@ -387,8 +393,8 @@ fn flip_rgba(w: usize, h: usize, px: &mut [u8], horizontal: bool) {
     } else {
         for y in 0..h / 2 {
             for x in 0..w {
-                let (a, b) = ((y * w + x) * 4, ((h - 1 - y) * w + x) * 4);
-                for k in 0..4 {
+                let (a, b) = ((y * w + x) * bpp, ((h - 1 - y) * w + x) * bpp);
+                for k in 0..bpp {
                     px.swap(a + k, b + k);
                 }
             }
@@ -396,18 +402,19 @@ fn flip_rgba(w: usize, h: usize, px: &mut [u8], horizontal: bool) {
     }
 }
 
-/// Apply the AVIF orientation transform (irot `angle`×90° CCW, then imir) to an
-/// RGBA buffer, returning the new dimensions and pixels.
-fn apply_orientation(
+/// Apply the AVIF/HEIF orientation transform (irot `angle`×90° CCW, then imir)
+/// to a buffer of `bpp`-byte pixels, returning the new dimensions and pixels.
+pub(super) fn apply_orientation(
     w: usize,
     h: usize,
     px: Vec<u8>,
     angle: u8,
     mirror: Option<u8>,
+    bpp: usize,
 ) -> (u32, u32, Vec<u8>) {
-    let (w, h, mut px) = rotate_rgba(w, h, &px, angle);
+    let (w, h, mut px) = rotate(w, h, &px, angle, bpp);
     if let Some(mode) = mirror {
-        flip_rgba(w, h, &mut px, mode == 1); // mode 1 = left↔right, 0 = top↔bottom
+        flip(w, h, &mut px, mode == 1, bpp); // mode 1 = left↔right, 0 = top↔bottom
     }
     (w as u32, h as u32, px)
 }
@@ -424,7 +431,7 @@ mod tests {
     #[test]
     fn rotate_ccw_90() {
         // [A B] → column [B; A] (1 wide, 2 tall).
-        let (w, h, px) = rotate_rgba(2, 1, &ab(), 1);
+        let (w, h, px) = rotate(2, 1, &ab(), 1, 4);
         assert_eq!((w, h), (1, 2));
         assert_eq!(&px[0..4], &[2, 2, 2, 255]); // top = B
         assert_eq!(&px[4..8], &[1, 1, 1, 255]); // bottom = A
@@ -433,7 +440,7 @@ mod tests {
     #[test]
     fn rotate_cw_90() {
         // [A B] → column [A; B].
-        let (w, h, px) = rotate_rgba(2, 1, &ab(), 3);
+        let (w, h, px) = rotate(2, 1, &ab(), 3, 4);
         assert_eq!((w, h), (1, 2));
         assert_eq!(&px[0..4], &[1, 1, 1, 255]);
         assert_eq!(&px[4..8], &[2, 2, 2, 255]);
@@ -441,7 +448,7 @@ mod tests {
 
     #[test]
     fn rotate_180() {
-        let (w, h, px) = rotate_rgba(2, 1, &ab(), 2);
+        let (w, h, px) = rotate(2, 1, &ab(), 2, 4);
         assert_eq!((w, h), (2, 1));
         assert_eq!(&px[0..4], &[2, 2, 2, 255]); // B then A
         assert_eq!(&px[4..8], &[1, 1, 1, 255]);
@@ -450,7 +457,7 @@ mod tests {
     #[test]
     fn flip_horizontal() {
         let mut px = ab();
-        flip_rgba(2, 1, &mut px, true);
+        flip(2, 1, &mut px, true, 4);
         assert_eq!(&px[0..4], &[2, 2, 2, 255]); // B A
         assert_eq!(&px[4..8], &[1, 1, 1, 255]);
     }
@@ -459,7 +466,7 @@ mod tests {
     fn flip_vertical() {
         // column [A; B] flipped top↔bottom → [B; A].
         let mut px = vec![1, 1, 1, 255, 2, 2, 2, 255];
-        flip_rgba(1, 2, &mut px, false);
+        flip(1, 2, &mut px, false, 4);
         assert_eq!(&px[0..4], &[2, 2, 2, 255]);
         assert_eq!(&px[4..8], &[1, 1, 1, 255]);
     }

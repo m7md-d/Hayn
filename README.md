@@ -122,8 +122,8 @@ docs/                 Product, architecture and status documents
 ```bash
 flutter pub get
 flutter analyze
-flutter test                          # 199 tests
-(cd native/darklib && cargo test)     # 109 tests
+flutter test                          # 205 tests
+(cd native/darklib && cargo test)     # 120 tests
 
 flutter run                           # on a connected device or simulator
 flutter build apk --release

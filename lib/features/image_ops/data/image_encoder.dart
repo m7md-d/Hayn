@@ -213,15 +213,13 @@ abstract final class ImageEncoder {
           continue;
         }
         if (hasAlpha == true) {
-          final outputAlpha = await ImageProbe.hasAlpha(encoded.bytes);
-          if (outputAlpha != true) {
-            MediaDiagnostics.record(
-              encoded.backend ?? MediaBackend.imageEncoder,
-              MediaOperation.encode,
-              outputAlpha == false
-                  ? MediaDiagnosticCode.alphaLost
-                  : MediaDiagnosticCode.alphaUnverified,
-            );
+          // Alpha values, not channel presence: a platform decode can return
+          // a channel that is opaque everywhere (IMG-15).
+          if (!await ImageProbe.keepsAlpha(
+            source: input,
+            output: encoded.bytes,
+            backend: encoded.backend ?? MediaBackend.imageEncoder,
+          )) {
             continue;
           }
         } else if (hasAlpha == null) {

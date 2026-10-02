@@ -199,6 +199,41 @@ grid falls back to its first tile; a `tmap` item's own `colr` is ignored) and
 signalling. `NoHdrSignal`/`Absent` mean no known signal was found, not proof of
 SDR; an unreadable container is `Unknown`.
 
+### HEIF alpha (`engine::codec::heif_alpha`)
+
+```rust
+pub struct AlphaStream { pub hevc: Vec<u8>, pub frames: u32, pub width: u32, pub height: u32 }
+pub fn alpha_stream(heif: &[u8]) -> Result<Option<AlphaStream>>;
+pub fn attach_alpha(heif: &[u8], base: &[u8], grey: &[u8]) -> Result<Vec<u8>>;
+```
+For a platform whose HEIF decoder drops the alpha plane (Android, Hayn IMG-15).
+DarkLib still decodes no HEVC: `alpha_stream` extracts the primary image's
+alpha item(s) as one Annex-B stream, each frame its `hvcC` parameter sets then
+its picture, one frame per tile (a single item, an alpha grid, or per-tile alpha
+of a colour grid). An outside HEVC decoder turns it into 8-bit full-range grey
+(`frames × width × height` bytes). `attach_alpha` pastes the frames onto the
+canvas, applies the alpha item's own `irot`/`imir`, un-premultiplies colour for
+a `prem` reference, scales the plane to a `base` sampled down for a preview, and
+returns `base` with it as an RGBA PNG (fast deflate: an intermediate). A `clap`
+crop, tiles of different sizes, or a plane that fits neither size nor shape is
+an error, never a guessed plane.
+
+### Verify (`engine::verify`)
+
+```rust
+pub enum AlphaKept { Kept, Declared, Lost, Unknown }
+pub fn alpha_kept(source: &[u8], output: &[u8]) -> AlphaKept;
+```
+Checks a conversion's output against its source by decoding pixels, where the
+container cannot answer. `alpha_kept` decodes the output (within the decode
+budget) and looks for any alpha sample below 255; only when it shows none is the
+source decoded, to tell a lost alpha plane (`Lost`) from an opaque one (`Kept`).
+A source DarkLib cannot decode (HEIC) answers from its container's alpha
+auxiliary. An output it cannot decode answers `Declared` when its container
+declares alpha (values unread). A channel whose samples are all 255 is not
+transparency: Android's HEIF decoder returns exactly that for a transparent
+Apple HEIC (Hayn IMG-15).
+
 ---
 
 ## Dart / FFI API
@@ -247,6 +282,17 @@ fn transcode(bytes, format: CodecFormat, quality: u32, max_edge: u32,
 ### `api::inspect`
 ```rust
 fn inspect_image(bytes) -> Facts   // async; see engine::inspect above
+```
+
+### `api::codec` (HEIF alpha)
+```rust
+fn heif_alpha_stream(bytes) -> Result<Option<AlphaStream>, String>
+fn heif_attach_alpha(source, base, grey) -> Result<Vec<u8>, String>
+```
+
+### `api::verify`
+```rust
+fn alpha_kept(source, output) -> AlphaKept   // async; see engine::verify above
 ```
 
 ---

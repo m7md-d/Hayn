@@ -68,7 +68,23 @@ if [ ! -f "$FIXTURES/photo-12mp.heic" ] || [ ! -f "$FIXTURES/photo-12mp.png" ] \
     echo libheif >"$FIXTURES/.generator"
   fi
 fi
+# A transparent HEIC (IMG-15) needs libheif through pillow-heif; without it
+# the conversion test skips that row.
+if [ ! -f "$FIXTURES/photo-12mp-alpha.heic" ]; then
+  python3 test_native/make_perf_fixtures.py "$FIXTURES" --alpha-heic \
+    || echo "No transparent HEIC fixture (needs pillow-heif); its row is skipped." >&2
+fi
 FILES=(photo-12mp.jpg photo-12mp.heic photo-12mp.png photo-12mp-alpha.png)
+[ -f "$FIXTURES/photo-12mp-alpha.heic" ] && FILES+=(photo-12mp-alpha.heic)
+# HAYN_PERF_LARGE=1 runs integration_test/large_image_test.dart instead: the
+# same photo enlarged to about 200 MP, converted at full size (RUN-01).
+if [ "${HAYN_PERF_LARGE:-}" = 1 ]; then
+  TARGET="integration_test/large_image_test.dart"
+  if [ ! -f "$FIXTURES/photo-200mp.jpg" ]; then
+    python3 test_native/make_perf_fixtures.py "$FIXTURES" --large
+  fi
+  FILES=(photo-200mp.jpg)
+fi
 
 OUT="$ROOT/build/performance/$PLATFORM-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$OUT"

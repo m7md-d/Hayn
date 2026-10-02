@@ -61,11 +61,12 @@ class MainActivity : FlutterActivity() {
                         val bytes = call.argument<ByteArray>("bytes")
                         val toSdr = call.argument<Boolean>("toSdr") ?: false
                         val maxEdge = call.argument<Int>("maxEdge") ?: 0
+                        val srgb = call.argument<Boolean>("srgb") ?: true
                         if (bytes == null) {
                             result.success(null)
                         } else {
                             decodeExecutor.execute {
-                                val out = PlatformDecoder.bakeUprightPng(bytes, toSdr, maxEdge)
+                                val out = PlatformDecoder.bakeUprightPng(bytes, toSdr, maxEdge, srgb)
                                 mainHandler.post { result.success(out) }
                             }
                         }

@@ -4,6 +4,7 @@
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
 import '../engine/codec.dart';
+import '../engine/codec/heif_alpha.dart';
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
@@ -31,6 +32,26 @@ Future<Transcoded> transcode({
   quality: quality,
   maxEdge: maxEdge,
   keepMetadata: keepMetadata,
+);
+
+/// The alpha plane of a HEIF image's primary item as an Annex-B HEVC stream,
+/// one frame per tile, for an HEVC decoder outside DarkLib; `None` when the
+/// image has no alpha. Throws on HEIF whose alpha it cannot lay out (Hayn
+/// IMG-15: Android's HEIF decoder drops the plane).
+Future<AlphaStream?> heifAlphaStream({required List<int> bytes}) =>
+    DarkLib.instance.api.crateApiCodecHeifAlphaStream(bytes: bytes);
+
+/// `base` (the platform's upright decode of `source`) with `grey`, the
+/// stream's frames decoded to 8-bit full-range grey, as its alpha: an RGBA
+/// PNG. Throws when the plane does not fit the image.
+Future<Uint8List> heifAttachAlpha({
+  required List<int> source,
+  required List<int> base,
+  required List<int> grey,
+}) => DarkLib.instance.api.crateApiCodecHeifAttachAlpha(
+  source: source,
+  base: base,
+  grey: grey,
 );
 
 /// Target encode format for [`transcode`].
