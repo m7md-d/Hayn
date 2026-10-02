@@ -37,6 +37,14 @@
 
 `apple_heic_alpha.gray`: طبقة الألفا في `apple_heic_alpha.heic` مفكوكة بمفكك HEVC في FFmpeg 7.1.3 على لينكس، مفكك مستقل عن DarkLib (2026-10-02). 64×48 بايتًا رماديًا بالمدى الكامل، صف بعد صف: 64 حيث الصورة شبه شفافة و255 في المربع المعتم. الأمر: استخرج تيار Annex-B من `hvcC` والعنصر 2، ثم `ffmpeg -f hevc -i alpha.hevc -frames:v 1 -f rawvideo -pix_fmt gray alpha.gray`. وفك FFmpeg المشحون مع التطبيق على S25 Edge أعطى القيم نفسها. يستعمله `tests/heif_alpha.rs` (IMG-15).
 
+## من HeifWriter على Android
+
+`android_heifwriter_grid.heic`: ناتج `HeifWriter` (عبر `flutter_image_compress`) على Galaxy S25 Edge، بمرمّز `c2.qti.heic.encoder`، من PNG ‏16×12 بلون (80,120,160) (اختبار الهاتف «heic: primary Android encode decodes back»، 2026-10-02). كاتب مستقل عن DarkLib، وشكله ما يكتبه `MediaMuxer`: `mdat` قبل `meta` بحجم 64 بت، وشبكة 1×1 من بلاطة 512 وواصفها في `idat` (طريقة البناء 1)، وبلا `colr` ولا EXIF. يستعمله `tests/heif_inject.rs` (RUN-01، الخطوة 5)، ويتحقق `test_native/check_heif_inject.py` من الناتج بـlibheif.
+
+## من libheif
+
+`libheif_p3_icc.heic` و`libheif_p3_nclx.heic`: صورة 64×48 بأربعة أرباع (أحمر وأخضر وأزرق وأصفر من أعلى اليسار، بقيم P3 ‏(220,40,40) و(40,200,60) و(40,60,220) و(230,210,40)). كتبها libheif 1.23.4 عبر pillow-heif بجودة 100 (2026-10-02)، والأول بملف Display P3 من Apple (من `apple_png_p3_icc.png`)، والثاني بـ`nclx` (12/13/6، مدى كامل) بلا ICC. ألوانها في sRGB كما يحولها LittleCMS بملف Apple عند مراكز الأرباع: (240,0,23) و(0,204,12) و(34,61,228) و(235,209,0). يستعملها اختبار الهاتف لـIMG-21 (العرض والقص)، واختبار الجسر الحقيقي.
+
 ## WebP من libwebp عبر Pillow
 
 `test_native/make_webp_fixtures.py` يكتبها بـPillow 12.3.0 (libwebp 1.6.0)، كاتب مستقل عن DarkLib. المحتوى اصطناعي بلا رخصة: تدرج 64×48، والشفافة نصفها الأيسر بألفا 64. التوليد ثابت (أعيد فأعطى البايتات نفسها، 2026-09-30). ImageIO يرى الألفا في الشفافتين وحدهما.
@@ -72,6 +80,9 @@ P3 بـICC وحده بلا وسم لون آخر موجود في `apple_gainmap_*
 | `apple_heic_alpha.heic` | 830 | `2eaff577ba577254db2b4110c4f86e3dab46e4af777090229138f1beb0bb18ca` |
 | `apple_heic_alpha.gray` | 3072 | `2b8c6694d3d953e5a08f0ffa3c092fde12b7b6417678580f2cdf59bd26beb535` |
 | `apple_heic_hlg.heic` | 73083 | `d699edef45fa92d93331b3de94b8285372c89681a58a1a857d254175cbebafd6` |
+| `libheif_p3_icc.heic` | 1201 | `4459f6e15e55ee2c409c16ae993e0e93321d69c739d25b8ab8b78661a25749f3` |
+| `libheif_p3_nclx.heic` | 672 | `da44fa93a6b9d8b9643a459a89b4ec1cf5a34328f66b02edce9a465006bdcb8e` |
+| `android_heifwriter_grid.heic` | 552 | `3df650c04f088cecdbedfb853c4f8a450158c222a9566a1845e7c690fa8fa9d1` |
 | `pillow_webp_lossless_alpha.webp` | 72 | `ea86ca4d8c1020b91f0ad3db4784a2cfdc617d51e16f6de6638c6c9d7b5b99ca` |
 | `pillow_webp_lossless_opaque.webp` | 60 | `08deddec4ba383d688bcf571e20faada915e99f7e4b4bd1b4abd4281375b62f9` |
 | `pillow_webp_lossy_alpha.webp` | 314 | `d223a2fdcd9976431443eba88252fc5134e564262fff2b8872e9c4a5e2e809eb` |

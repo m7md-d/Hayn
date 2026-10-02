@@ -82,16 +82,24 @@ class ImageCropTask extends MediaTask {
     // pixels (IMG-13). Not surfaced to the user.
     final facts = await SourceInspector.inspect(src);
     var pixels = src;
-    if (facts.hasHdr || PlatformPixels.needsBridge(src)) {
+    // On Android every source takes the bridge for its stored values, and
+    // the crop carries the source's profile, so a P3 photo stays P3. Flutter
+    // would turn a profiled image into sRGB, and Android's decoder ignores a
+    // HEIC's profile altogether (IMG-21).
+    final android =
+        NativeImageEncoder.bakeBackend == MediaBackend.androidDecoder;
+    var rawValues = false;
+    if (android || facts.hasHdr || PlatformPixels.needsBridge(src)) {
       final baked = await NativeImageEncoder.bakeUpright(
         source: src,
         keepMetadata: false,
         keepOriginalTime: true,
         toSdr: facts.hasHdr,
-        // Flutter decodes these pixels below as sRGB, and the crop is saved
-        // without the source's profile.
-        srgb: true,
+        // iOS: ImageIO's rendition, decoded below as sRGB and saved without
+        // the source's profile.
+        colours: android ? BakeColours.raw : BakeColours.srgb,
       );
+      rawValues = android && baked != null;
       if (facts.hasHdr) {
         if (baked == null && facts.directHdr == true) {
           MediaDiagnostics.record(
@@ -153,16 +161,35 @@ class ImageCropTask extends MediaTask {
     );
     if (cropped == null) throw StateError('Crop failed to encode');
     if (_cancelled) return;
+    // The stored values need the source's profile to mean what they did;
+    // without it a P3 crop would read as sRGB.
+    var named = cropped;
+    if (rawValues) {
+      final carried = await ImageEncoder.carryMetadata(
+        src,
+        cropped,
+        keepMetadata: false,
+      );
+      if (carried == null) {
+        MediaDiagnostics.record(
+          MediaBackend.darklib,
+          MediaOperation.transplant,
+          MediaDiagnosticCode.preservationUnverified,
+        );
+        throw StateError('Crop could not keep its colours');
+      }
+      named = carried;
+    }
     yield const TaskProgress(progress: 0.6, phase: 'encoding');
 
-    final hasAlpha = await ImageProbe.hasAlpha(cropped);
+    final hasAlpha = await ImageProbe.hasAlpha(named);
     final target = ImageFormatPolicy.resolve(
       choice: DefaultFormat.auto,
       hasAlpha: hasAlpha,
       caps: _caps,
     );
     final encoded = await ImageEncoder.encode(
-      source: cropped,
+      source: named,
       target: target.format,
       allowFormatFallback:
           true, // This task explicitly uses Auto format policy.

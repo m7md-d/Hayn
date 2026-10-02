@@ -1,4 +1,5 @@
-import 'package:flutter/services.dart';
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hayn/core/darklib/darklib.dart';
 import 'package:hayn/core/diagnostics/media_diagnostics.dart';
@@ -40,6 +41,7 @@ class _Api extends Fake implements DarkLibApi {
         alpha: Presence.absent,
         width: 0,
         height: 0,
+        orientation: 0,
       );
 
   @override
@@ -48,6 +50,18 @@ class _Api extends Fake implements DarkLibApi {
     required List<int> target,
   }) async =>
       carries ? Uint8List.fromList(target) : Future.error('malformed: test');
+
+  /// A Display P3-like profile space: the display call passes it on, since
+  /// Android's decoder ignores a HEIC's profile (IMG-21).
+  ProfileSpace? space = ProfileSpace(
+    toXyzD50: Float32List.fromList([1, 0, 0, 0, 1, 0, 0, 0, 1]),
+    transfer: Float32List.fromList([1, 0, 0, 0, 0, 0, 2.5]),
+  );
+
+  @override
+  Future<ProfileSpace?> crateApiInspectProfileSpace({
+    required List<int> bytes,
+  }) async => space;
 
   @override
   Future<Uint8List> crateApiMetadataStripMetadata({
@@ -108,7 +122,12 @@ void main() {
     expect(shown, _png);
     expect(calls.single['keepMetadata'], false);
     expect(calls.single['maxEdge'], 4096);
-    expect(calls.single['srgb'], true); // Flutter shows sRGB
+    expect(calls.single['colours'], 'srgb'); // Flutter shows sRGB
+    // The profile's space, 9 matrix values then 7 transfer ones.
+    expect(calls.single['space'], [
+      ...[1, 0, 0, 0, 1, 0, 0, 0, 1],
+      ...[1, 0, 0, 0, 0, 0, 2.5],
+    ]);
 
     // A failed bridge leaves the original and a recorded reason.
     answer = null;
@@ -138,7 +157,8 @@ void main() {
       ),
     );
     expect(out, isNull);
-    expect(calls.single['srgb'], false);
+    expect(calls.single['colours'], 'keep');
+    expect(calls.single.containsKey('space'), isFalse);
     expect(events, contains('androidDecoder.transplant.unavailable'));
   });
 

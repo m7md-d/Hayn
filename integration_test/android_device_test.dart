@@ -26,6 +26,7 @@ import 'package:hayn/features/library/presentation/library_screen.dart';
 import 'package:hayn/features/onboarding/providers/onboarding_provider.dart';
 import 'package:hayn/features/settings/presentation/settings_screen.dart';
 import 'package:hayn/features/settings/providers/preferences_providers.dart';
+import 'package:hayn/src/rust/api/metadata.dart' as dl;
 
 // Real Android services on a physical phone, including the linked Rust library
 // and Android's own ImageDecoder, independent of our code: AVIF/HEIC reach it
@@ -250,12 +251,16 @@ void main() {
           keepMetadata: keepMetadata,
         );
         device['p3heic-$label'] = result.backend?.name;
+        await _artifact(
+          'p3heic/${target.name}${keepMetadata ? '-meta' : ''}.${result.extension}',
+          result.bytes,
+        );
         Future<_Shown> managed(Uint8List bytes) async => _flutterDecode(
           (await NativeImageEncoder.bakeUpright(
             source: bytes,
             keepMetadata: false,
             keepOriginalTime: true,
-            srgb: true,
+            colours: BakeColours.srgb,
           ))!,
         );
         _expectSameImage(await managed(source), await managed(result.bytes));
@@ -328,7 +333,7 @@ void main() {
           source: bytes,
           keepMetadata: false,
           keepOriginalTime: true,
-          srgb: true,
+          colours: BakeColours.srgb,
         ))!,
       )!;
       double meanShift(img.Image a, img.Image b) {
@@ -469,6 +474,139 @@ void main() {
     });
   }
 
+  // RUN-01 step 5: HEIC from bands and 512 tiles. The stored pixels stay as
+  // decoded and the orientation goes into the container, so what Android
+  // shows must match the source as shown: size, the four quadrants (a turn
+  // or a mirror swaps them) and the pixels overall. 1100×700 spans 3×2
+  // tiles with partial ones on the right and bottom edges.
+  for (final (w, h, orientations) in [
+    (64, 48, [1, 2, 3, 4, 5, 6, 7, 8]),
+    (1100, 700, [1, 2, 5, 6]),
+  ]) {
+    for (final o in orientations) {
+      testWidgets('HEIC tiles: ${w}x$h with orientation $o shows upright', (
+        _,
+      ) async {
+        final source = _quadrants(w, h, orientation: o);
+        final facts = await SourceInspector.inspect(source);
+        expect(facts.orientation, o);
+        final sw = Stopwatch()..start();
+        final out = await NativeImageEncoder.encodeHeicTiles(
+          source: source,
+          quality: 95,
+          orientation: facts.orientation,
+        );
+        expect(out, isNotNull);
+        device['heic-tiles-${w}x$h-o$o-ms'] = sw.elapsedMilliseconds;
+        device['heic-tiles-codec'] = out!.codec;
+        device['heic-tiles-rateMode'] = out.rateMode;
+        await _artifact('heic-tiles/${w}x$h-o$o.heic', out.bytes);
+        final before = await _platformDecode(source);
+        final after = await _platformDecode(out.bytes);
+        _expectSameQuadrants(before, after);
+        _expectSameImage(before, after);
+      });
+    }
+  }
+
+  // The tiles keep the decoded colour space and write no profile; the
+  // source's is carried after (DarkLib, into the idat grid). Without it a P3
+  // image would be read as sRGB.
+  // Formats without random access are decoded once, whole, then tiled the
+  // same way (a region re-reads every row above it).
+  for (final kind in [
+    DarkLibFormat.png,
+    DarkLibFormat.webp,
+    DarkLibFormat.avif,
+  ]) {
+    testWidgets('HEIC tiles: a ${kind.name} source decodes back', (_) async {
+      final source = (await DarkLibCore.transcode(
+        _quadrants(1100, 700, orientation: 1),
+        format: kind,
+        quality: 100,
+        keepMetadata: false,
+      ))!.bytes;
+      final out = await NativeImageEncoder.encodeHeicTiles(
+        source: source,
+        quality: 95,
+        orientation: 0,
+      );
+      expect(out, isNotNull);
+      await _artifact('heic-tiles/from-${kind.name}.heic', out!.bytes);
+      final before = await _platformDecode(source);
+      final after = await _platformDecode(out.bytes);
+      _expectSameQuadrants(before, after);
+      _expectSameImage(before, after);
+    });
+  }
+
+  // Android's decoder ignores the colour profile of every HEIC on this phone
+  // (an Apple P3 HEIC included: its pixels come as sRGB, IMG-21), so it
+  // cannot judge colour here. On the phone: the stored values are the
+  // source's and its profile travels with them. The colour itself is judged
+  // on the host by libheif with colour management
+  // (test_native/check_heic_tiles.py).
+  testWidgets('HEIC tiles: a Display P3 source keeps its values and profile', (
+    _,
+  ) async {
+    // Saturated quadrants named P3 by the fixture's own profile.
+    final source = await DarkLibCore.transplantMetadata(
+      source: await _fixture('apple_png_p3_icc.png'),
+      target: _quadrants(256, 192, orientation: 1),
+    );
+    expect(dl.readMetadataSummary(bytes: source!).hasIcc, isTrue);
+    final out = await NativeImageEncoder.encodeHeicTiles(
+      source: source,
+      quality: 95,
+      orientation: 0,
+    );
+    expect(out, isNotNull);
+    final carried = await ImageEncoder.carryMetadata(
+      source,
+      out!.bytes,
+      keepMetadata: false,
+    );
+    expect(carried, isNotNull);
+    await _artifact('heic-tiles/p3.heic', carried!);
+    await _artifact('heic-tiles/p3-source.jpg', source);
+    expect(dl.readMetadataSummary(bytes: carried).hasIcc, isTrue);
+    // Values as stored, unconverted: the region decoder kept P3.
+    Future<_Shown> raw(Uint8List bytes) async => _flutterDecode(
+      img.encodePng(
+        img.decodePng(
+          (await NativeImageEncoder.bakeUpright(
+            source: bytes,
+            keepMetadata: false,
+            keepOriginalTime: true,
+          ))!,
+        )!,
+      ),
+    );
+    _expectSameImage(await raw(source), await raw(carried));
+  });
+
+  // A HEIC source goes through the region decoder too (Apple, 10-bit P3).
+  testWidgets('HEIC tiles: an Apple HEIC source decodes back', (_) async {
+    final source = await _fixture('apple_heic_10bit_p3.heic');
+    final facts = await SourceInspector.inspect(source);
+    final out = await NativeImageEncoder.encodeHeicTiles(
+      source: source,
+      quality: 95,
+      orientation: facts.orientation,
+    );
+    expect(out, isNotNull);
+    final carried = await ImageEncoder.carryMetadata(
+      source,
+      out!.bytes,
+      keepMetadata: false,
+    );
+    await _artifact('heic-tiles/apple-10bit.heic', carried!);
+    _expectSameImage(
+      await _platformDecode(source),
+      await _platformDecode(carried),
+    );
+  });
+
   for (final target in [
     DefaultFormat.png,
     DefaultFormat.jpeg,
@@ -515,6 +653,60 @@ void main() {
       expect(p[1], closeTo(120, tolerance));
       expect(p[2], closeTo(160, tolerance));
     });
+  }
+
+  // IMG-21: Android's decoder ignores a HEIC's colour profile and calls its
+  // values sRGB. The display path names them with the profile's space from
+  // DarkLib, and Android converts. The expected colours are LittleCMS's, on
+  // the host, for the libheif files (fixtures/README).
+  for (final name in ['libheif_p3_icc.heic', 'libheif_p3_nclx.heic']) {
+    testWidgets('A P3 HEIC shows its colours: $name', (_) async {
+      final shown = await _flutterDecode(
+        await PlatformPixels.forDisplay(await _fixture(name), maxEdge: 0),
+      );
+      _expectP3Quadrants(shown);
+    });
+  }
+
+  // IMG-21: the crop keeps the stored values and carries the source's
+  // profile (P3 stays P3), where it saved a HEIC's P3 values as sRGB. Judged
+  // through the display path against the same LittleCMS colours.
+  final p3Crops = <String, Future<Uint8List> Function()>{
+    'p3-icc.heic': () => _fixture('libheif_p3_icc.heic'),
+    'p3-nclx.heic': () => _fixture('libheif_p3_nclx.heic'),
+    'p3.jpg': () async => (await DarkLibCore.transplantMetadata(
+      source: await _fixture('apple_png_p3_icc.png'),
+      target: _quadrants(64, 48, orientation: 1),
+    ))!,
+  };
+  for (final MapEntry(key: name, value: load) in p3Crops.entries) {
+    testWidgets('Crop keeps the P3 colours of $name', (_) async {
+      expect(photos?.isAuth, isTrue, reason: 'Photo access was refused');
+      final asset = await GallerySaver.saveImage(
+        await load(),
+        filename: 'hayn-test-crop-source-$name',
+      );
+      expect(asset, isNotNull);
+      final task = ImageCropTask(
+        assetId: asset!.id,
+        rotationQuarters: 0,
+        flipH: false,
+        flipV: false,
+        cropFraction: const Rect.fromLTWH(0, 0, 1, 1),
+      );
+      final events = await task.run().toList();
+      expect(events.last, isA<TaskSucceeded>());
+      final output = await (await AssetEntity.fromId(
+        task.outputAssetIds.single,
+      ))!.originBytes;
+      await _artifact('crop-p3/$name-result', output!);
+      expect(dl.readMetadataSummary(bytes: output).hasIcc, isTrue);
+      _expectP3Quadrants(
+        await _flutterDecode(
+          await PlatformPixels.forDisplay(output, maxEdge: 0),
+        ),
+      );
+    }, skip: !_galleryTests);
   }
 
   // T-14/T-15: the real crop task on 10-bit gallery assets. Before IMG-13 it
@@ -704,6 +896,65 @@ void _expectSameImage(_Shown a, _Shown b) {
     }
   }
   expect(total / samples, lessThan(4));
+}
+
+/// A JPEG of four flat quadrants (red, green, blue, yellow from the top
+/// left) whose EXIF names [orientation]: any turn or mirror moves them.
+Uint8List _quadrants(int w, int h, {required int orientation}) {
+  final image = img.Image(width: w, height: h);
+  final colours = [
+    img.ColorRgb8(220, 40, 40),
+    img.ColorRgb8(40, 200, 60),
+    img.ColorRgb8(40, 60, 220),
+    img.ColorRgb8(230, 210, 40),
+  ];
+  for (var q = 0; q < 4; q++) {
+    final x0 = q.isEven ? 0 : w ~/ 2;
+    final y0 = q < 2 ? 0 : h ~/ 2;
+    img.fillRect(
+      image,
+      x1: x0,
+      y1: y0,
+      x2: q.isEven ? w ~/ 2 - 1 : w - 1,
+      y2: q < 2 ? h ~/ 2 - 1 : h - 1,
+      color: colours[q],
+    );
+  }
+  image.exif.imageIfd.orientation = orientation;
+  return Uint8List.fromList(img.encodeJpg(image, quality: 100));
+}
+
+/// The four P3 quadrants of `_quadrants` (and the libheif fixtures) in sRGB
+/// as LittleCMS converts them with Apple's Display P3 profile, at the
+/// quadrant centres of a 64×48 image (fixtures/README).
+void _expectP3Quadrants(_Shown shown) {
+  expect((shown.width, shown.height), (64, 48));
+  const want = [
+    [240, 0, 23],
+    [0, 204, 12],
+    [34, 61, 228],
+    [235, 209, 0],
+  ];
+  for (var q = 0; q < 4; q++) {
+    final p = shown.pixel(16 + 32 * (q % 2), 12 + 24 * (q ~/ 2));
+    for (var c = 0; c < 3; c++) {
+      expect(p[c], closeTo(want[q][c], 6), reason: 'quadrant $q: $p');
+    }
+  }
+}
+
+/// The four quadrant centres of [b] match [a]'s.
+void _expectSameQuadrants(_Shown a, _Shown b) {
+  expect((b.width, b.height), (a.width, a.height));
+  for (final (fx, fy) in [(1, 1), (3, 1), (1, 3), (3, 3)]) {
+    final x = a.width * fx ~/ 4;
+    final y = a.height * fy ~/ 4;
+    final p = a.pixel(x, y);
+    final q = b.pixel(x, y);
+    for (var c = 0; c < 3; c++) {
+      expect(q[c], closeTo(p[c], 12), reason: 'quadrant at $x,$y');
+    }
+  }
 }
 
 /// T-08 / IMG-15: a transparent HEIC to [target] must succeed with its real

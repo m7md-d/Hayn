@@ -110,7 +110,12 @@ abstract final class ImageEncoder {
         MediaDiagnosticCode.hdrToSdr,
       );
       input = sdr;
-      plan = SourceFacts.sdr(alpha: facts.alpha);
+      // The rendition keeps the size: a giant source stays giant.
+      plan = SourceFacts.sdr(
+        alpha: facts.alpha,
+        width: facts.width,
+        height: facts.height,
+      );
     } else if (facts.directHdr == null || facts.gainMap == null) {
       MediaDiagnostics.record(
         MediaBackend.imageEncoder,
@@ -498,6 +503,32 @@ abstract final class ImageEncoder {
         }
       }
 
+      // Android HEIC for a giant source: bands and tiles (RUN-01), where
+      // HeifWriter cannot get a buffer the size of the image. The source's
+      // profile and, on request, its metadata carried by DarkLib. Smaller
+      // images take the plugin below: faster by 0.2 to 0.5 s at 12 MP (user
+      // decision 2026-10-02), though the tiles were a little more accurate.
+      if (noCap &&
+          format == DefaultFormat.heic &&
+          NativeImageEncoder.androidHeic &&
+          facts.giant &&
+          hasAlpha == false &&
+          facts.directHdr != true) {
+        backend = MediaBackend.androidHeic;
+        final tiles = await NativeImageEncoder.encodeHeicTiles(
+          source: source,
+          quality: quality.clamp(1, 100),
+          orientation: facts.orientation,
+        );
+        if (tiles != null) {
+          return EncodedImage(
+            await _withMetadata(source, tiles.bytes, keepMetadata, backend),
+            format,
+            backend: backend,
+          );
+        }
+      }
+
       // Prefer our own ImageIO encoder for HEIC/JPEG: it avoids the plugin's
       // "opaque image with AlphaLast" warning and carries real camera metadata
       // (the plugin only did EXIF for JPEG), keeping the orientation TAG (which
@@ -533,6 +564,17 @@ abstract final class ImageEncoder {
         minHeight: maxHeight ?? 1000000,
         keepExif: keepMetadata && _supportsKeepExif(format),
       );
+      // HeifWriter keeps the stored values but writes no profile or EXIF:
+      // carry them, or a P3 source reads as sRGB.
+      if (out.isNotEmpty &&
+          format == DefaultFormat.heic &&
+          NativeImageEncoder.androidHeic) {
+        return EncodedImage(
+          await _withMetadata(source, out, keepMetadata, backend),
+          format,
+          backend: backend,
+        );
+      }
       return _result(out, format, backend);
     } on DarkLibPreservationFailure {
       rethrow;
@@ -572,6 +614,28 @@ abstract final class ImageEncoder {
       return null;
     }
     return EncodedImage(bytes, format, backend: backend);
+  }
+
+  /// [carryMetadata] onto a platform encoder's output; when DarkLib fails,
+  /// the output as it is, with a diagnostic (as for hardware AVIF).
+  static Future<Uint8List> _withMetadata(
+    Uint8List source,
+    Uint8List out,
+    bool keepMetadata,
+    MediaBackend backend,
+  ) async {
+    final carried = await carryMetadata(
+      source,
+      out,
+      keepMetadata: keepMetadata,
+    );
+    if (carried != null && carried.isNotEmpty) return carried;
+    MediaDiagnostics.record(
+      MediaBackend.darklib,
+      MediaOperation.transplant,
+      MediaDiagnosticCode.preservationUnverified,
+    );
+    return out;
   }
 
   /// The plugin can request JPEG EXIF copying. This is not a full metadata,

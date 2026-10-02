@@ -34,6 +34,13 @@ void main() {
     );
     // The size comes from the header (RUN-01: the giant threshold).
     expect((facts.width, facts.height, facts.giant), (16, 12, false));
+    // No EXIF: no orientation named. A JPEG's EXIF tag comes through
+    // (RUN-01: the tiled HEIC encoder writes it into the container).
+    expect(facts.orientation, 0);
+    final turned = img.Image(width: 16, height: 12);
+    turned.exif.imageIfd.orientation = 6;
+    final jpeg = Uint8List.fromList(img.encodeJpg(turned));
+    expect((await SourceInspector.inspect(jpeg)).orientation, 6);
     final result = await ImageEncoder.encode(
       source: png,
       target: DefaultFormat.webp,
@@ -365,5 +372,24 @@ void main() {
       await DarkLibCore.alphaKept(source: heic, output: png),
       AlphaKept.kept,
     );
+  });
+
+  // IMG-21: the display bridge names a HEIC's values with its profile's
+  // space, read here through the real FFI: Display P3's D50 colorants and
+  // the sRGB curve, from an ICC and from nclx alike; none without a profile.
+  test('a HEIC profile comes back as its colour space', () async {
+    for (final name in ['libheif_p3_icc.heic', 'libheif_p3_nclx.heic']) {
+      final space = await DarkLibCore.profileSpace(
+        await File('native/darklib/tests/fixtures/$name').readAsBytes(),
+      );
+      expect(space, isNotNull, reason: name);
+      expect(space!.toXyzD50[0], closeTo(0.5151, 1e-3));
+      expect(space.toXyzD50[4], closeTo(0.6922, 1e-3));
+      expect(space.transfer[6], closeTo(2.4, 1e-3));
+    }
+    final plain = Uint8List.fromList(
+      img.encodePng(img.Image(width: 2, height: 2)),
+    );
+    expect(await DarkLibCore.profileSpace(plain), isNull);
   });
 }

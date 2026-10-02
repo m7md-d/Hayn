@@ -188,10 +188,15 @@ void main() {
       final opaque = Uint8List.fromList(
         img.encodePng(img.Image(width: 2, height: 2, numChannels: 3)),
       );
+      // Really transparent: a host DarkLib, when built, judges the source's
+      // pixels too, not only the facts.
+      final translucent = img.Image(width: 2, height: 2, numChannels: 4);
+      img.fill(translucent, color: img.ColorRgba8(80, 120, 160, 64));
+      final source = Uint8List.fromList(img.encodePng(translucent));
       messenger.setMockMethodCallHandler(channel, (_) async => opaque);
       await expectLater(
         ImageEncoder.encode(
-          source: opaque,
+          source: source,
           target: DefaultFormat.png,
           quality: 80,
           facts: const SourceFacts.sdr(alpha: true),

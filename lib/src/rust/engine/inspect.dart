@@ -16,12 +16,18 @@ class Facts {
   final int width;
   final int height;
 
+  /// EXIF-style orientation (1..=8) that turns the stored pixels upright:
+  /// `irot`/`imir` for HEIF/AVIF (their EXIF tag is not what readers
+  /// apply), the EXIF tag otherwise. 0 when the file names none (upright).
+  final int orientation;
+
   const Facts({
     required this.transfer,
     required this.gainMap,
     required this.alpha,
     required this.width,
     required this.height,
+    required this.orientation,
   });
 
   @override
@@ -30,7 +36,8 @@ class Facts {
       gainMap.hashCode ^
       alpha.hashCode ^
       width.hashCode ^
-      height.hashCode;
+      height.hashCode ^
+      orientation.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -41,7 +48,8 @@ class Facts {
           gainMap == other.gainMap &&
           alpha == other.alpha &&
           width == other.width &&
-          height == other.height;
+          height == other.height &&
+          orientation == other.orientation;
 }
 
 enum Presence { unknown, absent, present }

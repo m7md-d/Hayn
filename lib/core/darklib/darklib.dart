@@ -13,6 +13,7 @@ import '../../src/rust/frb_generated.dart';
 
 export '../../src/rust/engine/codec.dart' show HdrOutcome, Transcoded;
 export '../../src/rust/engine/codec/heif_alpha.dart' show AlphaStream;
+export '../../src/rust/api/inspect.dart' show ProfileSpace;
 export '../../src/rust/engine/inspect.dart' show Facts, Presence, Transfer;
 export '../../src/rust/engine/verify.dart' show AlphaKept;
 
@@ -168,6 +169,15 @@ abstract final class DarkLibCore {
     MediaOperation.probe,
     () => rust_inspect.inspectImage(bytes: bytes),
   );
+
+  /// The colour profile of [bytes] as an RGB space (D50 matrix and transfer
+  /// for Android's `ColorSpace.Rgb`), from an ICC, `nclx` or `cICP`. Null
+  /// without a matrix/TRC profile, or when DarkLib is unavailable (IMG-21).
+  static Future<rust_inspect.ProfileSpace?> profileSpace(Uint8List bytes) =>
+      _call<rust_inspect.ProfileSpace?>(
+        MediaOperation.probe,
+        () => rust_inspect.profileSpace(bytes: bytes),
+      );
 
   /// Whether [output] keeps the transparency of [source], from decoded alpha
   /// values: a channel whose samples are all opaque is not transparency

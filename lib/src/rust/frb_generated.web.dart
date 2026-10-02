@@ -45,7 +45,13 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   AlphaStream dco_decode_box_autoadd_alpha_stream(dynamic raw);
 
   @protected
+  ProfileSpace dco_decode_box_autoadd_profile_space(dynamic raw);
+
+  @protected
   CodecFormat dco_decode_codec_format(dynamic raw);
+
+  @protected
+  double dco_decode_f_32(dynamic raw);
 
   @protected
   Facts dco_decode_facts(dynamic raw);
@@ -63,6 +69,9 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   ImageFormat dco_decode_image_format(dynamic raw);
 
   @protected
+  Float32List dco_decode_list_prim_f_32_strict(dynamic raw);
+
+  @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
 
   @protected
@@ -75,7 +84,13 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   AlphaStream? dco_decode_opt_box_autoadd_alpha_stream(dynamic raw);
 
   @protected
+  ProfileSpace? dco_decode_opt_box_autoadd_profile_space(dynamic raw);
+
+  @protected
   Presence dco_decode_presence(dynamic raw);
+
+  @protected
+  ProfileSpace dco_decode_profile_space(dynamic raw);
 
   @protected
   Transcoded dco_decode_transcoded(dynamic raw);
@@ -111,7 +126,15 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   AlphaStream sse_decode_box_autoadd_alpha_stream(SseDeserializer deserializer);
 
   @protected
+  ProfileSpace sse_decode_box_autoadd_profile_space(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CodecFormat sse_decode_codec_format(SseDeserializer deserializer);
+
+  @protected
+  double sse_decode_f_32(SseDeserializer deserializer);
 
   @protected
   Facts sse_decode_facts(SseDeserializer deserializer);
@@ -129,6 +152,9 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   ImageFormat sse_decode_image_format(SseDeserializer deserializer);
 
   @protected
+  Float32List sse_decode_list_prim_f_32_strict(SseDeserializer deserializer);
+
+  @protected
   List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer);
 
   @protected
@@ -143,7 +169,15 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   );
 
   @protected
+  ProfileSpace? sse_decode_opt_box_autoadd_profile_space(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   Presence sse_decode_presence(SseDeserializer deserializer);
+
+  @protected
+  ProfileSpace sse_decode_profile_space(SseDeserializer deserializer);
 
   @protected
   Transcoded sse_decode_transcoded(SseDeserializer deserializer);
@@ -182,7 +216,16 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_profile_space(
+    ProfileSpace self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_codec_format(CodecFormat self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_f_32(double self, SseSerializer serializer);
 
   @protected
   void sse_encode_facts(Facts self, SseSerializer serializer);
@@ -198,6 +241,12 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
 
   @protected
   void sse_encode_image_format(ImageFormat self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_prim_f_32_strict(
+    Float32List self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_list_prim_u_8_loose(List<int> self, SseSerializer serializer);
@@ -221,7 +270,16 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_profile_space(
+    ProfileSpace? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_presence(Presence self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_profile_space(ProfileSpace self, SseSerializer serializer);
 
   @protected
   void sse_encode_transcoded(Transcoded self, SseSerializer serializer);

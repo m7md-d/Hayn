@@ -11,3 +11,30 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 /// gain map is present. Unreadable containers answer `Unknown`.
 Future<Facts> inspectImage({required List<int> bytes}) =>
     DarkLib.instance.api.crateApiInspectInspectImage(bytes: bytes);
+
+Future<ProfileSpace?> profileSpace({required List<int> bytes}) =>
+    DarkLib.instance.api.crateApiInspectProfileSpace(bytes: bytes);
+
+/// The source's colour profile as an RGB space (D50 RGB→XYZ, column-major,
+/// and the transfer `[a, b, c, d, e, f, g]` of Android's
+/// `ColorSpace.Rgb.TransferParameters`): an embedded ICC, or one built from
+/// HEIF/AVIF `nclx` or PNG `cICP`. `None` without a profile, or when it is
+/// not a matrix/TRC one. Android's HEIF decoder ignores a HEIC's profile
+/// (Hayn IMG-21), so the display bridge names the pixels with this.
+class ProfileSpace {
+  final Float32List toXyzD50;
+  final Float32List transfer;
+
+  const ProfileSpace({required this.toXyzD50, required this.transfer});
+
+  @override
+  int get hashCode => toXyzD50.hashCode ^ transfer.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ProfileSpace &&
+          runtimeType == other.runtimeType &&
+          toXyzD50 == other.toXyzD50 &&
+          transfer == other.transfer;
+}

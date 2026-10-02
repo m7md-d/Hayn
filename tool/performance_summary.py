@@ -68,7 +68,7 @@ for name in ("library.mount", "library.scroll", "viewer", "navigation"):
     for key, value in section.items():
         if isinstance(value, dict) and "frames" in value:
             frames(key, value)
-        elif key.endswith("Ms") or key in ("libraryItems", "firstPageItems", "flingDistancePx", "notSharpWithin3s", "notSharpPages"):
+        elif key.endswith("Ms") or key in ("libraryItems", "firstPageItems", "flingDistancePx", "notSharpWithin3s", "notSharpPages", "videoSwipes"):
             print(f"  {key:<24} {value}")
     for line in section.get("overBudget", []):
         print(f"  OVER BUDGET: {line}")

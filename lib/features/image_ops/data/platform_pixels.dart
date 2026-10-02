@@ -32,7 +32,7 @@ abstract final class PlatformPixels {
       keepMetadata: false,
       keepOriginalTime: true,
       maxEdge: maxEdge,
-      srgb: true, // Flutter shows the pixels as sRGB
+      colours: BakeColours.srgb, // Flutter shows the pixels as sRGB
     );
     return png ?? bytes;
   }

@@ -305,15 +305,16 @@ void main() {
     var dx = -300.0;
     final sharp = <int>[];
     var blurry = 0;
-    // Why a swipe missed the sharp image: the page type and the long edge
-    // shown after 3 s. Numbers only; nothing about the photo itself.
+    // Why a swipe missed the sharp image: the long edge shown after 3 s.
+    // Numbers only; nothing about the photo itself.
     final missed = <String>[];
+    var videoSwipes = 0;
     // The mute control lives in the app bar, on video pages only.
     var videoPages = 0;
     var muteShown = 0;
     var muteOnPhoto = 0;
     r['swipes'] = await _frames(() async {
-      for (var i = 0; i < 14 && sharp.length + blurry < 10; i++) {
+      for (var i = 0; i < 20 && sharp.length + blurry < 10; i++) {
         final from = pager.page!.round();
         // Tilted like a thumb, alternating up and down.
         await tester.fling(
@@ -329,21 +330,23 @@ void main() {
           continue;
         }
         if (to < from) dx = -dx; // went backwards; next swipes go forward
-        try {
-          await _waitFor(
-            tester,
-            () =>
-                (pager.page! - to).abs() < .5 &&
-                _centreImageEdge(tester) >= _sharpEdge,
-            timeout: const Duration(seconds: 3),
-          );
-          sharp.add(_ms(released.elapsed));
-        } on TimeoutException {
-          blurry++;
-          final video = _library(tester).entries[to].isVideo;
-          missed.add(
-            '${video ? 'video' : 'photo'}:${_centreImageEdge(tester)}px',
-          );
+        // A video page shows a player, never a 1080 px image: no sharp time.
+        if (_library(tester).entries[to].isVideo) {
+          videoSwipes++;
+        } else {
+          try {
+            await _waitFor(
+              tester,
+              () =>
+                  (pager.page! - to).abs() < .5 &&
+                  _centreImageEdge(tester) >= _sharpEdge,
+              timeout: const Duration(seconds: 3),
+            );
+            sharp.add(_ms(released.elapsed));
+          } on TimeoutException {
+            blurry++;
+            missed.add('photo:${_centreImageEdge(tester)}px');
+          }
         }
         await _idle(tester, pager.position);
         final hasMute = _has(
@@ -373,6 +376,7 @@ void main() {
     r['sharpAfterSwipeMs'] = _stats(sharp);
     r['notSharpWithin3s'] = blurry;
     r['notSharpPages'] = missed;
+    r['videoSwipes'] = videoSwipes;
     if (sharp.isNotEmpty) {
       r['sharpAfterSwipeP90Ms'] = _percentile(sharp, .9);
       _check(r, 'sharpAfterSwipeP90Ms', _budget.sharpAfterSwipeMs);

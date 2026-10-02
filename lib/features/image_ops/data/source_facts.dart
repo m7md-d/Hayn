@@ -16,12 +16,15 @@ class SourceFacts {
     required this.gainMap,
     this.width,
     this.height,
+    this.orientation = 0,
   });
 
   /// Pixels this app produced itself in SDR (crop output, an SDR rendition).
+  /// They are upright: a rendition bakes the source's orientation in.
   const SourceFacts.sdr({required this.alpha, this.width, this.height})
     : directHdr = false,
-      gainMap = false;
+      gainMap = false,
+      orientation = 0;
 
   /// Transparency present (true), confirmed absent (false) or unknown (null).
   final bool? alpha;
@@ -35,6 +38,10 @@ class SourceFacts {
   /// Stored size from the header, before orientation; null when unknown.
   final int? width;
   final int? height;
+
+  /// EXIF-style code (1–8) that turns the stored pixels upright, from
+  /// `irot`/`imir` in HEIF/AVIF or the EXIF tag; 0 when the file names none.
+  final int orientation;
 
   bool get hasHdr => directHdr == true || gainMap == true;
 
@@ -54,6 +61,7 @@ abstract final class SourceInspector {
       alpha: alpha,
       width: (container?.width ?? 0) > 0 ? container!.width : null,
       height: (container?.height ?? 0) > 0 ? container!.height : null,
+      orientation: container?.orientation ?? 0,
       directHdr: _merge(switch (container?.transfer) {
         Transfer.pq || Transfer.hlg => true,
         Transfer.noHdrSignal => false,

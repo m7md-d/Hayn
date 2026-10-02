@@ -145,3 +145,26 @@ fn inspect_reports_the_header_size() {
     let unknown = inspect(b"not an image at all");
     assert_eq!((unknown.width, unknown.height), (0, 0));
 }
+
+/// The orientation the stored pixels need, as an EXIF code: `irot`/`imir`
+/// for HEIF/AVIF, the EXIF tag otherwise, 0 when the file names none. The
+/// tiled HEIC encoder (RUN-01) reads stored pixels and writes this back.
+#[test]
+fn inspect_reports_the_orientation() {
+    use darklib::engine::inspect::inspect;
+    use darklib::engine::metadata::isobmff;
+    let rotated = include_bytes!("fixtures/abc_color_irot_alpha_irot.avif");
+    let (angle, mirror) = isobmff::read_orientation(rotated).unwrap();
+    assert_eq!(
+        inspect(rotated).orientation,
+        isobmff::exif_orientation(angle, mirror)
+    );
+    assert_ne!(inspect(rotated).orientation, 1);
+    // Apple's JPEG names its orientation in EXIF.
+    let jpeg = include_bytes!("fixtures/apple_gainmap_new.jpg");
+    let tag = darklib::engine::metadata::extract(jpeg).orientation;
+    assert!((1..=8).contains(&tag));
+    assert_eq!(inspect(jpeg).orientation as u16, tag);
+    assert_eq!(inspect(&jpeg_header(64, 48)).orientation, 0);
+    assert_eq!(inspect(b"not an image at all").orientation, 0);
+}

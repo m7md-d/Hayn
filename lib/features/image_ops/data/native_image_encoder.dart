@@ -81,9 +81,62 @@ abstract final class NativeImageEncoder {
     }
   }
 
+  /// Android's HEIC from bands and 512 tiles (RUN-01): memory bounded by a
+  /// band whatever the size, where the plugin's HeifWriter needs the whole
+  /// image in one graphics buffer. Used for giant images; smaller ones take
+  /// HeifWriter, which is faster (docs/18-PERFORMANCE.md). The pixels
+  /// stay as stored and [orientation] (an EXIF code, 0 = none) goes into the
+  /// container. No metadata, no profile and no alpha are written: the caller
+  /// carries the first two and sends only opaque, SDR sources. Null when
+  /// unavailable or failed, with a diagnostic.
+  static Future<HeicTilesOutput?> encodeHeicTiles({
+    required Uint8List source,
+    required int quality,
+    required int orientation,
+  }) async {
+    try {
+      final res = await channel.invokeMapMethod<String, Object?>(
+        'encodeHeicTiles',
+        {'bytes': source, 'quality': quality, 'orientation': orientation},
+      );
+      final bytes = await _readTemp(res?['path'] as String?);
+      if (bytes == null || bytes.isEmpty) {
+        MediaDiagnostics.record(
+          MediaBackend.androidHeic,
+          MediaOperation.encode,
+          MediaDiagnosticCode.emptyOutput,
+        );
+        return null;
+      }
+      return HeicTilesOutput(
+        bytes,
+        codec: res!['codec'] as String? ?? '',
+        rateMode: res['rateMode'] as String? ?? '',
+      );
+    } on MissingPluginException {
+      MediaDiagnostics.record(
+        MediaBackend.androidHeic,
+        MediaOperation.encode,
+        MediaDiagnosticCode.unavailable,
+      );
+      return null;
+    } catch (_) {
+      MediaDiagnostics.record(
+        MediaBackend.androidHeic,
+        MediaOperation.encode,
+        MediaDiagnosticCode.exception,
+      );
+      return null;
+    }
+  }
+
   /// Android selects the ImageDecoder bridge; tests may flip it.
   @visibleForTesting
   static bool onAndroid = Platform.isAndroid;
+
+  /// Android: HEIC comes from [encodeHeicTiles], or from the plugin's
+  /// HeifWriter, neither writing a profile or EXIF.
+  static bool get androidHeic => onAndroid;
 
   /// The engine behind [bakeUpright] on this platform.
   static MediaBackend get bakeBackend =>
@@ -98,11 +151,16 @@ abstract final class NativeImageEncoder {
   /// (the long edge stays at least maxEdge); iOS ignores it.
   ///
   /// Android specifics: a transparent HEIC gets its alpha back through
-  /// [HeifAlpha] (IMG-15). The pixels keep the source's colour space unless
-  /// [srgb] asks for sRGB (what Flutter shows or crops); then DarkLib carries
-  /// the source's profile onto the PNG, and with [keepMetadata] the rest of
-  /// its metadata, the EXIF orientation set upright since the pixels already
-  /// are. When that fails the result is null. The PNG arrives as a file
+  /// [HeifAlpha] (IMG-15), and [colours] decides what the values mean:
+  /// [BakeColours.keep] keeps the source's colour space, and DarkLib carries
+  /// the source's profile onto the PNG, with [keepMetadata] the rest of its
+  /// metadata, the EXIF orientation set upright since the pixels already are
+  /// (null when that fails). [BakeColours.srgb] converts to sRGB for display,
+  /// a HEIC included: Android's decoder ignores its profile (IMG-21), so the
+  /// profile's space from DarkLib goes with the call and Android names the
+  /// values with it before converting. [BakeColours.raw] returns the values
+  /// as the decoder reads them, untagged, for a caller that carries the
+  /// source's profile itself (the crop). The PNG arrives as a file
   /// (PERF-02), so a large one never sits whole on the Java heap.
   static Future<Uint8List?> bakeUpright({
     required Uint8List source,
@@ -110,19 +168,25 @@ abstract final class NativeImageEncoder {
     required bool keepOriginalTime,
     bool toSdr = false,
     int maxEdge = 0,
-    bool srgb = false,
+    BakeColours colours = BakeColours.keep,
   }) async {
     final backend = bakeBackend;
     try {
+      final android = backend == MediaBackend.androidDecoder;
+      final space = android && colours == BakeColours.srgb
+          ? await DarkLibCore.profileSpace(source)
+          : null;
       final args = {
         'bytes': source,
         'keepMetadata': keepMetadata,
         'keepOriginalTime': keepOriginalTime,
         'toSdr': toSdr,
         'maxEdge': maxEdge,
-        'srgb': srgb,
+        'colours': colours.name,
+        if (space != null)
+          'space': Float32List.fromList([...space.toXyzD50, ...space.transfer]),
       };
-      final res = backend == MediaBackend.androidDecoder
+      final res = android
           ? await _readTemp(
               await channel.invokeMethod<String>('bakeUprightFile', args),
             )
@@ -135,10 +199,11 @@ abstract final class NativeImageEncoder {
         );
         return null;
       }
-      if (backend != MediaBackend.androidDecoder) return res;
+      if (!android) return res;
       final upright = await HeifAlpha.restore(source, res);
-      // sRGB pixels need no profile; the source's would mislabel them.
-      if (srgb) return upright;
+      // sRGB pixels need no profile, the source's would mislabel them; raw
+      // ones get it from the caller.
+      if (colours != BakeColours.keep) return upright;
       // Kept pixels are in the source's colour space: its profile always
       // goes with them (IMG-08/18), the rest of its metadata on request.
       final carried = await DarkLibCore.transplantMetadata(
@@ -172,4 +237,32 @@ abstract final class NativeImageEncoder {
       return null;
     }
   }
+}
+
+/// What the values of [NativeImageEncoder.bakeUpright]'s PNG mean (Android;
+/// iOS returns ImageIO's rendition whatever is asked).
+enum BakeColours {
+  /// The source's colour space, its profile carried onto the PNG.
+  keep,
+
+  /// Converted to sRGB, untagged: what Flutter shows.
+  srgb,
+
+  /// As the decoder reads them, untagged; the caller names them.
+  raw,
+}
+
+/// What [NativeImageEncoder.encodeHeicTiles] made, and with which encoder
+/// and rate mode (recorded with measurements, rule 6).
+class HeicTilesOutput {
+  const HeicTilesOutput(
+    this.bytes, {
+    required this.codec,
+    required this.rateMode,
+  });
+  final Uint8List bytes;
+  final String codec;
+
+  /// "qp" (a fixed QP per tile, Android 12+), "cq" or "vbr".
+  final String rateMode;
 }

@@ -140,6 +140,96 @@ fn d50_colorants(prim: [[f64; 2]; 3], white: [f64; 2]) -> Option<M3> {
     Some(mul_mm(&adapt_to_d50(white)?, &rgb_to_xyz(prim, white)?))
 }
 
+// ── ICC reading: a matrix/TRC profile as a colour space ──────────────────────
+
+/// An RGB space read from a matrix/TRC ICC profile, in the form Android's
+/// `ColorSpace.Rgb(name, toXYZ, TransferParameters)` takes: the D50-adapted
+/// RGB→XYZ matrix column-major (the `rXYZ`, `gXYZ`, `bXYZ` colorants), and
+/// the transfer `[a, b, c, d, e, f, g]` with Y = (aX + b)^g + e for X ≥ d,
+/// Y = cX + f below. Android's HEIF decoder ignores a HEIC's profile (Hayn
+/// IMG-21); the platform side names the decoded pixels with this instead.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RgbSpace {
+    pub to_xyz_d50: [f32; 9],
+    pub transfer: [f32; 7],
+}
+
+/// [`RgbSpace`] of a matrix/TRC RGB profile with one parametric (or gamma)
+/// curve for all three channels. `None` for anything else — a LUT (`A2B*`)
+/// profile, a sampled curve, channels with different curves — or a
+/// malformed one: the caller keeps the decoder's own reading.
+pub fn rgb_space(icc: &[u8]) -> Option<RgbSpace> {
+    if icc.get(16..20)? != b"RGB " || icc.get(20..24)? != b"XYZ " {
+        return None;
+    }
+    let count = u32::from_be_bytes(icc.get(128..132)?.try_into().ok()?) as usize;
+    if count > 1024 {
+        return None;
+    }
+    let mut tags = Vec::with_capacity(count);
+    for i in 0..count {
+        let e = icc.get(132 + 12 * i..144 + 12 * i)?;
+        let off = u32::from_be_bytes(e[4..8].try_into().ok()?) as usize;
+        let len = u32::from_be_bytes(e[8..12].try_into().ok()?) as usize;
+        tags.push((&e[0..4], icc.get(off..off.checked_add(len)?)?));
+    }
+    let tag = |sig: &[u8]| tags.iter().find(|(s, _)| *s == sig).map(|(_, d)| *d);
+    if tag(b"A2B0").is_some() || tag(b"A2B1").is_some() {
+        return None; // a LUT decides, not the matrix
+    }
+    let fixed = |d: &[u8], at: usize| -> Option<f32> {
+        Some(i32::from_be_bytes(d.get(at..at + 4)?.try_into().ok()?) as f32 / 65536.0)
+    };
+    let mut m = [0f32; 9];
+    for (col, sig) in [b"rXYZ", b"gXYZ", b"bXYZ"].iter().enumerate() {
+        let d = tag(*sig)?;
+        if d.get(0..4)? != b"XYZ " {
+            return None;
+        }
+        for row in 0..3 {
+            m[col * 3 + row] = fixed(d, 8 + 4 * row)?;
+        }
+    }
+    let trc = tag(b"rTRC")?;
+    if tag(b"gTRC")? != trc || tag(b"bTRC")? != trc {
+        return None;
+    }
+    let transfer = match trc.get(0..4)? {
+        b"curv" => match u32::from_be_bytes(trc.get(8..12)?.try_into().ok()?) {
+            0 => [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+            1 => {
+                let g = u16::from_be_bytes(trc.get(12..14)?.try_into().ok()?) as f32 / 256.0;
+                [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, g]
+            }
+            _ => return None, // sampled curve
+        },
+        b"para" => {
+            let kind = u16::from_be_bytes(trc.get(8..10)?.try_into().ok()?);
+            let p = |i: usize| fixed(trc, 12 + 4 * i);
+            match kind {
+                0 => [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, p(0)?],
+                // Y = (aX + b)^g from X = -b/a, else 0 (or + c above and below).
+                1 | 2 => {
+                    let (g, a, b) = (p(0)?, p(1)?, p(2)?);
+                    if a == 0.0 {
+                        return None;
+                    }
+                    let c = if kind == 2 { p(3)? } else { 0.0 };
+                    [a, b, 0.0, -b / a, c, c, g]
+                }
+                3 => [p(1)?, p(2)?, p(3)?, p(4)?, 0.0, 0.0, p(0)?],
+                4 => [p(1)?, p(2)?, p(3)?, p(4)?, p(5)?, p(6)?, p(0)?],
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+    Some(RgbSpace {
+        to_xyz_d50: m,
+        transfer,
+    })
+}
+
 // ── ICC serialisation (matrix/TRC display profile, v4) ───────────────────────
 
 /// Encode an s15Fixed16 number (signed 16.16 fixed point), big-endian.
@@ -279,6 +369,44 @@ fn build_icc(colorants: &M3, chad: &M3) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Apple's Display P3 profile (in the Apple JPEG fixture) read back as
+    /// its published D50 colorants and the sRGB curve.
+    #[test]
+    fn apple_display_p3_reads_as_its_colorants_and_curve() {
+        let jpeg = include_bytes!("../../tests/fixtures/apple_gainmap_new.jpg");
+        let icc = crate::engine::metadata::extract(jpeg).icc.expect("ICC");
+        let s = rgb_space(&icc).expect("matrix/TRC");
+        let want = [
+            0.51512, 0.2412, -0.00105, 0.29198, 0.69225, 0.04189, 0.1571, 0.06657, 0.78407,
+        ];
+        for (got, want) in s.to_xyz_d50.iter().zip(want) {
+            assert!((got - want).abs() < 1e-4, "{got} vs {want}");
+        }
+        // sRGB curve: a = 1/1.055, b = 0.055/1.055, c = 1/12.92, d = 0.04045.
+        let t = s.transfer;
+        assert!((t[0] - 0.94786).abs() < 1e-4 && (t[1] - 0.05214).abs() < 1e-4);
+        assert!((t[2] - 0.07739).abs() < 1e-4 && (t[3] - 0.04045).abs() < 1e-4);
+        assert!(t[4] == 0.0 && t[5] == 0.0 && (t[6] - 2.4).abs() < 1e-3);
+    }
+
+    #[test]
+    fn synthesized_profiles_read_back_and_others_do_not() {
+        let p3 = synthesize_from_cicp(12, 13).unwrap();
+        let s = rgb_space(&p3).unwrap();
+        let (prim, white) = primaries_chroma(12).unwrap();
+        let c = d50_colorants(prim, white).unwrap();
+        for (i, got) in s.to_xyz_d50.iter().enumerate() {
+            let (col, row) = (i / 3, i % 3);
+            assert!((*got as f64 - c[row][col]).abs() < 1e-4);
+        }
+        assert!(rgb_space(b"not a profile").is_none());
+        // A LUT profile decides through A2B0: refused.
+        let mut lut = p3.clone();
+        let at = 132; // first tag entry: rename it A2B0
+        lut[at..at + 4].copy_from_slice(b"A2B0");
+        assert!(rgb_space(&lut).is_none());
+    }
 
     /// The decisive correctness check: the sRGB colorants this code DERIVES must
     /// match the published sRGB D50-adapted (Bradford) constants. If the matrix +

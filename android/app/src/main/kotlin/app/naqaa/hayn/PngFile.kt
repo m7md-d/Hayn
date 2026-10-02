@@ -39,16 +39,22 @@ object PngFile {
         else -> null
     }
 
-    fun write(bitmap: Bitmap, file: File) {
+    /// [tagged] = false writes no cICP: the values as they are, for a caller
+    /// that names them itself (the crop's raw mode).
+    fun write(bitmap: Bitmap, file: File, tagged: Boolean = true) {
         require(bitmap.config == Bitmap.Config.ARGB_8888)
-        val cicp = requireNotNull(cicpOf(bitmap.colorSpace)) { "unsupported colour space" }
+        val cicp = if (tagged) {
+            requireNotNull(cicpOf(bitmap.colorSpace)) { "unsupported colour space" }
+        } else {
+            null
+        }
         val w = bitmap.width
         val h = bitmap.height
         DataOutputStream(BufferedOutputStream(FileOutputStream(file), 1 shl 16)).use { out ->
             out.write(byteArrayOf(-119, 80, 78, 71, 13, 10, 26, 10))
             chunk(out, "IHDR", ByteBuffer.allocate(13).putInt(w).putInt(h)
                 .put(8).put(6).put(0).put(0).put(0).array())
-            chunk(out, "cICP", cicp)
+            if (cicp != null) chunk(out, "cICP", cicp)
             val deflater = Deflater(Deflater.BEST_SPEED)
             try {
                 DeflaterOutputStream(IdatStream(out), deflater, 1 shl 16).use { z ->

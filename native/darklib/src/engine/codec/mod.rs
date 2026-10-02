@@ -830,6 +830,31 @@ mod tests {
         assert_eq!((d.width, d.height), (1, 2));
     }
 
+    /// `irot`/`imir` named as an EXIF code turn pixels exactly as the `image`
+    /// crate turns them for that code (RUN-01: the tiled HEIC encoder hands
+    /// the code to Android).
+    #[test]
+    fn heif_transforms_match_their_exif_codes() {
+        use crate::engine::metadata::isobmff::exif_orientation;
+        let px: Vec<u8> = (0..6u8).flat_map(|i| [i, 0, 0, 255]).collect();
+        for angle in 0..4 {
+            for mirror in [None, Some(0), Some(1)] {
+                let (w, h, heif) =
+                    avif_dav1d::apply_orientation(3, 2, px.clone(), angle, mirror, 4);
+                let code = exif_orientation(angle, mirror);
+                let mut img =
+                    DynamicImage::ImageRgba8(image::RgbaImage::from_raw(3, 2, px.clone()).unwrap());
+                img.apply_orientation(image::metadata::Orientation::from_exif(code).unwrap());
+                assert_eq!((w, h), (img.width(), img.height()), "{angle} {mirror:?}");
+                assert_eq!(
+                    heif,
+                    img.to_rgba8().into_raw(),
+                    "{angle} {mirror:?} -> {code}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn garbage_fails_cleanly() {
         assert!(decode(&[1, 2, 3, 4, 5, 6, 7, 8], None).is_err());

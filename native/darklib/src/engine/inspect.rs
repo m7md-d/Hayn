@@ -58,6 +58,10 @@ pub struct Facts {
     /// grid canvas), before orientation; 0 when the header does not say.
     pub width: u32,
     pub height: u32,
+    /// EXIF-style orientation (1..=8) that turns the stored pixels upright:
+    /// `irot`/`imir` for HEIF/AVIF (their EXIF tag is not what readers
+    /// apply), the EXIF tag otherwise. 0 when the file names none (upright).
+    pub orientation: u8,
 }
 
 const UNKNOWN: Facts = Facts {
@@ -66,6 +70,7 @@ const UNKNOWN: Facts = Facts {
     alpha: Presence::Unknown,
     width: 0,
     height: 0,
+    orientation: 0,
 };
 
 impl Presence {
@@ -83,6 +88,17 @@ pub fn inspect(b: &[u8]) -> Facts {
     if let Some((w, h)) = crate::engine::codec::header_dimensions(b) {
         (facts.width, facts.height) = (w, h);
     }
+    facts.orientation = match detect(b) {
+        ImageFormat::Avif | ImageFormat::Heic => {
+            isobmff::read_orientation(b).map_or(0, |(a, m)| isobmff::exif_orientation(a, m))
+        }
+        ImageFormat::Unknown => 0,
+        // `extract` answers 1 without EXIF too; only a tag counts here.
+        _ => match crate::engine::metadata::extract(b) {
+            c if c.exif.is_some() && (1..=8).contains(&c.orientation) => c.orientation as u8,
+            _ => 0,
+        },
+    };
     facts
 }
 
@@ -98,6 +114,7 @@ fn facts_of(b: &[u8]) -> Facts {
             alpha: Presence::of(webp_alpha(b)),
             width: 0,
             height: 0,
+            orientation: 0,
         },
         _ => UNKNOWN,
     }
@@ -115,6 +132,7 @@ fn isobmff_facts(b: &[u8]) -> Facts {
         alpha: Presence::of(isobmff::alpha_presence(b)),
         width: 0,
         height: 0,
+        orientation: 0,
     }
 }
 
@@ -183,6 +201,7 @@ fn png_facts(b: &[u8]) -> Facts {
         alpha: Presence::of(alpha),
         width: 0,
         height: 0,
+        orientation: 0,
     }
 }
 
@@ -245,6 +264,7 @@ fn jpeg_facts(b: &[u8]) -> Facts {
         alpha: Presence::Absent,
         width: 0,
         height: 0,
+        orientation: 0,
     }
 }
 

@@ -39,6 +39,7 @@ class _Api extends Fake implements DarkLibApi {
     alpha: Presence.unknown,
     width: 0,
     height: 0,
+    orientation: 0,
   );
 
   @override
@@ -163,6 +164,7 @@ void main() {
         alpha: Presence.unknown,
         width: 0,
         height: 0,
+        orientation: 0,
       );
   });
 
@@ -290,6 +292,7 @@ void main() {
       alpha: Presence.unknown,
       width: 0,
       height: 0,
+      orientation: 0,
     );
     final kept = await ImageEncoder.encode(
       source: _heic,
@@ -307,6 +310,7 @@ void main() {
       alpha: Presence.unknown,
       width: 0,
       height: 0,
+      orientation: 0,
     );
     final private = await ImageEncoder.encode(
       source: _heic,
@@ -373,6 +377,7 @@ void main() {
         alpha: Presence.unknown,
         width: 0,
         height: 0,
+        orientation: 0,
       );
       expect((await SourceInspector.inspect(_png)).directHdr, isTrue);
 
@@ -382,6 +387,7 @@ void main() {
         alpha: Presence.unknown,
         width: 0,
         height: 0,
+        orientation: 0,
       );
       native({'hdrTransfer': true, 'hasGainMap': true});
       final f = await SourceInspector.inspect(_png);
@@ -399,6 +405,7 @@ void main() {
         alpha: Presence.unknown,
         width: 0,
         height: 0,
+        orientation: 0,
       );
       final unknown = await SourceInspector.inspect(_png);
       expect((unknown.directHdr, unknown.gainMap), (null, null));
@@ -432,6 +439,7 @@ void main() {
           alpha: presence,
           width: 0,
           height: 0,
+          orientation: 0,
         );
         expect(await ImageProbe.hasAlpha(webp), want, reason: '$presence');
       }
@@ -447,6 +455,7 @@ void main() {
           alpha: Presence.present,
           width: 0,
           height: 0,
+          orientation: 0,
         );
         messenger.setMockMethodCallHandler(
           imageChannel,
@@ -498,6 +507,7 @@ void main() {
           alpha: Presence.present,
           width: 0,
           height: 0,
+          orientation: 0,
         );
         messenger.setMockMethodCallHandler(
           imageChannel,

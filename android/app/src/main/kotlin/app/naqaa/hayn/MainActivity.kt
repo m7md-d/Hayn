@@ -62,15 +62,41 @@ class MainActivity : FlutterActivity() {
                         val bytes = call.argument<ByteArray>("bytes")
                         val toSdr = call.argument<Boolean>("toSdr") ?: false
                         val maxEdge = call.argument<Int>("maxEdge") ?: 0
-                        val srgb = call.argument<Boolean>("srgb") ?: true
+                        val colours = call.argument<String>("colours") ?: "srgb"
+                        val space = call.argument<FloatArray>("space")
                         if (bytes == null) {
                             result.success(null)
                         } else {
                             decodeExecutor.execute {
                                 val out = PlatformDecoder.bakeUprightToFile(
-                                    bytes, toSdr, maxEdge, srgb, cacheDir,
+                                    bytes, toSdr, maxEdge, colours, space, cacheDir,
                                 )
                                 mainHandler.post { result.success(out) }
+                            }
+                        }
+                    }
+                    // HEIC from bands and tiles (RUN-01): a file path plus the
+                    // encoder and its rate mode, for the caller's records.
+                    "encodeHeicTiles" -> {
+                        val bytes = call.argument<ByteArray>("bytes")
+                        val quality = call.argument<Int>("quality") ?: 80
+                        val orientation = call.argument<Int>("orientation") ?: 0
+                        if (bytes == null) {
+                            result.success(null)
+                        } else {
+                            decodeExecutor.execute {
+                                val out = HeicTiles.encodeToFile(bytes, quality, orientation, cacheDir)
+                                mainHandler.post {
+                                    result.success(
+                                        out?.let {
+                                            mapOf(
+                                                "path" to it.path,
+                                                "codec" to it.codec,
+                                                "rateMode" to it.rateMode,
+                                            )
+                                        },
+                                    )
+                                }
                             }
                         }
                     }

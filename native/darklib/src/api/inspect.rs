@@ -9,3 +9,23 @@ use crate::engine::inspect::{self, Facts};
 pub fn inspect_image(bytes: Vec<u8>) -> Facts {
     inspect::inspect(&bytes)
 }
+
+/// The source's colour profile as an RGB space (D50 RGB→XYZ, column-major,
+/// and the transfer `[a, b, c, d, e, f, g]` of Android's
+/// `ColorSpace.Rgb.TransferParameters`): an embedded ICC, or one built from
+/// HEIF/AVIF `nclx` or PNG `cICP`. `None` without a profile, or when it is
+/// not a matrix/TRC one. Android's HEIF decoder ignores a HEIC's profile
+/// (Hayn IMG-21), so the display bridge names the pixels with this.
+pub struct ProfileSpace {
+    pub to_xyz_d50: Vec<f32>,
+    pub transfer: Vec<f32>,
+}
+
+pub fn profile_space(bytes: Vec<u8>) -> Option<ProfileSpace> {
+    let icc = crate::engine::metadata::extract(&bytes).icc?;
+    let s = crate::engine::color::rgb_space(&icc)?;
+    Some(ProfileSpace {
+        to_xyz_d50: s.to_xyz_d50.to_vec(),
+        transfer: s.transfer.to_vec(),
+    })
+}

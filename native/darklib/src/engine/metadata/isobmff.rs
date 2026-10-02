@@ -953,6 +953,25 @@ pub fn read_orientation(b: &[u8]) -> Option<(u8, Option<u8>)> {
     item_orientation(b, primary_item_id(b)?)
 }
 
+/// The EXIF orientation (1..=8) equal to rotating by `angle`×90°
+/// counter-clockwise, then mirroring (`irot` then `imir`, the HEIF order).
+pub fn exif_orientation(angle: u8, mirror: Option<u8>) -> u8 {
+    match (angle & 3, mirror) {
+        (0, None) => 1,
+        (0, Some(0)) => 4,
+        (0, Some(_)) => 2,
+        (1, None) => 8,
+        (1, Some(0)) => 5,
+        (1, Some(_)) => 7,
+        (2, None) => 3,
+        (2, Some(0)) => 2,
+        (2, Some(_)) => 4,
+        (3, None) => 6,
+        (3, Some(0)) => 7,
+        _ => 5, // (3, left↔right)
+    }
+}
+
 /// [`read_orientation`] for any item `id` (an alpha auxiliary carries its own).
 pub fn item_orientation(b: &[u8], primary: u32) -> Option<(u8, Option<u8>)> {
     let mc = meta_children(b)?;
@@ -1854,10 +1873,11 @@ fn build_iref(b: &[u8], existing: Option<Bx>, new_refs: &[(u32, u32)]) -> Option
     Some(wrap_box(b"iref", &payload))
 }
 
-/// `iprp` with an ICC `colr`/`prof` property appended to `ipco` and an `ipma`
-/// association linking it to the primary item. Existing properties keep their
-/// indices (the new one is appended). Single-`ipma` files only (the common case).
-fn build_iprp_add_icc(b: &[u8], iprp: Bx, primary: u32, icc: &[u8]) -> Option<Vec<u8>> {
+/// `iprp` with an ICC `colr`/`prof` property appended to `ipco` and `ipma`
+/// associations linking it to each of `targets`. Existing properties keep
+/// their indices (the new one is appended). Single-`ipma` files only (the
+/// common case).
+fn build_iprp_add_icc(b: &[u8], iprp: Bx, targets: &[u32], icc: &[u8]) -> Option<Vec<u8>> {
     let children = boxes_in(b, iprp.body, iprp.end)?;
     let ipco = *children.iter().find(|x| x.typ == *b"ipco")?;
     let (new_ipco, index) = build_ipco_add_colr(b, ipco, icc)?;
@@ -1865,7 +1885,7 @@ fn build_iprp_add_icc(b: &[u8], iprp: Bx, primary: u32, icc: &[u8]) -> Option<Ve
     for c in &children {
         match &c.typ {
             b"ipco" => payload.extend_from_slice(&new_ipco),
-            b"ipma" => payload.extend_from_slice(&build_ipma_add(b, *c, primary, index)?),
+            b"ipma" => payload.extend_from_slice(&build_ipma_add(b, *c, targets, index)?),
             _ => payload.extend_from_slice(b.get(c.start..c.end)?),
         }
     }
@@ -1886,9 +1906,10 @@ fn build_ipco_add_colr(b: &[u8], ipco: Bx, icc: &[u8]) -> Option<(Vec<u8>, u16)>
     Some((wrap_box(b"ipco", &payload), index as u16))
 }
 
-/// Append a non-essential association (`prop_index`) to `target`'s entry in
-/// `ipma`, copying every other entry verbatim. Bails if `target` has no entry.
-fn build_ipma_add(b: &[u8], ipma: Bx, target: u32, prop_index: u16) -> Option<Vec<u8>> {
+/// Append a non-essential association (`prop_index`) to the entry of each of
+/// `targets` in `ipma`, copying every other entry verbatim. Bails if one of
+/// them has no entry.
+fn build_ipma_add(b: &[u8], ipma: Bx, targets: &[u32], prop_index: u16) -> Option<Vec<u8>> {
     let p = ipma.body;
     let version = *b.get(p)?;
     let wide = *b.get(p + 3)? & 1 == 1; // flags bit 0 → 15-bit indices (2 bytes)
@@ -1900,7 +1921,7 @@ fn build_ipma_add(b: &[u8], ipma: Bx, target: u32, prop_index: u16) -> Option<Ve
     let entry_count = be_u32(b, q)?;
     q += 4;
     let mut entries = Vec::new();
-    let mut found = false;
+    let mut found = 0;
     for _ in 0..entry_count {
         let id = read_id(b, q, id_size)?;
         entries.extend_from_slice(b.get(q..q + id_size)?);
@@ -1910,11 +1931,11 @@ fn build_ipma_add(b: &[u8], ipma: Bx, target: u32, prop_index: u16) -> Option<Ve
         let bytes = assoc_count * if wide { 2 } else { 1 };
         let assoc = b.get(q..q + bytes)?;
         q += bytes;
-        if id == target {
+        if targets.contains(&id) {
             if assoc_count >= 0xFF {
                 return None; // can't widen the u8 association count
             }
-            found = true;
+            found += 1;
             entries.push((assoc_count + 1) as u8);
             entries.extend_from_slice(assoc);
             // essential bit clear (descriptive property): high bit stays 0.
@@ -1928,7 +1949,7 @@ fn build_ipma_add(b: &[u8], ipma: Bx, target: u32, prop_index: u16) -> Option<Ve
             entries.extend_from_slice(assoc);
         }
     }
-    if !found {
+    if found != targets.len() {
         return None;
     }
     let mut payload = b.get(p..p + 4)?.to_vec(); // version + flags
@@ -1947,11 +1968,10 @@ fn inject_inner(
     if top.iter().filter(|x| x.typ == *b"mdat").count() != 1 {
         return None;
     }
+    // Either order: MediaMuxer writes mdat before meta. The new mdat's start
+    // is computed from the output's own preceding boxes below.
     let meta = *top.iter().find(|x| x.typ == *b"meta")?;
     let mdat = *top.iter().find(|x| x.typ == *b"mdat")?;
-    if meta.start > mdat.start {
-        return None; // we assume meta precedes mdat (offsets point into mdat)
-    }
 
     let meta_children = boxes_in(b, meta.body + 4, meta.end)?;
     let iinf = *meta_children.iter().find(|x| x.typ == *b"iinf")?;
@@ -1964,17 +1984,21 @@ fn inject_inner(
     let loc = parse_iloc(b, iloc_box)?;
     let primary = parse_pitm(b, pitm)?;
 
-    // Supported subset (mirror strip_compact): fixed-size method-0 offsets only.
+    // Supported subset: fixed-size offsets; items in the file (method 0) or in
+    // `idat` (method 1: a grid descriptor, as MediaMuxer writes it). `idat`
+    // is copied verbatim and its offsets are relative to it, so method-1
+    // entries keep their values; only method-0 data moves.
     if !matches!(loc.offset_size, 4 | 8) || !matches!(loc.length_size, 4 | 8) {
         return None;
     }
     if loc.index_size != 0 {
         return None;
     }
+    let has_idat = meta_children.iter().any(|x| x.typ == *b"idat");
     if loc
         .items
         .iter()
-        .any(|it| it.method != 0 || it.data_ref != 0)
+        .any(|it| !(it.method == 0 || it.method == 1 && has_idat) || it.data_ref != 0)
     {
         return None;
     }
@@ -2022,7 +2046,18 @@ fn inject_inner(
         Some(build_iref(b, iref_box, &new_refs)?)
     };
     let new_iprp = match add_icc {
-        Some(profile) => Some(build_iprp_add_icc(b, iprp_box?, primary, profile)?),
+        Some(profile) => {
+            // A grid's tiles name their colours too: Android reads a grid's
+            // colour information from its first tile (AOSP ItemTable), and
+            // Apple associates the profile with every tile as well.
+            let mut targets = vec![primary];
+            if item_type(b, primary) == Some(*b"grid") {
+                targets.extend(dimg_targets(b, primary)?);
+            }
+            targets.sort_unstable();
+            targets.dedup();
+            Some(build_iprp_add_icc(b, iprp_box?, &targets, profile)?)
+        }
         None => None,
     };
 
@@ -2095,6 +2130,24 @@ fn inject_inner(
     let mut new_mdat = Vec::new();
     let mut new_locs: Vec<Loc> = Vec::with_capacity(loc.items.len() + new_payloads.len());
     for it in &loc.items {
+        if it.method == 1 {
+            new_locs.push(Loc {
+                id: it.id,
+                method: 1,
+                data_ref: 0,
+                base_offset: it.base_offset,
+                extents: it
+                    .extents
+                    .iter()
+                    .map(|e| Extent {
+                        offset: e.offset,
+                        length: e.length,
+                    })
+                    .collect(),
+                entry: (0, 0),
+            });
+            continue;
+        }
         let mut new_ext = Vec::with_capacity(it.extents.len());
         for e in &it.extents {
             let src_off = (it.base_offset + e.offset) as usize;
@@ -2199,17 +2252,9 @@ fn validate_inject(
     want_xmp: bool,
     want_icc: bool,
 ) -> Option<()> {
-    let top = boxes_in(out, 0, out.len())?;
-    let meta = *top.iter().find(|x| x.typ == *b"meta")?;
-    let mc = boxes_in(out, meta.body + 4, meta.end)?;
-    let iloc = *mc.iter().find(|x| x.typ == *b"iloc")?;
-    let out_loc = parse_iloc(out, iloc)?;
+    // Method 0 (moved into the new mdat) and method 1 (idat, kept in place).
     for src_item in &src_loc.items {
-        if src_item.method != 0 {
-            continue;
-        }
-        let out_item = out_loc.items.iter().find(|x| x.id == src_item.id)?;
-        if read_item(src, src_item)? != read_item(out, out_item)? {
+        if read_item_by_id(src, src_item.id)? != read_item_by_id(out, src_item.id)? {
             return None; // a pre-existing item's bytes changed — refuse
         }
     }

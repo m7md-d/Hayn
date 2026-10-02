@@ -8,6 +8,21 @@ the engine API may change between minor versions.
 ## [Unreleased]
 
 ### Added
+- **`color::rgb_space` and `api::inspect::profile_space`**: a matrix/TRC ICC
+  profile (embedded, or built from `nclx`/`cICP`) as an RGB space — the D50
+  RGB→XYZ matrix and the transfer in Android's `TransferParameters` form.
+  LUT profiles and sampled curves give `None`. Hayn's Android bridge names a
+  HEIC's values with it, since Android's decoder returns them unconverted.
+- **`Facts.orientation`** from `inspect`: the EXIF code (1..=8) that turns the
+  stored pixels upright, from `irot`/`imir` (new `isobmff::exif_orientation`)
+  or the EXIF tag; 0 when none is named. Hayn's tiled HEIC encoder on Android
+  keeps the stored pixels and writes this into the container (RUN-01).
+- **Metadata `inject` into `idat` grids**: AVIF/HEIF whose grid descriptor is
+  in `idat` (construction method 1) and whose `mdat` precedes `meta` — the
+  shape `MediaMuxer`/`HeifWriter` write — now receive EXIF/XMP/ICC; before,
+  the file came back unchanged. Validation compares every pre-existing item,
+  `idat` ones included. The ICC property is associated with a grid's tiles as
+  well as the grid (Android reads a grid's colour from its first tile).
 - **AVIF software decode** via `rav1d` (the pure-Rust dav1d port) behind
   `engine::codec::decode`. Extracts the primary item's AV1 OBUs from the ISO-BMFF
   container (prepending the `av1C` sequence header) and converts planar YUV →

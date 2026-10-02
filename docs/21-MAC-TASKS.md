@@ -30,7 +30,7 @@
 | **F3** | قارئ ImageIO المستقل على نواتج F2 | `xcrun swift -module-cache-path /Volumes/CUSU/Development/caches/swift-preservation test_native/inspect_ios_outputs.swift build/ios-preservation/<الجولة>` | يوافق على كل الملفات. وسكربتات `test_native/compare_*.swift` المتعلقة بما تغيّر |
 | **F4** | اختبار الأداء على الآيفون | `tool/test_performance.sh <معرّف الجهاز>` | **8 من 8** بلا تجاوز للحدود ([18-PERFORMANCE](18-PERFORMANCE.md)). يحتاج iPhone 13 Pro موصولًا ومفتوحًا؛ يبقي التطبيق ويثبّت release بعده |
 | **F5** | لقطات README | `tool/screenshots/generate.sh` | لقطات جديدة من محاكي، بلا تعديل يدوي ([presentation.md](../.claude/rules/presentation.md)) |
-| **F6** | الجسر الحقيقي على الماك | `cargo build --locked` في `native/darklib` ثم `flutter test --no-pub test_native/darklib_host_test.dart --dart-define=DARKLIB_TEST_LIBRARY=<المسار>/libdarklib.dylib` | **12 ناجحة** (منذ 2026-10-02؛ كانت 10) |
+| **F6** | الجسر الحقيقي على الماك | `cargo build --locked` في `native/darklib` ثم `flutter test --no-pub test_native/darklib_host_test.dart --dart-define=DARKLIB_TEST_LIBRARY=<المسار>/libdarklib.dylib` | **13 ناجحة** (منذ 2026-10-02؛ كانت 10 ثم 12) |
 
 **أحد هذه لا يُعاد بلا سبب:** المحاكي (F2) والبناء (F1) يستغرقان وقتًا ويثقلان الماك. لا تضف F2 إلى مهمة إن لم تمس الشفرة التي يغطيها (الجدول التالي).
 
@@ -113,6 +113,23 @@
 - **الخطوات:** F1، وF2، وF3 لنواتج WebP، وF6 (الجسر 12). ثم F4، ثم `HAYN_PERF_LARGE=1 tool/test_performance.sh <الآيفون>`، وفي تقريره `plan` يجب أن يقول giant وHEIC. السكربت يولّد عينة 200 ميقابكسل بـPillow إن لم تكن موجودة.
 - **النجاح:** بناء نظيف، و11 ناجحة، والقارئ يوافق على WebP، والأداء 8 من 8. والقياس الكبير يكتمل أو يُعرف أين انتهى.
 - **يُعاد إلى لينكس:** ملخص الأداء، وملخص القياس الكبير بزمن كل صيغة وذروتها على iPhone 13 Pro (6GB)، وما فشل باسمه.
+- **النتيجة:**
+
+### M-06 · HEIC بالبلاطات من Android في ImageIO، وواجهة FFI
+- **الحالة:** مفتوحة
+- **طلبها:** وكيل لينكس، 2026-10-02
+- **ما تغيّر:**
+  - **DarkLib:** `inspect` يعيد `orientation`، ودالة FFI جديدة `profile_space` (IMG-21)، فأعيد توليد الروابط. و`isobmff::inject` صار يكتب في HEIF واصف شبكته في `idat` و`mdat` فيه أولًا، ويربط ملف اللون بكل بلاطة (IMG-22).
+  - **Android وحده:** HEIC الصور العملاقة صار من البلاطات (`HeicTiles.kt`): المرمّز العتادي لـHEVC و`MediaMuxer`، والاتجاه في `irot` مع قلب أفقي للبكسلات عند الحاجة، وملف اللون والبيانات من DarkLib (RUN-01، الخطوة 5). المطلوب من الماك قارئ Apple: هل يعرض ImageIO هذه الملفات قائمة وبألوانها؟
+- **البنود:** RUN-01، IMG-22، IMG-21.
+- **يلزم:** نواتج تشغيل الهاتف من لينكس: `build/android-device/<الجولة>/results/heic-tiles/` (المسار في 18-PERFORMANCE)، تُنسخ إلى الماك. وتوصيل الآيفون لـF4.
+- **الخطوات:**
+  1. F1، وF6 (13 ناجحة، وفيها فحص الاتجاه و`profile_space`)، وF2 لأن واجهة FFI تغيّرت. القص في Dart تغيّر لـAndroid وحده، وعلى iOS يجب أن يبقى كما كان (F2 يغطيه).
+  2. لكل `heic-tiles/<W>x<H>-o<N>.heic`: `CGImageSourceCreateImageAtIndex` مع `kCGImageSourceCreateThumbnailWithTransform`، أو العرض في Preview. الأبعاد القائمة (للاتجاهات 5 إلى 8 يتبادل الضلعان) والأرباع الأربعة: أحمر أعلى اليسار في الأصل، ثم أخضر، وأزرق، وأصفر، بعد تحويل EXIF المسمى في الاسم.
+  3. `heic-tiles/p3.heic` و`heic-tiles/p3-source.jpg`: يحوّلهما ImageIO إلى sRGB، والأرباع متقاربة (فرق ≤ 8). المقارنة نفسها في `test_native/check_heic_tiles.py` بـlibheif على لينكس نجحت.
+  4. F4.
+- **النجاح:** بناء نظيف، و11 في المحاكي، و13 في الجسر، وImageIO يوافق في الخطوتين 2 و3، والأداء 8 من 8.
+- **يُعاد إلى لينكس:** نتيجة كل ملف (الأبعاد وألوان الأرباع)، وأي فشل باسمه.
 - **النتيجة:**
 
 ## المنفذة

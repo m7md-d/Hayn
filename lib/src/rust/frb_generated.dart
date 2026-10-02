@@ -75,7 +75,7 @@ class DarkLib extends BaseEntrypoint<DarkLibApi, DarkLibApiImpl, DarkLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 282570315;
+  int get rustContentHash => 86492306;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -115,6 +115,8 @@ abstract class DarkLibApi extends BaseApi {
   Future<void> crateApiSimpleInitApp();
 
   Future<Facts> crateApiInspectInspectImage({required List<int> bytes});
+
+  Future<ProfileSpace?> crateApiInspectProfileSpace({required List<int> bytes});
 
   MetadataSummary crateApiMetadataReadMetadataSummary({
     required List<int> bytes,
@@ -446,6 +448,36 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
       const TaskConstMeta(debugName: "inspect_image", argNames: ["bytes"]);
 
   @override
+  Future<ProfileSpace?> crateApiInspectProfileSpace({
+    required List<int> bytes,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(bytes, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 12,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_opt_box_autoadd_profile_space,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiInspectProfileSpaceConstMeta,
+        argValues: [bytes],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiInspectProfileSpaceConstMeta =>
+      const TaskConstMeta(debugName: "profile_space", argNames: ["bytes"]);
+
+  @override
   MetadataSummary crateApiMetadataReadMetadataSummary({
     required List<int> bytes,
   }) {
@@ -454,7 +486,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(bytes, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 12)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 13)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_metadata_summary,
@@ -487,7 +519,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 13,
+            funcId: 14,
             port: port_,
           );
         },
@@ -528,7 +560,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 14,
+            funcId: 15,
             port: port_,
           );
         },
@@ -562,7 +594,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 15,
+            funcId: 16,
             port: port_,
           );
         },
@@ -622,23 +654,36 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   }
 
   @protected
+  ProfileSpace dco_decode_box_autoadd_profile_space(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_profile_space(raw);
+  }
+
+  @protected
   CodecFormat dco_decode_codec_format(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return CodecFormat.values[raw as int];
   }
 
   @protected
+  double dco_decode_f_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as double;
+  }
+
+  @protected
   Facts dco_decode_facts(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 5)
-      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
     return Facts(
       transfer: dco_decode_transfer(arr[0]),
       gainMap: dco_decode_presence(arr[1]),
       alpha: dco_decode_presence(arr[2]),
       width: dco_decode_u_32(arr[3]),
       height: dco_decode_u_32(arr[4]),
+      orientation: dco_decode_u_8(arr[5]),
     );
   }
 
@@ -678,6 +723,12 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   }
 
   @protected
+  Float32List dco_decode_list_prim_f_32_strict(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as Float32List;
+  }
+
+  @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as List<int>;
@@ -714,9 +765,27 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   }
 
   @protected
+  ProfileSpace? dco_decode_opt_box_autoadd_profile_space(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_profile_space(raw);
+  }
+
+  @protected
   Presence dco_decode_presence(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return Presence.values[raw as int];
+  }
+
+  @protected
+  ProfileSpace dco_decode_profile_space(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return ProfileSpace(
+      toXyzD50: dco_decode_list_prim_f_32_strict(arr[0]),
+      transfer: dco_decode_list_prim_f_32_strict(arr[1]),
+    );
   }
 
   @protected
@@ -805,10 +874,24 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   }
 
   @protected
+  ProfileSpace sse_decode_box_autoadd_profile_space(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_profile_space(deserializer));
+  }
+
+  @protected
   CodecFormat sse_decode_codec_format(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
     return CodecFormat.values[inner];
+  }
+
+  @protected
+  double sse_decode_f_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getFloat32();
   }
 
   @protected
@@ -819,12 +902,14 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
     var var_alpha = sse_decode_presence(deserializer);
     var var_width = sse_decode_u_32(deserializer);
     var var_height = sse_decode_u_32(deserializer);
+    var var_orientation = sse_decode_u_8(deserializer);
     return Facts(
       transfer: var_transfer,
       gainMap: var_gainMap,
       alpha: var_alpha,
       width: var_width,
       height: var_height,
+      orientation: var_orientation,
     );
   }
 
@@ -867,6 +952,13 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
     return ImageFormat.values[inner];
+  }
+
+  @protected
+  Float32List sse_decode_list_prim_f_32_strict(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var len_ = sse_decode_i_32(deserializer);
+    return deserializer.buffer.getFloat32List(len_);
   }
 
   @protected
@@ -920,10 +1012,31 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   }
 
   @protected
+  ProfileSpace? sse_decode_opt_box_autoadd_profile_space(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_profile_space(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   Presence sse_decode_presence(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
     return Presence.values[inner];
+  }
+
+  @protected
+  ProfileSpace sse_decode_profile_space(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_toXyzD50 = sse_decode_list_prim_f_32_strict(deserializer);
+    var var_transfer = sse_decode_list_prim_f_32_strict(deserializer);
+    return ProfileSpace(toXyzD50: var_toXyzD50, transfer: var_transfer);
   }
 
   @protected
@@ -1001,9 +1114,24 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_profile_space(
+    ProfileSpace self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_profile_space(self, serializer);
+  }
+
+  @protected
   void sse_encode_codec_format(CodecFormat self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_f_32(double self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putFloat32(self);
   }
 
   @protected
@@ -1014,6 +1142,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
     sse_encode_presence(self.alpha, serializer);
     sse_encode_u_32(self.width, serializer);
     sse_encode_u_32(self.height, serializer);
+    sse_encode_u_8(self.orientation, serializer);
   }
 
   @protected
@@ -1044,6 +1173,16 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   void sse_encode_image_format(ImageFormat self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_list_prim_f_32_strict(
+    Float32List self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    serializer.buffer.putFloat32List(self);
   }
 
   @protected
@@ -1098,9 +1237,29 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   }
 
   @protected
+  void sse_encode_opt_box_autoadd_profile_space(
+    ProfileSpace? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_profile_space(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_presence(Presence self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_profile_space(ProfileSpace self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_list_prim_f_32_strict(self.toXyzD50, serializer);
+    sse_encode_list_prim_f_32_strict(self.transfer, serializer);
   }
 
   @protected

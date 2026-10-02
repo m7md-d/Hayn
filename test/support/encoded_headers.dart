@@ -18,5 +18,12 @@ Uint8List encodedHeader(DefaultFormat format) => switch (format) {
     255,
     ...List.filled(9, 0),
   ]),
+  DefaultFormat.heic => Uint8List.fromList([
+    0,
+    0,
+    0,
+    20,
+    ...'ftypheic0000mif1'.codeUnits,
+  ]),
   _ => throw ArgumentError.value(format),
 };

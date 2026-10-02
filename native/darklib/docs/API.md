@@ -115,7 +115,10 @@ pub fn extract(b: &[u8]) -> Canonical;       // never fails; absent fields = Non
 pub fn inject(encoded: &[u8], meta: &Canonical) -> Vec<u8>;
 ```
 `extract` reads the canonical model; `inject` writes EXIF/XMP/ICC back into already
--encoded bytes (orientation normalised to 1). Pair them around a re-encode to
+-encoded bytes (orientation normalised to 1). AVIF/HEIF: items stored in the file
+or in `idat` (a grid descriptor, as Android's `MediaMuxer` writes it, `mdat`
+first or last); the ICC goes to the primary and, for a grid, to every tile —
+Android reads a grid's colour from its first tile. Pair them around a re-encode to
 carry metadata across a transcode. `inject` returns the input unchanged if it
 can't safely add the items (current verify-or-bail behavior). The current return
 type does not report that degradation; callers cannot treat this as proof of
@@ -190,9 +193,13 @@ assert_eq!(out.hdr, codec::HdrOutcome::None); // an SDR source
 pub enum Transfer { Unknown, NoHdrSignal, Pq, Hlg }
 pub enum Presence { Unknown, Absent, Present }
 pub struct Facts { pub transfer: Transfer, pub gain_map: Presence, pub alpha: Presence,
-                   pub width: u32, pub height: u32 }
+                   pub width: u32, pub height: u32, pub orientation: u8 }
 pub fn inspect(bytes: &[u8]) -> Facts;
 ```
+`width`/`height`: the stored size from the header (0 unknown). `orientation`:
+the EXIF code (1..=8) that turns the stored pixels upright — `irot`/`imir`
+for AVIF/HEIF (via `isobmff::exif_orientation`), the EXIF tag otherwise; 0
+when the file names none.
 Container scan, no pixel decode. AVIF/HEIC: the PRIMARY item's `colr` nclx (a
 grid falls back to its first tile; a `tmap` item's own `colr` is ignored) and
 `tmap` or a gain-map `auxC`. PNG: `cICP` before `IDAT`. JPEG: `hdrgm`/Apple
@@ -283,6 +290,15 @@ fn transcode(bytes, format: CodecFormat, quality: u32, max_edge: u32,
 `preservation_required:hdr_transfer_unsupported` for PQ/HLG.
 
 ### `api::inspect`
+
+```rust
+fn profile_space(bytes) -> Option<ProfileSpace>   // async
+pub struct ProfileSpace { pub to_xyz_d50: Vec<f32>, pub transfer: Vec<f32> }
+```
+The source's colour profile (ICC, or one built from `nclx`/`cICP`) as an RGB
+space: the D50 RGB→XYZ matrix, column-major, and `[a, b, c, d, e, f, g]` with
+Y = (aX + b)^g + e for X ≥ d, cX + f below (`engine::color::rgb_space`).
+`None` without a profile or for a LUT/sampled-curve one.
 ```rust
 fn inspect_image(bytes) -> Facts   // async; see engine::inspect above
 ```
