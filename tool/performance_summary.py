@@ -16,8 +16,14 @@ if large is not None:
     source = large.get("source", {})
     print(f"{device.get('model')} · RAM {device.get('memTotalMb')} MB · source "
           f"{source.get('size')} ({source.get('kb')} KB, RSS {source.get('rssMb')} MB)")
+    print(f"  plan: {large.get('plan')}")
+    for name in ("displayFull", "display4096", "viewerZoom"):
+        r = large.get(name)
+        if r is not None:
+            print(f"  {name:<12} {r.get('ms')} ms / peak {r.get('peakRssMb')} MB "
+                  f"(+{r.get('peakAboveBeforeMb')}) / {r.get('size') or r.get('failed')}")
     print("target  ms / peak RSS MB (above before) / output / backend / full size")
-    for target in ("jpeg", "webp", "png", "heic", "avif"):
+    for target in ("jpeg", "heic", "webp", "avif", "png"):
         r = large.get(target)
         if r is None:
             print(f"  {target:<6} not reached (killed before it?)")

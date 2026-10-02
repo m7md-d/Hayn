@@ -617,10 +617,14 @@ impl SseDecode for crate::engine::inspect::Facts {
         let mut var_transfer = <crate::engine::inspect::Transfer>::sse_decode(deserializer);
         let mut var_gainMap = <crate::engine::inspect::Presence>::sse_decode(deserializer);
         let mut var_alpha = <crate::engine::inspect::Presence>::sse_decode(deserializer);
+        let mut var_width = <u32>::sse_decode(deserializer);
+        let mut var_height = <u32>::sse_decode(deserializer);
         return crate::engine::inspect::Facts {
             transfer: var_transfer,
             gain_map: var_gainMap,
             alpha: var_alpha,
+            width: var_width,
+            height: var_height,
         };
     }
 }
@@ -922,6 +926,8 @@ impl flutter_rust_bridge::IntoDart for crate::engine::inspect::Facts {
             self.transfer.into_into_dart().into_dart(),
             self.gain_map.into_into_dart().into_dart(),
             self.alpha.into_into_dart().into_dart(),
+            self.width.into_into_dart().into_dart(),
+            self.height.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -1172,6 +1178,8 @@ impl SseEncode for crate::engine::inspect::Facts {
         <crate::engine::inspect::Transfer>::sse_encode(self.transfer, serializer);
         <crate::engine::inspect::Presence>::sse_encode(self.gain_map, serializer);
         <crate::engine::inspect::Presence>::sse_encode(self.alpha, serializer);
+        <u32>::sse_encode(self.width, serializer);
+        <u32>::sse_encode(self.height, serializer);
     }
 }
 

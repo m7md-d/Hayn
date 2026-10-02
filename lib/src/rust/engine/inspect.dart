@@ -11,14 +11,26 @@ class Facts {
   final Presence gainMap;
   final Presence alpha;
 
+  /// Stored size from the header (for HEIF/AVIF the primary item or its
+  /// grid canvas), before orientation; 0 when the header does not say.
+  final int width;
+  final int height;
+
   const Facts({
     required this.transfer,
     required this.gainMap,
     required this.alpha,
+    required this.width,
+    required this.height,
   });
 
   @override
-  int get hashCode => transfer.hashCode ^ gainMap.hashCode ^ alpha.hashCode;
+  int get hashCode =>
+      transfer.hashCode ^
+      gainMap.hashCode ^
+      alpha.hashCode ^
+      width.hashCode ^
+      height.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -27,7 +39,9 @@ class Facts {
           runtimeType == other.runtimeType &&
           transfer == other.transfer &&
           gainMap == other.gainMap &&
-          alpha == other.alpha;
+          alpha == other.alpha &&
+          width == other.width &&
+          height == other.height;
 }
 
 enum Presence { unknown, absent, present }

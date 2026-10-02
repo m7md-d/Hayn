@@ -18,6 +18,7 @@ class FormatCapabilities {
     required this.supportsHeif,
     required this.supportsAvifHardware,
     required this.supportsWebp,
+    this.heicKeepsAlpha = false,
   });
 
   /// Apple-style HEIF/HEVC. Avoided on app stores when not licensed.
@@ -33,6 +34,10 @@ class FormatCapabilities {
   final bool supportsAvifHardware;
 
   final bool supportsWebp;
+
+  /// The HEIC/HEIF encoder writes an alpha plane: ImageIO does; Android's
+  /// HeifWriter does not (IMG-19), so there a transparent image needs PNG.
+  final bool heicKeepsAlpha;
 
   /// Conservative defaults based on platform. Production replaces this with
   /// a real native probe.
@@ -52,6 +57,7 @@ class FormatCapabilities {
         // a deliberate, software-warned choice in the picker.
         supportsAvifHardware: false,
         supportsWebp: true,
+        heicKeepsAlpha: true,
       );
     }
     if (Platform.isAndroid) {

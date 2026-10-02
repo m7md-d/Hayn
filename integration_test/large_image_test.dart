@@ -3,12 +3,16 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:hayn/core/capabilities/format_capabilities.dart';
 import 'package:hayn/core/darklib/darklib.dart';
 import 'package:hayn/features/image_ops/data/image_encoder.dart';
 import 'package:hayn/features/image_ops/data/source_facts.dart';
+import 'package:hayn/features/image_ops/domain/image_format_policy.dart';
+import 'package:hayn/features/library/presentation/full_res_image.dart';
 import 'package:hayn/features/settings/providers/preferences_providers.dart';
 
 // RUN-01: time and peak memory of a ~200 MP photo converted at FULL size, as
@@ -35,13 +39,64 @@ void main() {
       'size': '${size.$1}x${size.$2}',
       'rssMb': _mb(ProcessInfo.currentRss),
     };
+    // What the viewer pays on zoom: Flutter decodes the original at full
+    // size (no cache size), and the same at the 4096 px other previews use.
+    for (final (name, width) in [
+      ('displayFull', null),
+      ('display4096', 4096),
+    ]) {
+      debugPrint('LARGE start $name');
+      report[name] = await _peak(() async {
+        final codec = await ui.instantiateImageCodec(
+          source,
+          targetWidth: width,
+        );
+        final frame = await codec.getNextFrame();
+        final size = '${frame.image.width}x${frame.image.height}';
+        frame.image.dispose();
+        codec.dispose();
+        return {'size': size};
+      });
+      debugPrint('LARGE done $name: ${report[name]}');
+    }
+    // The viewer's own provider on zoom, bounded (RUN-01).
+    debugPrint('LARGE start viewerZoom');
+    report['viewerZoom'] = await _peak(() async {
+      final done = Completer<String>();
+      final stream = fullResImage(source).resolve(ImageConfiguration.empty);
+      final listener = ImageStreamListener((info, _) {
+        done.complete('${info.image.width}x${info.image.height}');
+        info.dispose();
+      }, onError: (e, _) => done.completeError(e));
+      stream.addListener(listener);
+      final size = await done.future;
+      stream.removeListener(listener);
+      return {'size': size};
+    });
+    debugPrint('LARGE done viewerZoom: ${report['viewerZoom']}');
     final facts = await SourceInspector.inspect(source);
+    // What the plan makes of it (RUN-01): giant, so Auto and a batch's WebP
+    // resolve to HEIC/JPEG.
+    final caps = FormatCapabilities.detect();
+    report['plan'] = {
+      'giant': facts.giant,
+      for (final choice in [DefaultFormat.auto, DefaultFormat.webp])
+        choice.name: ImageFormatPolicy.resolve(
+          choice: choice,
+          hasAlpha: facts.alpha,
+          caps: caps,
+          giant: facts.giant,
+        ).format.name,
+    };
+    expect(facts.giant, isTrue);
+    // The user's choice for giant images first (JPEG, HEIC: platform
+    // encoders); PNG last, since its plugin path kills the app (2026-10-02).
     for (final target in [
       DefaultFormat.jpeg,
-      DefaultFormat.webp,
-      DefaultFormat.png,
       DefaultFormat.heic,
+      DefaultFormat.webp,
       DefaultFormat.avif,
+      DefaultFormat.png,
     ]) {
       debugPrint('LARGE start ${target.name}');
       final before = ProcessInfo.currentRss;
@@ -126,3 +181,29 @@ int? _memTotalMb() {
 }
 
 int _mb(int bytes) => bytes ~/ (1024 * 1024);
+
+/// Runs [body], sampling RSS every 20 ms: its result plus time and peak.
+Future<Map<String, Object?>> _peak(
+  Future<Map<String, Object?>> Function() body,
+) async {
+  final before = ProcessInfo.currentRss;
+  var peak = before;
+  final sampler = Timer.periodic(const Duration(milliseconds: 20), (_) {
+    final now = ProcessInfo.currentRss;
+    if (now > peak) peak = now;
+  });
+  final sw = Stopwatch()..start();
+  Map<String, Object?> row;
+  try {
+    row = await body();
+  } catch (e) {
+    row = {'failed': e.runtimeType.toString()};
+  }
+  sampler.cancel();
+  return {
+    ...row,
+    'ms': sw.elapsedMilliseconds,
+    'peakRssMb': _mb(peak),
+    'peakAboveBeforeMb': _mb(peak - before),
+  };
+}

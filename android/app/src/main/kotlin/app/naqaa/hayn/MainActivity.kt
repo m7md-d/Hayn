@@ -52,12 +52,13 @@ class MainActivity : FlutterActivity() {
                 }
             }
 
-        // The iOS image channel's pixel bridge; its other methods stay iOS-only
-        // (notImplemented → MissingPluginException in Dart, as before).
+        // The iOS image channel's pixel bridge, as a file on Android (PERF-02);
+        // its other methods stay iOS-only (notImplemented → MissingPlugin
+        // in Dart, as before).
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, IMAGE_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
-                    "bakeUpright" -> {
+                    "bakeUprightFile" -> {
                         val bytes = call.argument<ByteArray>("bytes")
                         val toSdr = call.argument<Boolean>("toSdr") ?: false
                         val maxEdge = call.argument<Int>("maxEdge") ?: 0
@@ -66,7 +67,9 @@ class MainActivity : FlutterActivity() {
                             result.success(null)
                         } else {
                             decodeExecutor.execute {
-                                val out = PlatformDecoder.bakeUprightPng(bytes, toSdr, maxEdge, srgb)
+                                val out = PlatformDecoder.bakeUprightToFile(
+                                    bytes, toSdr, maxEdge, srgb, cacheDir,
+                                )
                                 mainHandler.post { result.success(out) }
                             }
                         }

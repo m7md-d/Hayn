@@ -106,7 +106,13 @@ if [ "$PLATFORM" = android ]; then
   SERVER=$!
   "${ADB[@]}" reverse "tcp:$PORT" "tcp:$PORT" >/dev/null
   DEFINES+=(--dart-define=HAYN_PERF_FIXTURES="http://127.0.0.1:$PORT")
+  # The library is measured, so photo access is granted when the app asks.
+  # shellcheck source=tool/android_photos.sh
+  source "$ROOT/tool/android_photos.sh"
+  allow_photos &
+  WATCHER=$!
   cleanup_platform() {
+    kill "$WATCHER" 2>/dev/null || true
     kill "$SERVER" 2>/dev/null || true
     "${ADB[@]}" reverse --remove "tcp:$PORT" 2>/dev/null || true
   }

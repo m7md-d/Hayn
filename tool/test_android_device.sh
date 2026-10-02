@@ -4,6 +4,8 @@
 # ten minutes for one gain-map AVIF encode). Android 16 hides files adb pushes
 # into the app's directories, so fixtures are served from this computer over
 # `adb reverse` (127.0.0.1 only) and artifacts come back in the drive report.
+# The photo permission the app asks for is answered "Allow all" (user
+# decision 2026-10-02: the library is read, as the performance test reads it).
 # Nothing is written to the phone's storage or gallery, unless HAYN_GALLERY=1:
 # then the crop tests ask for photo access, this script taps "Allow all" in
 # the system dialog (flutter drive reinstalls the app, so `pm grant` cannot
@@ -26,30 +28,8 @@ if [ "${HAYN_GALLERY:-}" = 1 ]; then
   DEFINES+=(--dart-define=HAYN_GALLERY=true)
 fi
 
-# Taps the permission dialog's "Allow all" (or "Allow") button, found by id.
-# uiautomator turns accessibility on, which Flutter's test binding reports as
-# a leaked SemanticsHandle, so it runs only while the dialog has focus.
-allow_photos() {
-  local ids="permission_allow_all_button|permission_allow_button"
-  for _ in $(seq 1 600); do
-    if ! "${ADB[@]}" shell dumpsys window 2>/dev/null \
-      | grep -q 'mCurrentFocus=.*permissioncontroller'; then
-      sleep 1
-      continue
-    fi
-    local node
-    node=$("${ADB[@]}" exec-out uiautomator dump /dev/tty 2>/dev/null \
-      | tr '>' '\n' | grep -E "resource-id=\"[^\"]*($ids)\"" | head -1) || true
-    if [ -n "$node" ]; then
-      read -r x1 y1 x2 y2 < <(echo "$node" \
-        | sed -E 's/.*bounds="\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]".*/\1 \2 \3 \4/')
-      "${ADB[@]}" shell input tap $(((x1 + x2) / 2)) $(((y1 + y2) / 2))
-      echo "Tapped the photo permission dialog."
-      return
-    fi
-    sleep 1
-  done
-}
+# shellcheck source=tool/android_photos.sh
+source "$ROOT/tool/android_photos.sh"
 STRIP="native/darklib/target/tmp"
 if [ ! -d "$STRIP/strip-orientation-sources" ]; then
   (cd native/darklib && cargo test --locked --test strip_orientation)
@@ -95,9 +75,7 @@ trap cleanup EXIT
 "${ADB[@]}" reverse "tcp:$PORT" "tcp:$PORT" >/dev/null
 echo "Running on $SERIAL: $("${ADB[@]}" shell getprop ro.product.model)," \
   "Android $("${ADB[@]}" shell getprop ro.build.version.release)"
-if [ "${HAYN_GALLERY:-}" = 1 ]; then
-  allow_photos &
-  WATCHER=$!
-fi
+allow_photos &
+WATCHER=$!
 flutter drive --profile --no-pub -d "$SERIAL" \
   --driver test_driver/integration_test.dart --target "$TARGET" "${DEFINES[@]}"

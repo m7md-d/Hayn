@@ -1,4 +1,4 @@
-import 'dart:io' show Platform;
+import 'dart:io' show File, Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -66,6 +66,21 @@ abstract final class NativeImageEncoder {
     }
   }
 
+  /// The Android bridge writes its PNG to a file (PERF-02): read and remove.
+  static Future<Uint8List?> _readTemp(String? path) async {
+    if (path == null) return null;
+    final file = File(path);
+    try {
+      return await file.readAsBytes();
+    } finally {
+      try {
+        await file.delete();
+      } catch (_) {
+        // A leftover in the cache directory is not a failed image.
+      }
+    }
+  }
+
   /// Android selects the ImageDecoder bridge; tests may flip it.
   @visibleForTesting
   static bool onAndroid = Platform.isAndroid;
@@ -83,11 +98,12 @@ abstract final class NativeImageEncoder {
   /// (the long edge stays at least maxEdge); iOS ignores it.
   ///
   /// Android specifics: a transparent HEIC gets its alpha back through
-  /// [HeifAlpha] (IMG-15). The pixels keep the source's colour space and
-  /// profile unless [srgb] asks for sRGB (what Flutter shows or crops). The
-  /// bridge itself carries no metadata, so [keepMetadata] carries the
-  /// source's onto its PNG through DarkLib, the EXIF orientation set upright
-  /// since the pixels already are; when that fails the result is null.
+  /// [HeifAlpha] (IMG-15). The pixels keep the source's colour space unless
+  /// [srgb] asks for sRGB (what Flutter shows or crops); then DarkLib carries
+  /// the source's profile onto the PNG, and with [keepMetadata] the rest of
+  /// its metadata, the EXIF orientation set upright since the pixels already
+  /// are. When that fails the result is null. The PNG arrives as a file
+  /// (PERF-02), so a large one never sits whole on the Java heap.
   static Future<Uint8List?> bakeUpright({
     required Uint8List source,
     required bool keepMetadata,
@@ -98,14 +114,19 @@ abstract final class NativeImageEncoder {
   }) async {
     final backend = bakeBackend;
     try {
-      final res = await channel.invokeMethod<Uint8List>('bakeUpright', {
+      final args = {
         'bytes': source,
         'keepMetadata': keepMetadata,
         'keepOriginalTime': keepOriginalTime,
         'toSdr': toSdr,
         'maxEdge': maxEdge,
         'srgb': srgb,
-      });
+      };
+      final res = backend == MediaBackend.androidDecoder
+          ? await _readTemp(
+              await channel.invokeMethod<String>('bakeUprightFile', args),
+            )
+          : await channel.invokeMethod<Uint8List>('bakeUpright', args);
       if (res == null || res.isEmpty) {
         MediaDiagnostics.record(
           backend,
@@ -116,19 +137,25 @@ abstract final class NativeImageEncoder {
       }
       if (backend != MediaBackend.androidDecoder) return res;
       final upright = await HeifAlpha.restore(source, res);
-      if (!keepMetadata) return upright;
+      // sRGB pixels need no profile; the source's would mislabel them.
+      if (srgb) return upright;
+      // Kept pixels are in the source's colour space: its profile always
+      // goes with them (IMG-08/18), the rest of its metadata on request.
       final carried = await DarkLibCore.transplantMetadata(
         source: source,
         target: upright,
       );
-      if (carried == null) {
+      final result = carried == null || keepMetadata
+          ? carried
+          : await DarkLibCore.stripMetadata(carried);
+      if (result == null) {
         MediaDiagnostics.record(
           backend,
           MediaOperation.transplant,
           MediaDiagnosticCode.unavailable,
         );
       }
-      return carried;
+      return result;
     } on MissingPluginException {
       MediaDiagnostics.record(
         backend,

@@ -631,12 +631,14 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   Facts dco_decode_facts(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 3)
-      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
     return Facts(
       transfer: dco_decode_transfer(arr[0]),
       gainMap: dco_decode_presence(arr[1]),
       alpha: dco_decode_presence(arr[2]),
+      width: dco_decode_u_32(arr[3]),
+      height: dco_decode_u_32(arr[4]),
     );
   }
 
@@ -815,10 +817,14 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
     var var_transfer = sse_decode_transfer(deserializer);
     var var_gainMap = sse_decode_presence(deserializer);
     var var_alpha = sse_decode_presence(deserializer);
+    var var_width = sse_decode_u_32(deserializer);
+    var var_height = sse_decode_u_32(deserializer);
     return Facts(
       transfer: var_transfer,
       gainMap: var_gainMap,
       alpha: var_alpha,
+      width: var_width,
+      height: var_height,
     );
   }
 
@@ -1006,6 +1012,8 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
     sse_encode_transfer(self.transfer, serializer);
     sse_encode_presence(self.gainMap, serializer);
     sse_encode_presence(self.alpha, serializer);
+    sse_encode_u_32(self.width, serializer);
+    sse_encode_u_32(self.height, serializer);
   }
 
   @protected

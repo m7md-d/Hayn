@@ -130,3 +130,18 @@ fn header_dimensions_match_the_decode() {
         );
     }
 }
+
+/// The plan learns a source's size from `inspect`, before any decode, so a
+/// giant image is planned as one (RUN-01: over 64 MP, JPEG and HEIC only).
+#[test]
+fn inspect_reports_the_header_size() {
+    use darklib::engine::inspect::inspect;
+    let big = jpeg_header(16_128, 12_096);
+    let facts = inspect(&big);
+    assert_eq!((facts.width, facts.height), (16_128, 12_096));
+    let heic = include_bytes!("fixtures/apple_heic_alpha.heic");
+    let facts = inspect(heic);
+    assert_eq!((facts.width, facts.height), (64, 48));
+    let unknown = inspect(b"not an image at all");
+    assert_eq!((unknown.width, unknown.height), (0, 0));
+}

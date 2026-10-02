@@ -22,22 +22,6 @@ import 'source_facts.dart';
 // is NOT proof that colour, orientation or metadata survived. Backend, format
 // and HDR outcomes are recorded in bounded release diagnostics.
 
-/// Longest output edge we encode. Decoding a ~200 MP image at full size is
-/// ~800 MB of RGBA → an instant OOM, and it also exceeds hardware encoder limits.
-/// Sources whose long edge exceeds this are downscaled to fit (normal photos,
-/// incl. 48 MP at 8064 px, are untouched). Matches the native AVIF path's cap.
-const int kMaxEncodeLongEdge = 8192;
-
-/// The (maxWidth,maxHeight) cap for a source of [width]×[height], or (null,null)
-/// when it's already within [kMaxEncodeLongEdge].
-({int? maxWidth, int? maxHeight}) encodeCapFor(int width, int height) {
-  final longEdge = width > height ? width : height;
-  if (longEdge <= kMaxEncodeLongEdge || longEdge == 0) {
-    return (maxWidth: null, maxHeight: null);
-  }
-  return (maxWidth: kMaxEncodeLongEdge, maxHeight: kMaxEncodeLongEdge);
-}
-
 class EncodedImage {
   const EncodedImage(
     this.bytes,
@@ -176,7 +160,7 @@ abstract final class ImageEncoder {
     final hasAlpha = plan.alpha;
 
     final candidates = allowFormatFallback
-        ? fallbackChain(target, hasAlpha)
+        ? fallbackChain(target, hasAlpha, giant: facts.giant)
         : [target];
     for (final fmt in candidates) {
       if (fmt != target) {
@@ -264,16 +248,24 @@ abstract final class ImageEncoder {
 
   /// Ordered formats to attempt: requested first, then alpha-aware fallbacks.
   /// PNG is the final alpha-capable candidate; JPEG is opaque. An
-  /// alpha image never lists JPEG. Pure + unit-testable.
+  /// alpha image never lists JPEG. A [giant] source falls back only within
+  /// JPEG, HEIC and, for alpha, PNG (RUN-01): software WebP and AVIF take
+  /// minutes at 200 MP. Pure + unit-testable.
   static List<DefaultFormat> fallbackChain(
     DefaultFormat target,
-    bool? hasAlpha,
-  ) {
+    bool? hasAlpha, {
+    bool giant = false,
+  }) {
     final out = <DefaultFormat>[];
     void add(DefaultFormat f) {
       if (f == DefaultFormat.auto) return;
       if (hasAlpha != false && f == DefaultFormat.jpeg) {
         return; // never flatten on fallback
+      }
+      if (giant &&
+          out.isNotEmpty &&
+          (f == DefaultFormat.webp || f == DefaultFormat.avif)) {
+        return;
       }
       if (!out.contains(f)) out.add(f);
     }

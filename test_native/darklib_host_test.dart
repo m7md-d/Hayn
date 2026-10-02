@@ -32,6 +32,8 @@ void main() {
       (facts.alpha, facts.directHdr, facts.gainMap),
       (false, false, false),
     );
+    // The size comes from the header (RUN-01: the giant threshold).
+    expect((facts.width, facts.height, facts.giant), (16, 12, false));
     final result = await ImageEncoder.encode(
       source: png,
       target: DefaultFormat.webp,

@@ -11,6 +11,7 @@ import 'package:hayn/features/settings/providers/preferences_providers.dart';
 import 'package:hayn/src/rust/frb_generated.dart';
 import 'package:image/image.dart' as img;
 
+import 'support/bake_channel.dart';
 import 'support/encoded_headers.dart';
 
 // IMG-05: HDR facts of the ORIGINAL decide the plan before any engine runs.
@@ -36,6 +37,8 @@ class _Api extends Fake implements DarkLibApi {
     transfer: Transfer.noHdrSignal,
     gainMap: Presence.absent,
     alpha: Presence.unknown,
+    width: 0,
+    height: 0,
   );
 
   @override
@@ -158,6 +161,8 @@ void main() {
         transfer: Transfer.noHdrSignal,
         gainMap: Presence.absent,
         alpha: Presence.unknown,
+        width: 0,
+        height: 0,
       );
   });
 
@@ -283,6 +288,8 @@ void main() {
       transfer: Transfer.noHdrSignal,
       gainMap: Presence.present,
       alpha: Presence.unknown,
+      width: 0,
+      height: 0,
     );
     final kept = await ImageEncoder.encode(
       source: _heic,
@@ -298,6 +305,8 @@ void main() {
       transfer: Transfer.noHdrSignal,
       gainMap: Presence.absent,
       alpha: Presence.unknown,
+      width: 0,
+      height: 0,
     );
     final private = await ImageEncoder.encode(
       source: _heic,
@@ -362,6 +371,8 @@ void main() {
         transfer: Transfer.pq,
         gainMap: Presence.absent,
         alpha: Presence.unknown,
+        width: 0,
+        height: 0,
       );
       expect((await SourceInspector.inspect(_png)).directHdr, isTrue);
 
@@ -369,6 +380,8 @@ void main() {
         transfer: Transfer.noHdrSignal,
         gainMap: Presence.absent,
         alpha: Presence.unknown,
+        width: 0,
+        height: 0,
       );
       native({'hdrTransfer': true, 'hasGainMap': true});
       final f = await SourceInspector.inspect(_png);
@@ -384,6 +397,8 @@ void main() {
         transfer: Transfer.unknown,
         gainMap: Presence.unknown,
         alpha: Presence.unknown,
+        width: 0,
+        height: 0,
       );
       final unknown = await SourceInspector.inspect(_png);
       expect((unknown.directHdr, unknown.gainMap), (null, null));
@@ -415,6 +430,8 @@ void main() {
           transfer: Transfer.noHdrSignal,
           gainMap: Presence.absent,
           alpha: presence,
+          width: 0,
+          height: 0,
         );
         expect(await ImageProbe.hasAlpha(webp), want, reason: '$presence');
       }
@@ -428,10 +445,12 @@ void main() {
           transfer: Transfer.noHdrSignal,
           gainMap: Presence.absent,
           alpha: Presence.present,
+          width: 0,
+          height: 0,
         );
         messenger.setMockMethodCallHandler(
           imageChannel,
-          (call) async => call.method == 'bakeUpright' ? _png : null,
+          (call) => answerBake(call, _png),
         );
         await expectLater(
           ImageEncoder.encode(
@@ -477,10 +496,12 @@ void main() {
           transfer: Transfer.noHdrSignal,
           gainMap: Presence.absent,
           alpha: Presence.present,
+          width: 0,
+          height: 0,
         );
         messenger.setMockMethodCallHandler(
           imageChannel,
-          (call) async => call.method == 'bakeUpright' ? opaqueRgba : null,
+          (call) => answerBake(call, opaqueRgba),
         );
       });
 
@@ -597,7 +618,7 @@ void main() {
         );
         messenger.setMockMethodCallHandler(
           imageChannel,
-          (call) async => call.method == 'bakeUpright' ? rgba : null,
+          (call) => answerBake(call, rgba),
         );
         final out = await ImageEncoder.encode(
           source: _heic,

@@ -35,6 +35,8 @@ class HaynAdvancedSettingsCard extends ConsumerWidget {
     this.keepTrashBackup,
     this.onKeepTrashChanged,
     this.formatNote,
+    this.offered,
+    this.autoResolved,
     super.key,
   });
 
@@ -70,6 +72,17 @@ class HaynAdvancedSettingsCard extends ConsumerWidget {
   /// Light note for a format choice, e.g. "Without transparency" when it drops
   /// something the current image has. Null or a null result shows nothing.
   final String? Function(DefaultFormat choice)? formatNote;
+
+  /// Which formats the picker lists; null lists every one. A giant image is
+  /// offered JPEG and HEIC only (RUN-01).
+  final bool Function(DefaultFormat format)? offered;
+
+  /// What Auto becomes for this image, when the caller knows better than the
+  /// device default (a giant image's Auto is HEIC or JPEG).
+  final DefaultFormat? autoResolved;
+
+  DefaultFormat _auto(FormatCapabilities caps) =>
+      autoResolved ?? DefaultFormat.resolveAuto(caps);
 
   Future<void> _openFormatPicker(BuildContext context, WidgetRef ref) async {
     final l = AppLocalizations.of(context);
@@ -128,7 +141,10 @@ class HaynAdvancedSettingsCard extends ConsumerWidget {
       title: l.compressFormat,
       currentValue: format,
       onChanged: onFormatChanged,
-      options: options,
+      options: [
+        for (final o in options)
+          if (offered?.call(o.value) ?? true) o,
+      ],
     );
   }
 
@@ -136,8 +152,7 @@ class HaynAdvancedSettingsCard extends ConsumerWidget {
   /// (HEIC/AVIF) and when the caller wired it up. JPEG/WebP/PNG hide it.
   bool _showBitDepth(FormatCapabilities caps) {
     if (bitDepth == null || onBitDepthChanged == null) return false;
-    final effective =
-        format == DefaultFormat.auto ? DefaultFormat.resolveAuto(caps) : format;
+    final effective = format == DefaultFormat.auto ? _auto(caps) : format;
     return effective == DefaultFormat.heic || effective == DefaultFormat.avif;
   }
 
@@ -149,7 +164,7 @@ class HaynAdvancedSettingsCard extends ConsumerWidget {
     final caps = ref.watch(formatCapabilitiesProvider);
     final formatDisplay = format == DefaultFormat.auto
         ? l.formatAutoResolved(DefaultFormat.labelFor(
-            DefaultFormat.resolveAuto(caps),
+            _auto(caps),
             supportsHeic: caps.supportsHeic,
             supportsHeif: caps.supportsHeif,
           ))

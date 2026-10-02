@@ -80,8 +80,8 @@ flutter test                            # 205 ناجحًا
 cd native/darklib
 cargo fmt --check
 cargo clippy --all-targets --locked -- -D warnings
-cargo test --locked                     # 120 ناجحًا
-cargo +1.88.0 test --locked             # 120 على الحد الأدنى
+cargo test --locked                     # 123 ناجحًا
+cargo +1.88.0 test --locked             # 123 على الحد الأدنى
 cargo build --locked                    # target/debug/libdarklib.so
 cd ../..
 flutter test --no-pub test_native/darklib_host_test.dart \

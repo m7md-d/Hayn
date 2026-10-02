@@ -232,14 +232,27 @@ pub fn encode(img: &Decoded, target: Target) -> Result<Vec<u8>> {
             encode_avif_single(img, quality)
         }
         Target::Webp { quality, lossless } => {
-            // libwebp owns its output buffer; copy it out into a Vec.
-            let enc = webp::Encoder::from_rgba(&img.rgba, img.width, img.height);
-            let mem = if lossless {
-                enc.encode_lossless()
+            // `encode`/`encode_lossless` of the webp crate unwrap libwebp's
+            // error, so an image it refuses panicked (Hayn IMG-20); the
+            // advanced call returns it. A very large lossy image overflows
+            // the 512 KiB first partition (prediction modes):
+            // `partition_limit` lets libwebp lower quality just enough to fit
+            // instead of failing, and changes nothing for an image that fits.
+            let mut config =
+                webp::WebPConfig::new().map_err(|_| DarkError::Malformed("webp config failed"))?;
+            config.lossless = lossless as i32;
+            config.alpha_compression = (!lossless) as i32;
+            config.quality = if lossless {
+                75.0
             } else {
-                enc.encode(quality.clamp(1, 100) as f32)
+                quality.clamp(1, 100) as f32
             };
-            Ok(mem.to_vec())
+            config.partition_limit = 100;
+            // libwebp owns its output buffer; copy it out into a Vec.
+            webp::Encoder::from_rgba(&img.rgba, img.width, img.height)
+                .encode_advanced(&config)
+                .map(|mem| mem.to_vec())
+                .map_err(|_| DarkError::Malformed("webp encode failed"))
         }
         Target::Png | Target::Jpeg(_) => {
             let buf = image::RgbaImage::from_raw(img.width, img.height, img.rgba.clone())

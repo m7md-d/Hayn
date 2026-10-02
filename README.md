@@ -123,7 +123,7 @@ docs/                 Product, architecture and status documents
 flutter pub get
 flutter analyze
 flutter test                          # 205 tests
-(cd native/darklib && cargo test)     # 120 tests
+(cd native/darklib && cargo test)     # 123 tests
 
 flutter run                           # on a connected device or simulator
 flutter build apk --release

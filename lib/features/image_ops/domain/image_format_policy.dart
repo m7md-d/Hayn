@@ -38,6 +38,34 @@ class ResolvedImageFormat {
 typedef FormatLosses = ({bool alpha, bool hdr});
 
 abstract final class ImageFormatPolicy {
+  /// More pixels than this make an image giant (user decision 2026-10-02,
+  /// RUN-01). 2^26 rather than 64 million, so a 64 MP camera's 9248×6936
+  /// (64.1 million) stays below while 108 and 200 MP are above.
+  static const int giantPixels = 64 * 1024 * 1024;
+
+  /// Whether a [width]×[height] source is giant; unknown size is not.
+  static bool isGiant({int? width, int? height}) =>
+      width != null && height != null && width * height > giantPixels;
+
+  /// Whether [format] is offered for a source. A giant one gets JPEG and HEIC,
+  /// which run on the platforms' encoders (user decision 2026-10-02): software
+  /// AVIF and WebP take minutes at 200 MP. A transparent giant also gets PNG
+  /// where HEIC cannot carry alpha (Android, IMG-19), so its alpha has a
+  /// format that keeps it. Auto is always offered.
+  static bool offers(
+    DefaultFormat format, {
+    required bool giant,
+    required bool? hasAlpha,
+    required FormatCapabilities caps,
+  }) {
+    if (!giant) return true;
+    return switch (format) {
+      DefaultFormat.auto || DefaultFormat.jpeg || DefaultFormat.heic => true,
+      DefaultFormat.png => hasAlpha != false && !caps.heicKeepsAlpha,
+      DefaultFormat.avif || DefaultFormat.webp => false,
+    };
+  }
+
   /// Resolve the concrete target format for an encode.
   ///
   /// * [choice] == auto → the efficiency tree, branched on [hasAlpha]:
@@ -45,11 +73,30 @@ abstract final class ImageFormatPolicy {
   ///   - no alpha: AVIF → HEIC/HEIF → WebP → JPEG
   /// * [choice] forced → honoured as-is. A forced JPEG on an alpha image is
   ///   the user's permission to flatten it (see [losses]).
+  /// * [giant] → only what [offers] allows: a choice it does not offer (a
+  ///   batch's WebP, say) resolves as Auto for that image, and Auto prefers
+  ///   HEIC, then JPEG, or PNG for alpha HEIC cannot keep.
   static ResolvedImageFormat resolve({
     required DefaultFormat choice,
     required bool? hasAlpha,
     required FormatCapabilities caps,
+    bool giant = false,
   }) {
+    if (giant) {
+      if (choice != DefaultFormat.auto &&
+          offers(choice, giant: true, hasAlpha: hasAlpha, caps: caps)) {
+        return ResolvedImageFormat(choice);
+      }
+      final heic = caps.supportsHeic || caps.supportsHeif;
+      if (hasAlpha != false) {
+        return ResolvedImageFormat(
+          heic && caps.heicKeepsAlpha ? DefaultFormat.heic : DefaultFormat.png,
+        );
+      }
+      return ResolvedImageFormat(
+        heic ? DefaultFormat.heic : DefaultFormat.jpeg,
+      );
+    }
     if (choice != DefaultFormat.auto) return ResolvedImageFormat(choice);
 
     // Auto — walk the efficiency tree. AVIF and HEIC/HEIF and WebP all keep

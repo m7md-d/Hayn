@@ -21,6 +21,7 @@ import '../data/native_share.dart';
 import 'providers/asset_entity_cache.dart';
 import 'providers/library_provider.dart';
 import 'providers/thumbnail_cache.dart';
+import 'full_res_image.dart';
 import 'widgets/asset_filmstrip.dart';
 import 'widgets/asset_metadata_sheet.dart';
 import 'widgets/asset_video_player.dart';
@@ -1023,8 +1024,8 @@ class _AssetPageState extends State<_AssetPage>
                       ),
                       // Full-resolution original, drawn on top once zoomed in.
                       if (_fullResBytes != null)
-                        Image.memory(
-                          _fullResBytes!,
+                        Image(
+                          image: fullResImage(_fullResBytes!),
                           fit: BoxFit.contain,
                           gaplessPlayback: true,
                           filterQuality: FilterQuality.high,

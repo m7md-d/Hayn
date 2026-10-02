@@ -182,7 +182,7 @@ bash tool/test_android_device.sh [serial]
 
 العينات المخدومة: كل صور `native/darklib/tests/fixtures/` ونواتج `strip_orientation.rs`. `HAYN_TEST_TARGET` يشغّل ملف اختبار آخر بالآلية نفسها، و`HAYN_EXTRA_FIXTURES` ينسخ مجلدًا إضافيًا إلى العينات المخدومة. تحقق من `mount | grep CUSU` قبل التشغيل؛ البناء الأول ثقيل.
 
-`HAYN_GALLERY=1` يفعّل اختبارات القص الفعلي، وهي تحفظ مصادرها ونواتجها في المعرض (`Pictures/`، أسماء `hayn-test-crop-*`) وتبقى للمستخدم. `flutter drive` يزيل التطبيق بعد كل تشغيل، فلا يسبق `pm grant` الاختبار؛ الإذن يُطلب في `setUpAll`، والسكربت يضغط «السماح بالكل» بـ`uiautomator` فقط حين تكون نافذة الإذن في المقدمة. تشغيل `uiautomator` أو طلب الإذن أثناء اختبار يفعّل accessibility فيفشل الاختبار بـ«SemanticsHandle was active»؛ هذا أثر البيئة لا عطل في التطبيق. الشاشة يجب أن تكون مفتوحة.
+`HAYN_GALLERY=1` يفعّل اختبارات القص الفعلي، وهي تحفظ مصادرها ونواتجها في المعرض (`Pictures/`، أسماء `hayn-test-crop-*`) وتبقى للمستخدم. `flutter drive` يزيل التطبيق بعد كل تشغيل، فلا يسبق `pm grant` الاختبار؛ الإذن يُطلب في `setUpAll` أو عند فتح المكتبة، والسكربت يضغط «السماح بالكل» بـ`uiautomator` في **كل** تشغيل (قرار المستخدم 2026-10-02)، فقط حين تكون نافذة الإذن في المقدمة. بلا ذلك كانت النافذة تعلّق اختبار «Real app» حتى يفشل. تشغيل `uiautomator` أو طلب الإذن أثناء اختبار يفعّل accessibility فيفشل الاختبار بـ«SemanticsHandle was active»؛ هذا أثر البيئة لا عطل في التطبيق. الشاشة يجب أن تكون مفتوحة.
 
 فحص المعرض: `adb shell am start -a android.intent.action.VIEW -d content://media/external/images/media/<id> -p com.sec.android.gallery3d` ثم `adb exec-out screencap -p`، والمقارنة رقمية بين اللقطات لا بالعين. الشاشة يجب أن تكون مفتوحة.
 

@@ -113,14 +113,15 @@ class ImageCompressTask extends MediaTask {
         if (_cancelled) return;
         if (src != null) {
           final facts = await SourceInspector.inspect(src);
+          // A giant image gets JPEG or HEIC whatever the batch's format
+          // (RUN-01); always at full size.
           final target = ImageFormatPolicy.resolve(
             choice: format,
             hasAlpha: facts.alpha,
             caps: _caps,
+            giant: facts.giant,
           );
           if (_cancelled) return;
-          // Huge images (≈200 MP) would OOM the decode — cap the long edge.
-          final cap = encodeCapFor(entity.width, entity.height);
           try {
             encoded = await ImageEncoder.encode(
               source: src,
@@ -131,8 +132,6 @@ class ImageCompressTask extends MediaTask {
               keepMetadata: keepMetadata,
               keepOriginalTime: keepOriginalTime,
               bitDepth: bitDepth,
-              maxWidth: cap.maxWidth,
-              maxHeight: cap.maxHeight,
             );
           } catch (_) {
             MediaDiagnostics.record(

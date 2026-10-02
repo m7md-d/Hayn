@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import '../../../core/darklib/darklib.dart';
+import '../domain/image_format_policy.dart';
 import 'image_probe.dart';
 import 'native_image_info.dart';
 
@@ -13,10 +14,12 @@ class SourceFacts {
     required this.alpha,
     required this.directHdr,
     required this.gainMap,
+    this.width,
+    this.height,
   });
 
   /// Pixels this app produced itself in SDR (crop output, an SDR rendition).
-  const SourceFacts.sdr({required this.alpha})
+  const SourceFacts.sdr({required this.alpha, this.width, this.height})
     : directHdr = false,
       gainMap = false;
 
@@ -29,7 +32,15 @@ class SourceFacts {
   /// An HDR gain map next to the base image.
   final bool? gainMap;
 
+  /// Stored size from the header, before orientation; null when unknown.
+  final int? width;
+  final int? height;
+
   bool get hasHdr => directHdr == true || gainMap == true;
+
+  /// Over the giant threshold: JPEG and HEIC only (RUN-01). Unknown size is
+  /// not giant.
+  bool get giant => ImageFormatPolicy.isGiant(width: width, height: height);
 }
 
 abstract final class SourceInspector {
@@ -41,6 +52,8 @@ abstract final class SourceInspector {
     final native = await NativeImageProbe.probeHdr(bytes);
     return SourceFacts(
       alpha: alpha,
+      width: (container?.width ?? 0) > 0 ? container!.width : null,
+      height: (container?.height ?? 0) > 0 ? container!.height : null,
       directHdr: _merge(switch (container?.transfer) {
         Transfer.pq || Transfer.hlg => true,
         Transfer.noHdrSignal => false,

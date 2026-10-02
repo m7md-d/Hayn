@@ -5,6 +5,9 @@
 //! carries no HDR signalling this inspector knows; that is not proof of SDR
 //! (docs/11-HDR-RESEARCH.md), only the absence of a known signal.
 //!
+//! The stored size comes from the header (`codec::header_dimensions`), so a
+//! plan knows a giant image before decoding it (Hayn RUN-01).
+//!
 //! Alpha is read from the container too, never from pixels: it says whether the
 //! image carries an alpha channel (PNG colour type or `tRNS`, WebP alpha,
 //! an AVIF/HEIF alpha auxiliary of the primary item). A channel that happens to
@@ -51,12 +54,18 @@ pub struct Facts {
     pub transfer: Transfer,
     pub gain_map: Presence,
     pub alpha: Presence,
+    /// Stored size from the header (for HEIF/AVIF the primary item or its
+    /// grid canvas), before orientation; 0 when the header does not say.
+    pub width: u32,
+    pub height: u32,
 }
 
 const UNKNOWN: Facts = Facts {
     transfer: Transfer::Unknown,
     gain_map: Presence::Unknown,
     alpha: Presence::Unknown,
+    width: 0,
+    height: 0,
 };
 
 impl Presence {
@@ -70,6 +79,14 @@ impl Presence {
 }
 
 pub fn inspect(b: &[u8]) -> Facts {
+    let mut facts = facts_of(b);
+    if let Some((w, h)) = crate::engine::codec::header_dimensions(b) {
+        (facts.width, facts.height) = (w, h);
+    }
+    facts
+}
+
+fn facts_of(b: &[u8]) -> Facts {
     match detect(b) {
         ImageFormat::Avif | ImageFormat::Heic => isobmff_facts(b),
         ImageFormat::Png => png_facts(b),
@@ -79,6 +96,8 @@ pub fn inspect(b: &[u8]) -> Facts {
             transfer: Transfer::NoHdrSignal,
             gain_map: Presence::Absent,
             alpha: Presence::of(webp_alpha(b)),
+            width: 0,
+            height: 0,
         },
         _ => UNKNOWN,
     }
@@ -94,6 +113,8 @@ fn isobmff_facts(b: &[u8]) -> Facts {
         transfer,
         gain_map: Presence::of(isobmff::gainmap_presence(b)),
         alpha: Presence::of(isobmff::alpha_presence(b)),
+        width: 0,
+        height: 0,
     }
 }
 
@@ -160,6 +181,8 @@ fn png_facts(b: &[u8]) -> Facts {
         transfer,
         gain_map: Presence::Absent,
         alpha: Presence::of(alpha),
+        width: 0,
+        height: 0,
     }
 }
 
@@ -220,6 +243,8 @@ fn jpeg_facts(b: &[u8]) -> Facts {
         transfer: Transfer::NoHdrSignal,
         gain_map,
         alpha: Presence::Absent,
+        width: 0,
+        height: 0,
     }
 }
 

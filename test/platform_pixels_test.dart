@@ -1,13 +1,16 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hayn/core/darklib/darklib.dart';
 import 'package:hayn/core/diagnostics/media_diagnostics.dart';
 import 'package:hayn/features/image_ops/data/image_encoder.dart';
 import 'package:hayn/features/image_ops/data/native_image_encoder.dart';
 import 'package:hayn/features/image_ops/data/platform_pixels.dart';
 import 'package:hayn/features/image_ops/data/source_facts.dart';
 import 'package:hayn/features/settings/providers/preferences_providers.dart';
+import 'package:hayn/src/rust/frb_generated.dart';
 import 'package:image/image.dart' as img;
 
+import 'support/bake_channel.dart';
 import 'support/encoded_headers.dart';
 
 // IMG-13: Flutter misreads 10-bit AVIF/HEIC decoded by Android's ImageDecoder
@@ -24,8 +27,39 @@ final _heic = Uint8List.fromList([
 ]);
 final _png = Uint8List.fromList(img.encodePng(img.Image(width: 2, height: 2)));
 
+/// DarkLib as the bridge uses it: inspect (no alpha), and carrying the
+/// source's metadata, which [carries] = false makes fail.
+class _Api extends Fake implements DarkLibApi {
+  bool carries = true;
+
+  @override
+  Future<Facts> crateApiInspectInspectImage({required List<int> bytes}) async =>
+      const Facts(
+        transfer: Transfer.noHdrSignal,
+        gainMap: Presence.absent,
+        alpha: Presence.absent,
+        width: 0,
+        height: 0,
+      );
+
+  @override
+  Future<Uint8List> crateApiMetadataTransplantMetadata({
+    required List<int> source,
+    required List<int> target,
+  }) async =>
+      carries ? Uint8List.fromList(target) : Future.error('malformed: test');
+
+  @override
+  Future<Uint8List> crateApiMetadataStripMetadata({
+    required List<int> bytes,
+    required bool stripIcc,
+  }) async => Uint8List.fromList(bytes);
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  final api = _Api();
+  setUpAll(() => DarkLib.initMock(api: api));
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   final calls = <Map>[];
@@ -37,13 +71,14 @@ void main() {
     messenger.setMockMethodCallHandler(NativeImageEncoder.channel, (
       call,
     ) async {
-      if (call.method != 'bakeUpright') return null;
+      if (!isBake(call)) return null;
       calls.add(call.arguments as Map);
-      return answer;
+      return answerBake(call, answer);
     });
   });
   tearDown(() {
     NativeImageEncoder.onAndroid = false;
+    api.carries = true;
     messenger.setMockMethodCallHandler(NativeImageEncoder.channel, null);
   });
 
@@ -90,10 +125,11 @@ void main() {
   });
 
   // The bridge itself carries no metadata: DarkLib carries the source's onto
-  // its PNG. Without DarkLib that cannot happen, and the request gets nothing
-  // rather than an image silently stripped.
-  test('Android bridge with metadata needs DarkLib to carry it', () async {
+  // its PNG, its colour profile always (IMG-18). When that fails the request
+  // gets nothing rather than an image silently stripped or mislabelled.
+  test('Android bridge needs DarkLib to carry the source', () async {
     NativeImageEncoder.onAndroid = true;
+    api.carries = false;
     final (out, events) = await traced(
       () => NativeImageEncoder.bakeUpright(
         source: encodedHeader(DefaultFormat.avif),

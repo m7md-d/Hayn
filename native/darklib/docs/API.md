@@ -189,7 +189,8 @@ assert_eq!(out.hdr, codec::HdrOutcome::None); // an SDR source
 ```rust
 pub enum Transfer { Unknown, NoHdrSignal, Pq, Hlg }
 pub enum Presence { Unknown, Absent, Present }
-pub struct Facts { pub transfer: Transfer, pub gain_map: Presence }
+pub struct Facts { pub transfer: Transfer, pub gain_map: Presence, pub alpha: Presence,
+                   pub width: u32, pub height: u32 }
 pub fn inspect(bytes: &[u8]) -> Facts;
 ```
 Container scan, no pixel decode. AVIF/HEIC: the PRIMARY item's `colr` nclx (a
@@ -197,7 +198,9 @@ grid falls back to its first tile; a `tmap` item's own `colr` is ignored) and
 `tmap` or a gain-map `auxC`. PNG: `cICP` before `IDAT`. JPEG: `hdrgm`/Apple
 `HDRGainMap` XMP or an ISO 21496-1 APP2; MPF alone is `Unknown`. WebP has no HDR
 signalling. `NoHdrSignal`/`Absent` mean no known signal was found, not proof of
-SDR; an unreadable container is `Unknown`.
+SDR; an unreadable container is `Unknown`. `width`/`height` are the stored size
+from the header (`codec::header_dimensions`; HEIF/AVIF: the primary item or its
+grid canvas), before orientation, 0 when the header does not say.
 
 ### HEIF alpha (`engine::codec::heif_alpha`)
 

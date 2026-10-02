@@ -85,8 +85,6 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   Uint8List? _originBytes;
   Uint8List? _originShown; // what the "before" pane draws (IMG-13 on Android)
   int _beforeSize = 0;
-  int _activeW = 0; // source dimensions (for the huge-image encode cap)
-  int _activeH = 0;
   SourceFacts? _facts; // alpha + HDR of the ORIGINAL, read once per image
   bool? get _hasAlpha => _facts?.alpha;
   NativeImageInfo? _info; // real bit depth / alpha / HDR of the source
@@ -157,8 +155,6 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
       _originBytes = origin;
       _originShown = shown;
       _beforeSize = origin?.length ?? 0;
-      _activeW = entity.width;
-      _activeH = entity.height;
       _facts = facts;
       _info = info;
     });
@@ -182,6 +178,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
       choice: _format,
       hasAlpha: _hasAlpha,
       caps: caps,
+      giant: _facts?.giant ?? false,
     );
     final q = _quality.round();
     final seq = ++_encodeSeq;
@@ -189,7 +186,6 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
     if (!_isSingle) _scheduleEstimate(); // show prior + spinner while encoding
     try {
       final sw = Stopwatch()..start();
-      final cap = encodeCapFor(_activeW, _activeH); // huge-image guard
       final result = await ImageEncoder.encode(
         source: src,
         target: target.format,
@@ -201,8 +197,6 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
         keepMetadata: _keepMetadata,
         keepOriginalTime: _keepOriginalTime,
         bitDepth: _bitDepth,
-        maxWidth: cap.maxWidth,
-        maxHeight: cap.maxHeight,
       );
       sw.stop();
       if (!mounted || seq != _encodeSeq) return;
@@ -431,9 +425,27 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
     final isBatch = _ids.length > 1;
 
     final caps = ref.watch(formatCapabilitiesProvider);
-    final autoFormat = _format == DefaultFormat.auto
-        ? DefaultFormat.resolveAuto(caps)
-        : _format;
+    // A giant image is offered JPEG and HEIC only (RUN-01): a choice it is not
+    // offered shows, and encodes, as Auto for it.
+    final giant = _facts?.giant ?? false;
+    bool offered(DefaultFormat f) => ImageFormatPolicy.offers(
+      f,
+      giant: giant,
+      hasAlpha: _hasAlpha,
+      caps: caps,
+    );
+    final shownFormat = offered(_format) ? _format : DefaultFormat.auto;
+    final autoResolved = giant
+        ? ImageFormatPolicy.resolve(
+            choice: DefaultFormat.auto,
+            hasAlpha: _hasAlpha,
+            caps: caps,
+            giant: true,
+          ).format
+        : DefaultFormat.resolveAuto(caps);
+    final autoFormat = shownFormat == DefaultFormat.auto
+        ? autoResolved
+        : shownFormat;
 
     return HaynScaffold(
       appBar: HaynModalAppBar(
@@ -555,7 +567,9 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
                         )
                       : HaynAdvancedSettingsCard(
                           key: const ValueKey('advanced'),
-                          format: _format,
+                          format: shownFormat,
+                          offered: offered,
+                          autoResolved: autoResolved,
                           formatNote: _formatNote,
                           quality: _quality,
                           keepMetadata: _keepMetadata,
