@@ -53,14 +53,14 @@
 
 | الأداة | الإصدار | ملاحظات |
 |---|---|---|
-| Flutter / Dart | **3.47.2** / 3.13.2 | أرشيف Flutter الرسمي لهذه النسخة. `flutter doctor -v` بعد التثبيت |
+| Flutter / Dart | **3.47.2** / 3.13.2 | أرشيف Flutter الرسمي لهذه النسخة، أو في checkout موجود: `git fetch --tags && git checkout 3.47.2` داخل مجلد Flutter (جُرّب 2026-10-02). نسخة أقدم (3.44) تغيّر `pubspec.lock` خمس حزم. `flutter doctor -v` بعد التثبيت |
 | Java | **Temurin 21** | تُجمَّع Java وKotlin بمستوى 17 |
 | Android SDK | API 36، وBuild Tools **35.0.0**، وNDK **28.2.13676358**، وCMake **3.22.1**، وplatform-tools | `sdkmanager` ثم `flutter doctor --android-licenses`. قد ينزل Gradle منصات إضافية |
 | Rust | **stable** للتطوير، و**1.88.0** لفحص MSRV | `rustup toolchain install 1.88.0`. هدف Android `aarch64-linux-android`؛ Cargokit يضيفه عند أول بناء إن غاب |
 | مولّد الروابط | `flutter_rust_bridge_codegen` **2.12.0** | `cargo install flutter_rust_bridge_codegen --version 2.12.0 --locked` |
 | `cargo-expand` | **1.0.126** | `cargo install cargo-expand --version 1.0.126 --locked`. يحتاج المولّد، وهو يحتاج مترجم nightly: على الماك مثبت `nightly` لهذا الغرض (`rustup toolchain install nightly`). nightly للأداة وحدها، لا للمنتج (native.md) |
 | مترجم C | `build-essential` أو `clang` | حزمة `webp` تبني libwebp من C |
-| Python 3 | مع `venv` | `pip install pillow pillow-heif` في بيئة افتراضية. لسكربتات العينات والقارئ المستقل |
+| Python 3 | مع `venv` | `python3 -m venv ~/hayn-venv && ~/hayn-venv/bin/pip install pillow pillow-heif`، ثم `PATH=$HOME/hayn-venv/bin:$PATH tool/test_performance.sh` (السكربت يستدعي `python3` للعينات؛ بدونها يفشل) |
 | ffmpeg وffprobe | الأحدث المتاح (الماك: 9.0.1) | قارئ مستقل لبلاطات AVIF (`docs/14` IMG-02) |
 | `adb` | من platform-tools | قواعد `udev` لسامسونج (المعرّف `04e8`)، والمستخدم في مجموعة `plugdev`، وقبول طلب RSA على الهاتف |
 | `curl` و`sha256sum` | | سكربت الأداء ينزّل عينة ويتحقق من بصمتها |
