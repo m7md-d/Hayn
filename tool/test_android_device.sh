@@ -2,7 +2,7 @@
 # Runs integration_test/android_device_test.dart on a connected Android phone,
 # in profile mode so DarkLib's Rust code is optimized (a debug build needs over
 # ten minutes for one gain-map AVIF encode). Android 16 hides files adb pushes
-# into the app's directories, so fixtures are served from this Mac over
+# into the app's directories, so fixtures are served from this computer over
 # `adb reverse` (127.0.0.1 only) and artifacts come back in the drive report.
 # Nothing is written to the phone's storage or gallery, unless HAYN_GALLERY=1:
 # then the crop tests ask for photo access, this script taps "Allow all" in

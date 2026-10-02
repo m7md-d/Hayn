@@ -44,20 +44,35 @@ fi
 IFS=$'\t' read -r DEVICE PLATFORM NAME <<<"$line"
 
 # The 12 MP photo (CC0, iPhone 14 Plus, Display P3), pinned by SHA-256, and
-# its HEIC/PNG copies from Apple's encoders (test_native/make_perf_fixtures.swift).
+# its HEIC/PNG copies: from Apple's encoders on macOS (make_perf_fixtures.swift),
+# from libheif and Pillow elsewhere (make_perf_fixtures.py).
 mkdir -p "$FIXTURES"
 if [ ! -f "$FIXTURES/photo-12mp.jpg" ]; then
   curl -sfL -A "HaynDev (performance fixtures)" -o "$FIXTURES/photo-12mp.jpg" "$PHOTO_URL"
 fi
-echo "$PHOTO_SHA  $FIXTURES/photo-12mp.jpg" | shasum -a 256 -c --quiet
+if command -v sha256sum >/dev/null; then
+  echo "$PHOTO_SHA  $FIXTURES/photo-12mp.jpg" | sha256sum -c --quiet
+else
+  echo "$PHOTO_SHA  $FIXTURES/photo-12mp.jpg" | shasum -a 256 -c --quiet
+fi
 if [ ! -f "$FIXTURES/photo-12mp.heic" ] || [ ! -f "$FIXTURES/photo-12mp.png" ] \
   || [ ! -f "$FIXTURES/photo-12mp-alpha.png" ]; then
-  swift test_native/make_perf_fixtures.swift "$FIXTURES"
+  if [ "$(uname)" = Darwin ] && command -v swift >/dev/null; then
+    swift test_native/make_perf_fixtures.swift "$FIXTURES"
+    echo apple >"$FIXTURES/.generator"
+  else
+    # No Apple encoders here: libheif and Pillow write the same pixels, but the
+    # HEIC bytes differ, so timings are comparable only within one generator.
+    python3 test_native/make_perf_fixtures.py "$FIXTURES"
+    echo libheif >"$FIXTURES/.generator"
+  fi
 fi
 FILES=(photo-12mp.jpg photo-12mp.heic photo-12mp.png photo-12mp-alpha.png)
 
 OUT="$ROOT/build/performance/$PLATFORM-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$OUT"
+# Which generator wrote the HEIC (files made before this note came from Apple).
+{ cat "$FIXTURES/.generator" 2>/dev/null || echo apple; } >"$OUT/fixtures-generator.txt"
 DEFINES=()
 cleanup_platform() { :; }
 

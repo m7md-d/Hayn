@@ -123,7 +123,7 @@ docs/                 Product, architecture and status documents
 flutter pub get
 flutter analyze
 flutter test                          # 199 tests
-(cd native/darklib && cargo test)     # 91 tests
+(cd native/darklib && cargo test)     # 109 tests
 
 flutter run                           # on a connected device or simulator
 flutter build apk --release
@@ -138,8 +138,9 @@ tool/screenshots/generate.sh
 
 Building needs a Rust toolchain; Cargokit adds each platform's target. iOS
 builds also need the iOS platform in Xcode (Settings → Components). Local
-setup on this project's machine is in
-[docs/13-DEVELOPMENT.md](docs/13-DEVELOPMENT.md).
+setup is in [docs/20-LINUX-WORKFLOW.md](docs/20-LINUX-WORKFLOW.md) (Linux, the main
+development machine) and [docs/13-DEVELOPMENT.md](docs/13-DEVELOPMENT.md) (the Mac,
+used for iOS builds and iPhone testing).
 
 Documentation and project rules are in Arabic; code is in English. Start with
 [CLAUDE.md](CLAUDE.md); known defects and their state are in
