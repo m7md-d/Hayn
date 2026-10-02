@@ -50,10 +50,11 @@ mkdir -p "$FIXTURES"
 if [ ! -f "$FIXTURES/photo-12mp.jpg" ]; then
   curl -sfL -A "HaynDev (performance fixtures)" -o "$FIXTURES/photo-12mp.jpg" "$PHOTO_URL"
 fi
-if command -v sha256sum >/dev/null; then
-  echo "$PHOTO_SHA  $FIXTURES/photo-12mp.jpg" | sha256sum -c --quiet
-else
+# shasum on macOS (its sha256sum lacks -c); sha256sum on Linux.
+if command -v shasum >/dev/null; then
   echo "$PHOTO_SHA  $FIXTURES/photo-12mp.jpg" | shasum -a 256 -c --quiet
+else
+  echo "$PHOTO_SHA  $FIXTURES/photo-12mp.jpg" | sha256sum -c --quiet
 fi
 if [ ! -f "$FIXTURES/photo-12mp.heic" ] || [ ! -f "$FIXTURES/photo-12mp.png" ] \
   || [ ! -f "$FIXTURES/photo-12mp-alpha.png" ]; then
