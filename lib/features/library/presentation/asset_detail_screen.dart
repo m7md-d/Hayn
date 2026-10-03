@@ -16,7 +16,9 @@ import '../../image_ops/data/gallery_saver.dart';
 import '../../image_ops/data/metadata.dart';
 import '../../image_ops/data/output_name.dart';
 import '../../image_ops/data/platform_pixels.dart';
+import '../../image_ops/data/region_image.dart';
 import '../../image_ops/data/strip_metadata_task.dart';
+import '../../image_ops/presentation/widgets/region_tiles.dart';
 import '../data/native_share.dart';
 import 'providers/asset_entity_cache.dart';
 import 'providers/library_provider.dart';
@@ -539,7 +541,8 @@ class _AssetPageState extends State<_AssetPage>
     with TickerProviderStateMixin {
   Uint8List? _lowResBytes;
   Uint8List? _hiResBytes;
-  Uint8List? _fullResBytes; // full-resolution original, loaded on zoom
+  RegionImage? _region; // the original read by tiles, opened on zoom
+  Uint8List? _fullResBytes; // where it cannot be (see _loadFullRes)
   bool _loadingFull = false;
 
   /// Width / height of the photo as displayed. The page sizes one frame from
@@ -683,6 +686,7 @@ class _AssetPageState extends State<_AssetPage>
     _infoAnim.dispose();
     _txCtrl.removeListener(_syncZoomLock);
     _txCtrl.dispose();
+    _region?.close();
     super.dispose();
   }
 
@@ -712,16 +716,36 @@ class _AssetPageState extends State<_AssetPage>
     widget.onZoomLockedChanged?.call(locked);
   }
 
-  /// On zoom, swap in the FULL-RESOLUTION original — the 1080-px hi-res blurs
-  /// when magnified, so pixel-peeping needs the real thing. One image, loaded
-  /// on demand (never for the whole library). Falls back to hi-res on failure.
+  /// On zoom, the original's detail: the 1080-px hi-res blurs when
+  /// magnified. It is read by tiles, those in view at the detail the zoom
+  /// needs (PERF-03), never whole. Where the platform cannot read it so (iOS,
+  /// AVIF on Android; M-07), the original is decoded within
+  /// [kFullResMaxEdge] instead. One image, on demand, never for the whole
+  /// library. Falls back to hi-res on failure.
   Future<void> _loadFullRes() async {
-    if (_fullResBytes != null || _loadingFull || _entity == null) return;
+    if (_region != null ||
+        _fullResBytes != null ||
+        _loadingFull ||
+        _entity == null) {
+      return;
+    }
     _loadingFull = true;
     final id = widget.entry.id;
     try {
       final origin = await _entity!.originBytes;
       if (origin == null || origin.isEmpty) return;
+      final region = await RegionImage.open(origin);
+      if (region != null) {
+        if (!mounted || widget.entry.id != id) {
+          await region.close();
+          return;
+        }
+        setState(() {
+          _region = region;
+          _aspect ??= region.width / region.height;
+        });
+        return;
+      }
       // Same bound as the compare preview; only the Android AVIF/HEIC bridge
       // (IMG-13) uses it, other images stay at full resolution.
       final data = await PlatformPixels.forDisplay(origin, maxEdge: 4096);
@@ -1022,7 +1046,16 @@ class _AssetPageState extends State<_AssetPage>
                                 filterQuality: FilterQuality.high,
                               ),
                       ),
-                      // Full-resolution original, drawn on top once zoomed in.
+                      // The original's tiles in view, on top once zoomed in.
+                      if (_region != null)
+                        Positioned.fill(
+                          child: RegionTiles(
+                            region: _region!,
+                            transform: _txCtrl,
+                            baseLongEdge: 1080,
+                          ),
+                        ),
+                      // Or the bounded original where tiles are unavailable.
                       if (_fullResBytes != null)
                         Image(
                           image: fullResImage(_fullResBytes!),

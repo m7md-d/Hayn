@@ -23,9 +23,12 @@ import '../data/image_encoder.dart';
 import '../data/image_probe.dart';
 import '../data/native_image_info.dart';
 import '../data/platform_pixels.dart';
+import '../data/region_image.dart';
 import '../data/source_facts.dart';
 import '../domain/image_format_policy.dart';
+import '../../library/presentation/full_res_image.dart';
 import 'widgets/compress_estimate_card.dart';
+import 'widgets/region_tiles.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CompressScreen — same philosophy as Surgical Arena: comparison preview on
@@ -99,6 +102,18 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   int _encodeSeq = 0;
   Timer? _debounce;
 
+  // The compare panes show both images bounded from afar and read them by
+  // tiles when zoomed (PERF-03), so neither is ever decoded whole. A region
+  // is null where the platform cannot read one (iOS, AVIF on Android; M-07):
+  // that pane is then decoded within [_comparePreviewEdge].
+  final _compareCtrl = TransformationController();
+  final _compareKey = GlobalKey();
+  RegionImage? _beforeRegion;
+  RegionImage? _afterRegion;
+  Uint8List? _encodedShown; // what the "after" pane draws (IMG-13/21)
+  static const int _compareBaseEdge = 2048;
+  static const int _comparePreviewEdge = 4096;
+
   @override
   void initState() {
     super.initState();
@@ -119,6 +134,9 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   void dispose() {
     _debounce?.cancel();
     _estimateDebounce?.cancel();
+    _compareCtrl.dispose();
+    _beforeRegion?.close();
+    _afterRegion?.close();
     super.dispose();
   }
 
@@ -146,14 +164,24 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
     if (!mounted) return;
     final facts = origin == null ? null : await SourceInspector.inspect(origin);
     final info = origin == null ? null : await NativeImageProbe.probe(origin);
+    final region = origin == null ? null : await RegionImage.open(origin);
     final shown = origin == null
         ? null
-        : await PlatformPixels.forDisplay(origin, maxEdge: 4096);
-    if (!mounted) return;
+        : await PlatformPixels.forDisplay(
+            origin,
+            maxEdge: region != null ? _compareBaseEdge : _comparePreviewEdge,
+          );
+    // Another image became active meanwhile: its own load fills the panes.
+    if (!mounted || _ids[_activeAssetIndex] != id) {
+      await region?.close();
+      return;
+    }
     setState(() {
       _previewBytes = thumb;
       _originBytes = origin;
       _originShown = shown;
+      _beforeRegion?.close();
+      _beforeRegion = region;
       _beforeSize = origin?.length ?? 0;
       _facts = facts;
       _info = info;
@@ -200,8 +228,20 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
       );
       sw.stop();
       if (!mounted || seq != _encodeSeq) return;
+      final region = await RegionImage.open(result.bytes);
+      final shown = await PlatformPixels.forDisplay(
+        result.bytes,
+        maxEdge: region != null ? _compareBaseEdge : _comparePreviewEdge,
+      );
+      if (!mounted || seq != _encodeSeq) {
+        await region?.close();
+        return;
+      }
       setState(() {
         _encoded = result;
+        _encodedShown = shown;
+        _afterRegion?.close();
+        _afterRegion = region;
         _encodeMs = sw.elapsedMicroseconds / 1000.0;
         _encoding = false;
         _encodedSig = _sig(q, _isSingle ? _bitDepth : 0);
@@ -294,39 +334,58 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
         ],
       );
     }
-    if (enc.format == DefaultFormat.avif) {
+    // The comparison is for zooming in on REAL compression artefacts: the
+    // tiles in view come at full detail. Android shows a HEIC or AVIF through
+    // its bridge (IMG-13, and the HEIC's profile, IMG-21).
+    final shown = _encodedShown ?? enc.bytes;
+    final region = _afterRegion;
+    if (region != null) {
+      return _tiledPane(_bounded(shown, _compareBaseEdge), region);
+    }
+    if (identical(shown, enc.bytes) && enc.format == DefaultFormat.avif) {
       return AvifImage.memory(enc.bytes, fit: BoxFit.contain);
     }
-    // Full-resolution decode on purpose: the comparison is for zooming in on
-    // REAL compression artefacts. Falls back to the thumbnail if a format won't
-    // decode in the engine.
-    return Image.memory(
-      enc.bytes,
-      fit: BoxFit.contain,
-      gaplessPlayback: true,
-      errorBuilder: (_, __, ___) =>
-          Image.memory(_previewBytes!, fit: BoxFit.contain),
-    );
+    return _bounded(shown, _comparePreviewEdge);
   }
 
-  /// The "before" pane: the FULL-RESOLUTION original (so zooming compares true
-  /// quality), with the quick thumbnail as the placeholder until it loads / if a
-  /// format can't decode in the engine.
+  /// [bytes] decoded within [maxEdge]; the thumbnail if they will not decode.
+  Widget _bounded(Uint8List bytes, int maxEdge) => Image(
+    image: boundedImage(bytes, maxEdge),
+    fit: BoxFit.contain,
+    gaplessPlayback: true,
+    errorBuilder: (_, __, ___) => _previewBytes != null
+        ? Image.memory(_previewBytes!, fit: BoxFit.contain)
+        : const SizedBox.shrink(),
+  );
+
+  /// A pane read by tiles: [base] from afar, [region]'s tiles in view once
+  /// zoomed past it, in one box of the image's shape.
+  Widget _tiledPane(Widget base, RegionImage region) => AspectRatio(
+    aspectRatio: region.width / region.height,
+    child: Stack(
+      fit: StackFit.expand,
+      children: [
+        base,
+        RegionTiles(
+          region: region,
+          transform: _compareCtrl,
+          baseLongEdge: _compareBaseEdge,
+          viewportKey: _compareKey,
+        ),
+      ],
+    ),
+  );
+
+  /// The "before" pane: the original, its tiles in view at full detail when
+  /// zoomed (so zooming compares true quality), with the quick thumbnail as
+  /// the placeholder until it loads / if a format can't decode in the engine.
   Widget _beforeWidget() {
     final origin = _originShown;
-    if (origin != null) {
-      return Image.memory(
-        origin,
-        fit: BoxFit.contain,
-        gaplessPlayback: true,
-        // Bound the decode so a ~200 MP original can't OOM the preview; still
-        // far more detail than the on-screen size for zoom-comparison.
-        cacheWidth: 4096,
-        errorBuilder: (_, __, ___) => _previewBytes != null
-            ? Image.memory(_previewBytes!, fit: BoxFit.contain)
-            : const SizedBox.shrink(),
-      );
+    final region = _beforeRegion;
+    if (origin != null && region != null) {
+      return _tiledPane(_bounded(origin, _compareBaseEdge), region);
     }
+    if (origin != null) return _bounded(origin, _comparePreviewEdge);
     return Image.memory(
       _previewBytes!,
       fit: BoxFit.contain,
@@ -371,6 +430,12 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
       _activeAssetIndex = newIndex;
       _previewBytes = null;
       _encoded = null; // the old encode belonged to the previous image
+      _encodedShown = null;
+      _beforeRegion?.close();
+      _beforeRegion = null;
+      _afterRegion?.close();
+      _afterRegion = null;
+      _compareCtrl.value = Matrix4.identity();
     });
     HapticFeedback.selectionClick();
     _loadActive();
@@ -479,6 +544,8 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
                       ),
                     )
                   : HaynComparisonViewer(
+                      key: _compareKey,
+                      controller: _compareCtrl,
                       beforeLabel: l.compressOriginalLabel,
                       afterLabel: l.compressPreviewLabel,
                       before: _beforeWidget(),

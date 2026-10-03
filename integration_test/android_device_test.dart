@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_avif/flutter_avif.dart' as avif;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,6 +12,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:image/image.dart' as img;
 import 'package:hayn/app/app.dart';
+import 'package:hayn/app/theme/app_theme.dart';
 import 'package:hayn/core/darklib/darklib.dart';
 import 'package:hayn/core/diagnostics/media_diagnostics.dart';
 import 'package:hayn/core/isolates/task_progress.dart';
@@ -21,11 +23,15 @@ import 'package:hayn/features/image_ops/data/image_probe.dart';
 import 'package:hayn/features/image_ops/data/native_avif_encoder.dart';
 import 'package:hayn/features/image_ops/data/native_image_encoder.dart';
 import 'package:hayn/features/image_ops/data/platform_pixels.dart';
+import 'package:hayn/features/image_ops/data/region_image.dart';
 import 'package:hayn/features/image_ops/data/source_facts.dart';
+import 'package:hayn/features/image_ops/presentation/widgets/region_tiles.dart';
+import 'package:hayn/features/library/presentation/full_res_image.dart';
 import 'package:hayn/features/library/presentation/library_screen.dart';
 import 'package:hayn/features/onboarding/providers/onboarding_provider.dart';
 import 'package:hayn/features/settings/presentation/settings_screen.dart';
 import 'package:hayn/features/settings/providers/preferences_providers.dart';
+import 'package:hayn/shared/widgets/comparison_viewer.dart';
 import 'package:hayn/src/rust/api/metadata.dart' as dl;
 
 // Real Android services on a physical phone, including the linked Rust library
@@ -747,6 +753,282 @@ void main() {
     }, skip: !_galleryTests);
   }
 
+  // PERF-03: the zoomed views read tiles through BitmapRegionDecoder, which
+  // ignores the orientation; the bridge maps each upright rectangle to the
+  // stored pixels and turns the tile. Put back together, the tiles must be
+  // the image as the app shows it whole: size, quadrants and pixels.
+  for (final o in [1, 2, 3, 4, 5, 6, 7, 8]) {
+    testWidgets('Region tiles: a JPEG with orientation $o shows upright', (
+      _,
+    ) async {
+      final source = _quadrants(1100, 700, orientation: o);
+      final whole = await _regionWhole(source);
+      final before = await _platformDecode(source);
+      _expectSameQuadrants(before, whole);
+      _expectSameImage(before, whole);
+    });
+  }
+
+  // The tiled HEIC writes the orientation as irot/imir in the container.
+  for (final o in [1, 2, 5, 6]) {
+    testWidgets('Region tiles: a HEIC with orientation $o shows upright', (
+      _,
+    ) async {
+      final out = await NativeImageEncoder.encodeHeicTiles(
+        source: _quadrants(1100, 700, orientation: o),
+        quality: 95,
+        orientation: o,
+      );
+      expect(out, isNotNull);
+      final whole = await _regionWhole(out!.bytes);
+      final before = await _platformDecode(out.bytes);
+      _expectSameQuadrants(before, whole);
+      _expectSameImage(before, whole);
+    });
+  }
+
+  // IMG-21 holds for tiles too: a HEIC's profile names its values, a JPEG's
+  // is applied; the colours are LittleCMS's (fixtures/README).
+  final p3Regions = <String, Future<Uint8List> Function()>{
+    'libheif_p3_icc.heic': () => _fixture('libheif_p3_icc.heic'),
+    'libheif_p3_nclx.heic': () => _fixture('libheif_p3_nclx.heic'),
+    'P3 JPEG': () async => (await DarkLibCore.transplantMetadata(
+      source: await _fixture('apple_png_p3_icc.png'),
+      target: _quadrants(64, 48, orientation: 1),
+    ))!,
+  };
+  for (final MapEntry(key: name, value: load) in p3Regions.entries) {
+    testWidgets('Region tiles: $name shows its colours', (_) async {
+      _expectP3Quadrants(await _regionWhole(await load()));
+    });
+  }
+
+  testWidgets('Region tiles: an Apple 10-bit HEIC matches the whole decode', (
+    _,
+  ) async {
+    final source = await _fixture('apple_heic_10bit_p3.heic');
+    final sw = Stopwatch()..start();
+    final whole = await _regionWhole(source);
+    device['region-apple-heic-ms'] = sw.elapsedMilliseconds;
+    _expectSameImage(await _platformDecode(source), whole);
+  });
+
+  // Android's ARGB_8888 is premultiplied, which Flutter's rgba8888 expects:
+  // read back straight, a translucent pixel keeps its colour and alpha.
+  testWidgets('Region tiles: a translucent PNG keeps colour and alpha', (
+    _,
+  ) async {
+    final whole = await _regionWhole(_png(alpha: true));
+    final p = whole.pixel(8, 6);
+    expect(p[3], 64);
+    for (final (c, want) in [(0, 80), (1, 120), (2, 160)]) {
+      expect(p[c], closeTo(want, 4), reason: '$p');
+    }
+  });
+
+  testWidgets('Region tiles: a sampled tile is smaller; none after close', (
+    _,
+  ) async {
+    final region = await RegionImage.open(
+      _quadrants(1100, 700, orientation: 6),
+    );
+    expect(region, isNotNull);
+    expect((region!.width, region.height), (700, 1100));
+    final half = await region.tile(const Rect.fromLTRB(0, 0, 700, 1024), 2);
+    expect((half!.width, half.height), (350, 512));
+    half.dispose();
+    await region.close();
+    expect(await region.tile(const Rect.fromLTRB(0, 0, 64, 64), 1), isNull);
+  });
+
+  // An image the platform cannot read by regions falls back to the bounded
+  // whole decode, with the reason recorded; one it can must be right.
+  testWidgets('Region tiles: AVIF reads right or falls back recorded', (
+    _,
+  ) async {
+    final source = (await DarkLibCore.transcode(
+      _quadrants(1100, 700, orientation: 1),
+      format: DarkLibFormat.avif,
+      quality: 100,
+      keepMetadata: false,
+    ))!.bytes;
+    final trace = await MediaDiagnostics.trace((trace) async {
+      final region = await RegionImage.open(source);
+      device['region-avif'] = region != null;
+      await region?.close();
+      return trace;
+    });
+    if (device['region-avif'] == false) {
+      expect(
+        trace.events.map((d) => d.toString()),
+        contains('androidRegion.display.unavailable'),
+      );
+      return;
+    }
+    final whole = await _regionWhole(source);
+    _expectSameImage(await _platformDecode(source), whole);
+  });
+
+  // PERF-03 end to end: a 3600×2700 checkerboard of 4 px squares under a
+  // ×10 zoom near its centre, where four tiles meet (2048, 1536). The squares
+  // straddle the 4 px blocks the 1000 px rendition averages, so it shows
+  // them grey: the same view without the tile layer is the control. With
+  // it, each square must show where it belongs (a viewport pixel is one
+  // image pixel here).
+  testWidgets('Region tiles draw the zoomed part at full detail', (
+    tester,
+  ) async {
+    final source = _checkerboard(3600, 2700);
+    final region = await tester.runAsync(() => RegionImage.open(source));
+    expect(region, isNotNull);
+    final ctrl = TransformationController(
+      Matrix4.identity()
+        ..translateByDouble(-1800, -1350, 0, 1)
+        ..scaleByDouble(10, 10, 1, 1),
+    );
+    final viewport = GlobalKey();
+    Widget view({required bool tiles}) => Directionality(
+      textDirection: TextDirection.ltr,
+      child: Align(
+        alignment: Alignment.topLeft,
+        child: RepaintBoundary(
+          key: viewport,
+          child: SizedBox(
+            width: 360,
+            height: 270,
+            child: InteractiveViewer(
+              transformationController: ctrl,
+              maxScale: 64,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Image(image: boundedImage(source, 1000), fit: BoxFit.fill),
+                  if (tiles)
+                    RegionTiles(
+                      region: region!,
+                      transform: ctrl,
+                      baseLongEdge: 1000,
+                      viewportKey: viewport,
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    Future<(int, int)> score() async =>
+        _checkerScore(await _capture(tester, viewport));
+
+    Future<void> settle() async {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 50)),
+      );
+      await tester.pump();
+    }
+
+    await tester.pumpWidget(view(tiles: false));
+    for (var i = 0; i < 10; i++) {
+      await settle(); // the rendition decodes
+    }
+    final (control, total) = await score();
+    await tester.pumpWidget(view(tiles: true));
+    final sw = Stopwatch()..start();
+    var right = 0;
+    for (var i = 0; i < 60 && right < total * 0.98; i++) {
+      if (i > 0) await settle(); // tiles arrive asynchronously
+      (right, _) = await score();
+    }
+    device['region-draw-ms'] = sw.elapsedMilliseconds;
+    device['region-draw-right'] = 'control $control, tiles $right of $total';
+    expect(control / total, lessThan(0.75), reason: 'the rendition shows it');
+    expect(right / total, greaterThan(0.98), reason: '$right of $total');
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.runAsync(region!.close);
+    ctrl.dispose();
+  });
+
+  // The compare screen's panes: "before" inside the InteractiveViewer,
+  // "after" under the same matrix in a Transform, each read by its own
+  // decoder. Both halves must show the squares where they belong; the
+  // labels, the split line and its handle are left out of the count.
+  testWidgets('Compare panes draw the zoomed part at full detail', (
+    tester,
+  ) async {
+    final source = _checkerboard(3600, 2700);
+    final regions = await tester.runAsync(
+      () => Future.wait([RegionImage.open(source), RegionImage.open(source)]),
+    );
+    expect(regions, everyElement(isNotNull));
+    final ctrl = TransformationController(
+      Matrix4.identity()
+        ..translateByDouble(-1800, -1350, 0, 1)
+        ..scaleByDouble(10, 10, 1, 1),
+    );
+    final viewport = GlobalKey();
+    Widget pane(RegionImage region) => AspectRatio(
+      aspectRatio: 4 / 3,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Image(image: boundedImage(source, 1000), fit: BoxFit.fill),
+          RegionTiles(
+            region: region,
+            transform: ctrl,
+            baseLongEdge: 1000,
+            viewportKey: viewport,
+          ),
+        ],
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light,
+        home: Align(
+          alignment: Alignment.topLeft,
+          child: SizedBox(
+            width: 360,
+            height: 270,
+            child: RepaintBoundary(
+              key: viewport,
+              child: HaynComparisonViewer(
+                controller: ctrl,
+                beforeLabel: 'before',
+                afterLabel: 'after',
+                before: pane(regions![0]!),
+                after: pane(regions[1]!),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    bool chrome(int x, int y) => y < 32 || y > 230 || (x - 180).abs() < 26;
+    var left = (0, 0), right = (0, 0);
+    for (var i = 0; i < 60; i++) {
+      if (i > 0) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 50)),
+        );
+        await tester.pump();
+      }
+      final shot = await _capture(tester, viewport);
+      left = _checkerScore(shot, skip: (x, y) => x >= 180 || chrome(x, y));
+      right = _checkerScore(shot, skip: (x, y) => x < 180 || chrome(x, y));
+      if (left.$1 >= left.$2 * 0.98 && right.$1 >= right.$2 * 0.98) break;
+    }
+    device['compare-draw-right'] = 'before $left, after $right';
+    expect(left.$1 / left.$2, greaterThan(0.98), reason: 'before $left');
+    expect(right.$1 / right.$2, greaterThan(0.98), reason: 'after $right');
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.runAsync(() async {
+      for (final r in regions) {
+        await r!.close();
+      }
+    });
+    ctrl.dispose();
+  });
+
   testWidgets('Real app opens the library and settings', (tester) async {
     await tester.pumpWidget(
       ProviderScope(
@@ -878,6 +1160,80 @@ Future<_Shown> _read(ui.Image image) async {
   final shown = _Shown(image.width, image.height, data!.buffer.asUint8List());
   image.dispose();
   return shown;
+}
+
+/// The frame now on screen inside [boundary], straight RGBA.
+Future<_Shown> _capture(WidgetTester tester, GlobalKey boundary) async {
+  final box =
+      boundary.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+  return (await tester.runAsync(() async => _read(await box.toImage())))!;
+}
+
+/// Squares of [_checkerboard] (3600×2700) shown right in a 360×270 view of
+/// it zoomed ×10 at (1800, 1350), and squares sampled: their centres, 1.5 px
+/// from their edges, except where [skip] says.
+(int, int) _checkerScore(_Shown shot, {bool Function(int x, int y)? skip}) {
+  expect((shot.width, shot.height), (360, 270));
+  var right = 0, total = 0;
+  for (var y = 2; y < 270; y += 8) {
+    for (var x = 0; x < 360; x += 8) {
+      if (skip?.call(x, y) ?? false) continue;
+      final ix = 1800 + x, iy = 1350 + y;
+      final white = (((ix + 2) ~/ 4) + ((iy + 2) ~/ 4)).isOdd;
+      final v = shot.pixel(x, y)[0];
+      total++;
+      if (white ? v > 200 : v < 55) right++;
+    }
+  }
+  return (right, total);
+}
+
+/// A JPEG checkerboard of 4 px black and white squares, [w]×[h], shifted
+/// 2 px off the 4 px grid.
+Uint8List _checkerboard(int w, int h) {
+  final image = img.Image(width: w, height: h, numChannels: 3);
+  for (final p in image) {
+    final v = (((p.x + 2) ~/ 4) + ((p.y + 2) ~/ 4)).isOdd ? 255 : 0;
+    p
+      ..r = v
+      ..g = v
+      ..b = v;
+  }
+  return Uint8List.fromList(img.encodeJpg(image, quality: 100));
+}
+
+/// [bytes] put back together from its full-size region tiles, as the
+/// zoomed views draw them: straight RGBA, upright.
+Future<_Shown> _regionWhole(Uint8List bytes) async {
+  final region = await RegionImage.open(bytes);
+  expect(region, isNotNull, reason: 'no region decoder');
+  try {
+    final w = region!.width, h = region.height;
+    final rgba = Uint8List(w * h * 4);
+    for (var y0 = 0; y0 < h; y0 += 512) {
+      for (var x0 = 0; x0 < w; x0 += 512) {
+        final rect = Rect.fromLTRB(
+          x0.toDouble(),
+          y0.toDouble(),
+          (x0 + 512).clamp(0, w).toDouble(),
+          (y0 + 512).clamp(0, h).toDouble(),
+        );
+        final tile = await _read((await region.tile(rect, 1))!);
+        expect((tile.width, tile.height), (rect.width, rect.height));
+        for (var y = 0; y < tile.height; y++) {
+          rgba.setRange(
+            ((y0 + y) * w + x0) * 4,
+            ((y0 + y) * w + x0 + tile.width) * 4,
+            tile.rgba,
+            y * tile.width * 4,
+          );
+        }
+      }
+    }
+    return _Shown(w, h, rgba);
+  } finally {
+    await region?.close();
+  }
 }
 
 /// Same size and near-identical pixels (a lossy re-encode of one rendition).

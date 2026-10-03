@@ -122,7 +122,7 @@ docs/                 Product, architecture and status documents
 ```bash
 flutter pub get
 flutter analyze
-flutter test                          # 210 tests
+flutter test                          # 216 tests
 (cd native/darklib && cargo test)     # 129 tests
 
 flutter run                           # on a connected device or simulator

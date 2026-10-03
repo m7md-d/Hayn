@@ -32,6 +32,7 @@ class HaynComparisonViewer extends StatefulWidget {
     this.initialFraction = 0.5,
     this.maxScale = 16.0,
     this.onZoomStateChanged,
+    this.controller,
     super.key,
   });
 
@@ -46,6 +47,11 @@ class HaynComparisonViewer extends StatefulWidget {
   /// scale > 1). Parents wire this to ListView/PageView physics so the
   /// surrounding scroll surface can't hijack the pinch.
   final ValueChanged<bool>? onZoomStateChanged;
+
+  /// The zoom and pan, for a caller whose panes follow them (tiles drawn
+  /// for the part in view). Created here when null; the caller disposes its
+  /// own.
+  final TransformationController? controller;
 
   @override
   State<HaynComparisonViewer> createState() => _HaynComparisonViewerState();
@@ -66,7 +72,7 @@ class _HaynComparisonViewerState extends State<HaynComparisonViewer>
   @override
   void initState() {
     super.initState();
-    _ctrl = TransformationController();
+    _ctrl = widget.controller ?? TransformationController();
     _ctrl.addListener(_onMatrixChanged);
     _zoomAnim = AnimationController(vsync: this, duration: AppDuration.normal)
       ..addListener(_applyZoomAnim);
@@ -76,7 +82,7 @@ class _HaynComparisonViewerState extends State<HaynComparisonViewer>
   @override
   void dispose() {
     _ctrl.removeListener(_onMatrixChanged);
-    _ctrl.dispose();
+    if (widget.controller == null) _ctrl.dispose();
     _zoomAnim.dispose();
     super.dispose();
   }

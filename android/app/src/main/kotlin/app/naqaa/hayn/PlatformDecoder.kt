@@ -101,7 +101,7 @@ object PlatformDecoder {
     /// reports it, IMG-21); then [space], the profile's own from DarkLib,
     /// names them first. Any other space is converted by drawing.
     @RequiresApi(Build.VERSION_CODES.Q)
-    private fun toSrgb(bitmap: Bitmap, space: FloatArray?): Bitmap {
+    internal fun toSrgb(bitmap: Bitmap, space: FloatArray?): Bitmap {
         val srgb = ColorSpace.get(ColorSpace.Named.SRGB)
         if (bitmap.colorSpace == srgb) {
             val named = profileOf(space) ?: return bitmap

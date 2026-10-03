@@ -12,6 +12,9 @@ class MainActivity : FlutterActivity() {
 
     private val avifExecutor = Executors.newSingleThreadExecutor()
     private val decodeExecutor = Executors.newSingleThreadExecutor()
+    // Two threads: the compare screen's two images decode side by side; one
+    // decoder serialises its own regions anyway.
+    private val regionExecutor = Executors.newFixedThreadPool(2)
     private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -103,6 +106,61 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        // Region decoding for the zoomed viewer and compare screen (PERF-03):
+        // tiles of the part in view, never the whole image.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, REGION_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "open" -> {
+                        val path = call.argument<String>("path")
+                        val orientation = call.argument<Int>("orientation") ?: 0
+                        val space = call.argument<FloatArray>("space")
+                        if (path == null) {
+                            result.success(null)
+                        } else {
+                            regionExecutor.execute {
+                                val out = RegionDecoders.open(path, orientation, space)
+                                mainHandler.post {
+                                    result.success(
+                                        out?.let {
+                                            mapOf("id" to it.id, "width" to it.width, "height" to it.height)
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    "tiles" -> {
+                        val id = call.argument<Int>("id") ?: 0
+                        val rect = call.argument<IntArray>("rect")
+                        val cuts = call.argument<IntArray>("cuts") ?: IntArray(0)
+                        val sample = call.argument<Int>("sample") ?: 1
+                        if (rect == null || rect.size != 4) {
+                            result.success(null)
+                        } else {
+                            regionExecutor.execute {
+                                val out = RegionDecoders.tiles(
+                                    id, rect[0], rect[1], rect[2], rect[3], cuts, sample,
+                                )
+                                mainHandler.post {
+                                    result.success(
+                                        out?.map {
+                                            mapOf("width" to it.width, "height" to it.height, "pixels" to it.pixels)
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    "close" -> {
+                        val id = call.argument<Int>("id") ?: 0
+                        regionExecutor.execute { RegionDecoders.close(id) }
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
     }
 
     /**
@@ -146,5 +204,6 @@ class MainActivity : FlutterActivity() {
         const val SIZE_CHANNEL = "hayn/media_size"
         const val AVIF_CHANNEL = "hayn/avif"
         const val IMAGE_CHANNEL = "hayn/metadata"
+        const val REGION_CHANNEL = "hayn/region"
     }
 }

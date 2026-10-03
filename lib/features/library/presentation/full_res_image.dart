@@ -6,16 +6,22 @@ import 'package:flutter/widgets.dart';
 // Galaxy S25 Edge, past many GPUs' texture limit (RUN-01). Bounded to
 // [kFullResMaxEdge], a JPEG decodes already scaled (DCT scaling): a 48 MP
 // photo stays whole, a 200 MP one shows at half size in about a second.
-// Zooming deeper at full size needs region decoding (docs/23-LARGE-IMAGES.md).
+// Transitional: Android reads the original by tiles instead (RegionTiles,
+// PERF-03). This stays for what has no region decoder yet, iOS (M-07) and
+// AVIF on Android, and goes once they have one.
 
 /// Longest edge the viewer decodes the original at.
 const int kFullResMaxEdge = 8192;
 
 /// The original's bytes for the zoomed viewer, decoded within
 /// [kFullResMaxEdge] on either side and never upscaled.
-ImageProvider fullResImage(Uint8List bytes) => ResizeImage(
+ImageProvider fullResImage(Uint8List bytes) =>
+    boundedImage(bytes, kFullResMaxEdge);
+
+/// [bytes] decoded within [maxEdge] on either side, never upscaled.
+ImageProvider boundedImage(Uint8List bytes, int maxEdge) => ResizeImage(
   MemoryImage(bytes),
-  width: kFullResMaxEdge,
-  height: kFullResMaxEdge,
+  width: maxEdge,
+  height: maxEdge,
   policy: ResizeImagePolicy.fit,
 );

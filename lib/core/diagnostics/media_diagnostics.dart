@@ -10,6 +10,7 @@ enum MediaBackend {
   androidAvif,
   androidDecoder,
   androidHeic,
+  androidRegion,
   darklib,
   flutterAvif,
   imageCompress,
@@ -28,6 +29,7 @@ enum MediaOperation {
   cleanup,
   save,
   thumbnail,
+  display,
 }
 
 enum MediaDiagnosticCode {
