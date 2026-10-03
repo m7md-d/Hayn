@@ -392,4 +392,69 @@ void main() {
     );
     expect(await DarkLibCore.profileSpace(plain), isNull);
   });
+
+  // PERF-03: an AVIF read by regions through the real FFI. One item: open
+  // decodes it into raw files in the cache directory; a row comes back cut
+  // into tiles at the source's colours; disposing the reader removes the
+  // files. A PQ AVIF is refused, recorded.
+  test('an AVIF reads by regions and cleans up after itself', () async {
+    final source = img.Image(width: 300, height: 200, numChannels: 3);
+    img.fill(source, color: img.ColorRgb8(30, 140, 220));
+    final avif = (await DarkLibCore.transcode(
+      Uint8List.fromList(img.encodePng(source)),
+      format: DarkLibFormat.avif,
+      quality: 90,
+      keepMetadata: false,
+    ))!.bytes;
+    final dir = await Directory.systemTemp.createTemp('hayn-region-');
+    addTearDown(() => dir.delete(recursive: true));
+    final file = File('${dir.path}/source.avif')..writeAsBytesSync(avif);
+    final reader = (await DarkLibCore.openRegion(
+      path: file.path,
+      cacheDir: dir.path,
+    ))!;
+    file.deleteSync(); // the reader holds the bytes
+    expect((reader.width, reader.height), (300, 200));
+    expect(dir.listSync(), isNotEmpty, reason: 'the pyramid files');
+    final tiles = (await DarkLibCore.regionTiles(
+      reader,
+      rect: [0, 0, 300, 128],
+      cuts: [128, 256],
+      sample: 1,
+    ))!;
+    expect(
+      [for (final t in tiles) (t.width, t.height)],
+      [(128, 128), (128, 128), (44, 128)],
+    );
+    final p = tiles[1].rgba.sublist(0, 4);
+    expect(p[0], closeTo(30, 3));
+    expect(p[1], closeTo(140, 3));
+    expect(p[2], closeTo(220, 3));
+    expect(p[3], 255);
+    final half = (await DarkLibCore.regionTiles(
+      reader,
+      rect: [0, 0, 300, 200],
+      cuts: [],
+      sample: 2,
+    ))!;
+    expect((half.single.width, half.single.height), (150, 100));
+    reader.dispose();
+    expect(dir.listSync(), isEmpty, reason: 'disposed with its files');
+
+    final pq = File('${dir.path}/pq.avif')
+      ..writeAsBytesSync(
+        File(
+          'native/darklib/tests/fixtures/seine_hdr_rec2020.avif',
+        ).readAsBytesSync(),
+      );
+    final before = MediaDiagnostics.recent.length;
+    expect(
+      await DarkLibCore.openRegion(path: pq.path, cacheDir: dir.path),
+      isNull,
+    );
+    expect(
+      MediaDiagnostics.recent.skip(before).map((d) => d.toString()),
+      contains('darklib.display.exception'),
+    );
+  });
 }

@@ -6,9 +6,10 @@ import 'package:flutter/widgets.dart';
 // Galaxy S25 Edge, past many GPUs' texture limit (RUN-01). Bounded to
 // [kFullResMaxEdge], a JPEG decodes already scaled (DCT scaling): a 48 MP
 // photo stays whole, a 200 MP one shows at half size in about a second.
-// Transitional: Android reads the original by tiles instead (RegionTiles,
-// PERF-03). This stays for what has no region decoder yet, iOS (M-07) and
-// AVIF on Android, and goes once they have one.
+// Transitional: the viewer reads the original by tiles instead (RegionTiles,
+// PERF-03): AVIF everywhere, the other formats on Android. This stays for
+// what has no region reader yet, those formats on iOS (M-07), and for what
+// a reader refuses (PQ/HLG AVIF), and goes once they have one.
 
 /// Longest edge the viewer decodes the original at.
 const int kFullResMaxEdge = 8192;

@@ -718,8 +718,8 @@ class _AssetPageState extends State<_AssetPage>
 
   /// On zoom, the original's detail: the 1080-px hi-res blurs when
   /// magnified. It is read by tiles, those in view at the detail the zoom
-  /// needs (PERF-03), never whole. Where the platform cannot read it so (iOS,
-  /// AVIF on Android; M-07), the original is decoded within
+  /// needs (PERF-03), never whole. Where nothing reads it so (non-AVIF on
+  /// iOS, M-07; a PQ/HLG AVIF), the original is decoded within
   /// [kFullResMaxEdge] instead. One image, on demand, never for the whole
   /// library. Falls back to hi-res on failure.
   Future<void> _loadFullRes() async {

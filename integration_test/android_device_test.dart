@@ -9,6 +9,7 @@ import 'package:flutter_avif/flutter_avif.dart' as avif;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:image/image.dart' as img;
 import 'package:hayn/app/app.dart';
@@ -841,9 +842,10 @@ void main() {
     expect(await region.tile(const Rect.fromLTRB(0, 0, 64, 64), 1), isNull);
   });
 
-  // An image the platform cannot read by regions falls back to the bounded
-  // whole decode, with the reason recorded; one it can must be right.
-  testWidgets('Region tiles: AVIF reads right or falls back recorded', (
+  // AVIF reads through DarkLib on every platform: one item decoded once into
+  // raw files in the cache directory, a grid cell by cell. Put back
+  // together, the tiles must be what Android's own decoder shows.
+  testWidgets('Region tiles: an AVIF of one item matches the whole decode', (
     _,
   ) async {
     final source = (await DarkLibCore.transcode(
@@ -852,21 +854,63 @@ void main() {
       quality: 100,
       keepMetadata: false,
     ))!.bytes;
+    final whole = await _regionWhole(source);
+    final before = await _platformDecode(source);
+    _expectSameQuadrants(before, whole);
+    _expectSameImage(before, whole);
+  });
+
+  testWidgets('Region tiles: an AVIF grid matches the whole decode', (_) async {
+    final source = await _fixture('sofa_grid1x5_420.avif');
+    _expectSameImage(await _platformDecode(source), await _regionWhole(source));
+  });
+
+  // The AVIF's profile converts to sRGB in DarkLib (LittleCMS's values).
+  testWidgets('Region tiles: a P3 AVIF shows its colours', (_) async {
+    final p3 = (await DarkLibCore.transplantMetadata(
+      source: await _fixture('apple_png_p3_icc.png'),
+      target: _quadrants(64, 48, orientation: 1),
+    ))!;
+    final avif = (await DarkLibCore.transcode(
+      p3,
+      format: DarkLibFormat.avif,
+      quality: 100,
+      keepMetadata: true,
+    ))!.bytes;
+    _expectP3Quadrants(await _regionWhole(avif));
+  });
+
+  // PQ has no SDR display here: refused, recorded, the bounded decode shows
+  // it. And a closed reader leaves no file in the cache directory.
+  testWidgets('Region tiles: a PQ AVIF is refused; nothing is left behind', (
+    _,
+  ) async {
     final trace = await MediaDiagnostics.trace((trace) async {
-      final region = await RegionImage.open(source);
-      device['region-avif'] = region != null;
-      await region?.close();
+      expect(
+        await RegionImage.open(await _fixture('seine_hdr_rec2020.avif')),
+        isNull,
+      );
       return trace;
     });
-    if (device['region-avif'] == false) {
-      expect(
-        trace.events.map((d) => d.toString()),
-        contains('androidRegion.display.unavailable'),
-      );
-      return;
-    }
-    final whole = await _regionWhole(source);
-    _expectSameImage(await _platformDecode(source), whole);
+    expect(
+      trace.events.map((d) => d.toString()),
+      contains('darklib.display.exception'),
+    );
+    final region = await RegionImage.open(
+      (await DarkLibCore.transcode(
+        _quadrants(300, 200, orientation: 1),
+        format: DarkLibFormat.avif,
+        quality: 90,
+        keepMetadata: false,
+      ))!.bytes,
+    );
+    expect(region, isNotNull);
+    final dir = await getTemporaryDirectory();
+    bool cached(FileSystemEntity f) =>
+        f.path.split('/').last.startsWith('darklib-region-');
+    expect(dir.listSync().where(cached), isNotEmpty);
+    await region!.close();
+    expect(dir.listSync().where(cached), isEmpty);
   });
 
   // PERF-03 end to end: a 3600×2700 checkerboard of 4 px squares under a

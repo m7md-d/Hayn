@@ -230,6 +230,94 @@ pub fn rgb_space(icc: &[u8]) -> Option<RgbSpace> {
     })
 }
 
+/// Converts 8-bit RGB in a matrix/TRC space to sRGB for display: the D50
+/// colorants connect the two as an ICC profile connection does, and what
+/// falls outside sRGB is clipped (relative colorimetric). Platform decoders
+/// do the same for what they show; DarkLib needs it where it decodes for
+/// display itself (AVIF tiles, Hayn PERF-03).
+pub struct ToSrgb {
+    linear: [f32; 256],
+    m: [[f32; 3]; 3],
+    encode: Vec<u8>,
+}
+
+/// Steps of the sRGB encode table: finer than 8 bits where the curve is
+/// steep (near black).
+const ENCODE_STEPS: usize = 4096;
+
+impl ToSrgb {
+    /// The conversion from `space`; `None` when `space` is sRGB itself (no
+    /// conversion), or its matrix cannot be inverted.
+    pub fn new(space: &RgbSpace) -> Option<Self> {
+        let srgb = rgb_space(&synthesize_from_cicp(1, 13)?)?;
+        let near = |a: &[f32], b: &[f32]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 2e-3);
+        if near(&space.to_xyz_d50, &srgb.to_xyz_d50) && near(&space.transfer, &srgb.transfer) {
+            return None;
+        }
+        // XYZ = M·rgb with the colorants as columns (column-major storage).
+        let cols = |s: &RgbSpace| -> M3 {
+            let c = &s.to_xyz_d50;
+            [
+                [c[0] as f64, c[3] as f64, c[6] as f64],
+                [c[1] as f64, c[4] as f64, c[7] as f64],
+                [c[2] as f64, c[5] as f64, c[8] as f64],
+            ]
+        };
+        let m = mul_mm(&inv3(&cols(&srgb))?, &cols(space));
+        let mut linear = [0f32; 256];
+        for (i, l) in linear.iter_mut().enumerate() {
+            *l = eval_transfer(&space.transfer, i as f32 / 255.0);
+        }
+        let encode = (0..ENCODE_STEPS)
+            .map(|i| {
+                let l = i as f32 / (ENCODE_STEPS - 1) as f32;
+                let e = if l <= 0.003_130_8 {
+                    12.92 * l
+                } else {
+                    1.055 * l.powf(1.0 / 2.4) - 0.055
+                };
+                (e * 255.0 + 0.5).clamp(0.0, 255.0) as u8
+            })
+            .collect();
+        Some(ToSrgb {
+            linear,
+            m: m.map(|row| row.map(|v| v as f32)),
+            encode,
+        })
+    }
+
+    /// Converts the RGB of straight RGBA `px` in place; alpha is kept.
+    pub fn apply(&self, px: &mut [u8]) {
+        let top = (ENCODE_STEPS - 1) as f32;
+        for p in px.chunks_exact_mut(4) {
+            let rgb = [
+                self.linear[p[0] as usize],
+                self.linear[p[1] as usize],
+                self.linear[p[2] as usize],
+            ];
+            for (c, row) in self.m.iter().enumerate() {
+                let l = row[0] * rgb[0] + row[1] * rgb[1] + row[2] * rgb[2];
+                p[c] = self.encode[(l.clamp(0.0, 1.0) * top + 0.5) as usize];
+            }
+        }
+    }
+}
+
+/// Y = (aX + b)^g + e for X ≥ d, cX + f below: the [`RgbSpace`] transfer.
+fn eval_transfer(t: &[f32; 7], x: f32) -> f32 {
+    let [a, b, c, d, e, f, g] = *t;
+    if x >= d {
+        let base = a * x + b;
+        if base <= 0.0 {
+            e
+        } else {
+            base.powf(g) + e
+        }
+    } else {
+        c * x + f
+    }
+}
+
 // ── ICC serialisation (matrix/TRC display profile, v4) ───────────────────────
 
 /// Encode an s15Fixed16 number (signed 16.16 fixed point), big-endian.

@@ -87,6 +87,24 @@ pub(super) fn decode_item(bytes: &[u8], id: u32, depth: u8) -> Result<(u32, u32,
             return decode_grid(bytes, &grid);
         }
     }
+    let mut rgba = Vec::new();
+    let (w, h) = decode_item_rows(bytes, id, decoder_threads(), &mut |_, band| {
+        rgba.extend_from_slice(band);
+        Ok(())
+    })?;
+    Ok((w, h, rgba))
+}
+
+/// One `av01` item (not a grid) decoded with `threads` decoder threads, its
+/// rows handed to `sink` in order a band at a time: `sink(first_row, band)`,
+/// the band being whole rows of 8-bit RGBA. A caller that stores the rows
+/// elsewhere never holds the image twice.
+pub(super) fn decode_item_rows(
+    bytes: &[u8],
+    id: u32,
+    threads: usize,
+    sink: &mut RowSink<'_>,
+) -> Result<(u32, u32)> {
     // Per-item av1C config (a tile/alpha item must get ITS sequence header, never
     // another item's); the primary may fall back to the file's first av1C. Some
     // encoders also repeat the sequence header in the item data — harmless.
@@ -100,9 +118,20 @@ pub(super) fn decode_item(bytes: &[u8], id: u32, depth: u8) -> Result<(u32, u32,
     let item = isobmff::extract_item_av1(bytes, id)
         .ok_or(DarkError::Malformed("avif: item is not AV1"))?;
     stream.extend_from_slice(&item);
-    // SAFETY: the context/data/picture lifecycle is fully created, used and freed
-    // inside this call; every pointer originates from rav1d and stays in scope.
-    unsafe { decode_obus(&stream) }
+    decode_obus(&stream, threads, sink)
+}
+
+/// Receives decoded rows: `(first_row, band)`, the band whole rows of RGBA.
+pub(super) type RowSink<'a> = dyn FnMut(usize, &[u8]) -> Result<()> + 'a;
+
+/// Decoder threads for one picture: AV1 decodes tiles, loop filters and
+/// rows in parallel. Up to 4 (on a Galaxy S25 Edge a 12 MP still went from
+/// 820 to 375 ms, a 1024 px grid tile from 80 to 36 ms, 2026-10-03).
+pub(super) fn decoder_threads() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .min(4)
 }
 
 /// Assemble an ImageGrid from its own tiles.
@@ -157,23 +186,33 @@ fn assemble_grid(
     Ok((cw as u32, ch as u32, canvas))
 }
 
-unsafe fn decode_obus(obus: &[u8]) -> Result<(u32, u32, Vec<u8>)> {
-    let mut settings = MaybeUninit::<Dav1dSettings>::zeroed();
-    dav1d_default_settings(NonNull::new(settings.as_mut_ptr()).unwrap());
-    let mut settings = settings.assume_init();
-    settings.n_threads = 1; // one still, deterministic, light (fits an isolate)
-    settings.max_frame_delay = 1;
+/// Decode one still from its OBUs; rows go to `sink` (see [`RowSink`]).
+fn decode_obus(obus: &[u8], threads: usize, sink: &mut RowSink<'_>) -> Result<(u32, u32)> {
+    // SAFETY: the context/data/picture lifecycle is fully created, used and freed
+    // inside this call; every pointer originates from rav1d and stays in scope.
+    unsafe {
+        let mut settings = MaybeUninit::<Dav1dSettings>::zeroed();
+        dav1d_default_settings(NonNull::new(settings.as_mut_ptr()).unwrap());
+        let mut settings = settings.assume_init();
+        settings.n_threads = threads.clamp(1, 16) as _;
+        settings.max_frame_delay = 1; // one still: no frame threading
 
-    let mut ctx: Option<Dav1dContext> = None;
-    if dav1d_open(NonNull::new(&mut ctx), NonNull::new(&mut settings)).0 != 0 {
-        return Err(fail());
+        let mut ctx: Option<Dav1dContext> = None;
+        if dav1d_open(NonNull::new(&mut ctx), NonNull::new(&mut settings)).0 != 0 {
+            return Err(fail());
+        }
+        let out = decode_with_ctx(ctx, obus, threads, sink);
+        dav1d_close(NonNull::new(&mut ctx));
+        out
     }
-    let out = decode_with_ctx(ctx, obus);
-    dav1d_close(NonNull::new(&mut ctx));
-    out
 }
 
-unsafe fn decode_with_ctx(ctx: Option<Dav1dContext>, obus: &[u8]) -> Result<(u32, u32, Vec<u8>)> {
+unsafe fn decode_with_ctx(
+    ctx: Option<Dav1dContext>,
+    obus: &[u8],
+    threads: usize,
+    sink: &mut RowSink<'_>,
+) -> Result<(u32, u32)> {
     // Copy the OBU stream into a dav1d-owned buffer, then feed the whole temporal
     // unit. For a single self-contained still, one send + one get suffices.
     let mut data = MaybeUninit::<Dav1dData>::zeroed();
@@ -187,9 +226,9 @@ unsafe fn decode_with_ctx(ctx: Option<Dav1dContext>, obus: &[u8]) -> Result<(u32
 
     let mut pic = Dav1dPicture::default();
     let result = if dav1d_get_picture(ctx, NonNull::new(&mut pic)).0 == 0 {
-        let rgba = picture_to_rgba(&pic);
+        let rows = picture_rows(&pic, threads, sink);
         dav1d_picture_unref(NonNull::new(&mut pic));
-        rgba
+        rows
     } else {
         Err(fail())
     };
@@ -197,12 +236,21 @@ unsafe fn decode_with_ctx(ctx: Option<Dav1dContext>, obus: &[u8]) -> Result<(u32
     result
 }
 
+/// Rows converted per band: about 4 MB of RGBA for a 4032 px wide image.
+const BAND_ROWS: usize = 256;
+
 /// Convert a decoded `Dav1dPicture` (planar YUV, 8/10/12-bit) to packed 8-bit
-/// RGBA, applying the matrix coefficients + range from the sequence header. Deep
-/// (10/12-bit) sources are reduced to 8-bit here — the current SDR contract; a
-/// wide/HDR path lands with HDR-through-convert. Alpha is set opaque here;
-/// `decode` composites the separate AVIF alpha auxiliary item over the result.
-unsafe fn picture_to_rgba(pic: &Dav1dPicture) -> Result<(u32, u32, Vec<u8>)> {
+/// RGBA, applying the matrix coefficients + range from the sequence header,
+/// [`BAND_ROWS`] rows at a time handed to `sink`, each band split across up
+/// to `threads` threads. Deep (10/12-bit) sources are reduced to 8-bit here
+/// — the current SDR contract; a wide/HDR path lands with HDR-through-convert.
+/// Alpha is set opaque here; the callers composite the separate AVIF alpha
+/// auxiliary item.
+unsafe fn picture_rows(
+    pic: &Dav1dPicture,
+    threads: usize,
+    sink: &mut RowSink<'_>,
+) -> Result<(u32, u32)> {
     let (w, h) = (pic.p.w, pic.p.h);
     if w <= 0 || h <= 0 {
         return Err(fail());
@@ -212,8 +260,6 @@ unsafe fn picture_to_rgba(pic: &Dav1dPicture) -> Result<(u32, u32, Vec<u8>)> {
         return Err(fail());
     }
     let bpc = bpc as u8;
-    let deep = bpc > 8; // planes are little-endian u16 samples
-    let maxv = ((1u32 << bpc) - 1) as f32;
     let (w, h) = (w as usize, h as usize);
 
     // Colour conversion parameters from the sequence header (defaults: BT.601,
@@ -225,9 +271,7 @@ unsafe fn picture_to_rgba(pic: &Dav1dPicture) -> Result<(u32, u32, Vec<u8>)> {
         }
         None => (6, true),
     };
-    let identity = mtrx == 0; // MC identity: the planes ARE G, B, R
     let (kr, kb) = kr_kb(mtrx);
-    let kg = 1.0 - kr - kb;
 
     // Chroma subsampling shift per layout (0=I400, 1=I420, 2=I422, 3=I444).
     let layout = pic.p.layout;
@@ -239,7 +283,6 @@ unsafe fn picture_to_rgba(pic: &Dav1dPicture) -> Result<(u32, u32, Vec<u8>)> {
     };
 
     let yp = pic.data[0].ok_or_else(fail)?.as_ptr() as *const u8;
-    let ystride = pic.stride[0];
     let (up, vp, cstride) = if has_chroma {
         (
             pic.data[1].ok_or_else(fail)?.as_ptr() as *const u8,
@@ -249,41 +292,112 @@ unsafe fn picture_to_rgba(pic: &Dav1dPicture) -> Result<(u32, u32, Vec<u8>)> {
     } else {
         (std::ptr::null(), std::ptr::null(), 0)
     };
+    let planes = Planes {
+        y: yp,
+        u: up,
+        v: vp,
+        ystride: pic.stride[0],
+        cstride,
+        w,
+        bpc,
+        deep: bpc > 8, // planes are little-endian u16 samples
+        maxv: ((1u32 << bpc) - 1) as f32,
+        full,
+        identity: mtrx == 0, // MC identity: the planes ARE G, B, R
+        has_chroma,
+        sub_x,
+        sub_y,
+        kr,
+        kb,
+    };
 
-    let mut rgba = vec![0u8; w * h * 4];
-    for y in 0..h {
-        let yrow = yp.offset(y as isize * ystride);
-        let crow = (y >> sub_y) as isize * cstride;
-        for x in 0..w {
-            let yv = sample(yrow, x, deep);
-            let (r, g, b) = if !has_chroma {
-                let l = to_u8(norm_luma(yv, maxv, full, bpc));
-                (l, l, l)
-            } else {
-                let cx = x >> sub_x;
-                let uv = sample(up.offset(crow), cx, deep);
-                let vv = sample(vp.offset(crow), cx, deep);
-                if identity {
-                    // MC identity: planes are G, B, R at `bpc` bits.
-                    (scale8(vv, maxv), scale8(yv, maxv), scale8(uv, maxv))
-                } else {
-                    let yn = norm_luma(yv, maxv, full, bpc);
-                    let cbn = norm_chroma(uv, maxv, full, bpc);
-                    let crn = norm_chroma(vv, maxv, full, bpc);
-                    let r = yn + 2.0 * (1.0 - kr) * crn;
-                    let b = yn + 2.0 * (1.0 - kb) * cbn;
-                    let g = (yn - kr * r - kb * b) / kg;
-                    (to_u8(r), to_u8(g), to_u8(b))
+    let threads = threads.max(1);
+    let mut band = vec![0u8; w * BAND_ROWS.min(h) * 4];
+    let mut y0 = 0;
+    while y0 < h {
+        let rows = BAND_ROWS.min(h - y0);
+        let out = &mut band[..w * rows * 4];
+        // Whole rows per thread, at least 16 so small bands stay on one.
+        let per = rows.div_ceil(threads).max(16);
+        if threads == 1 || rows <= per {
+            planes.rows(y0, out);
+        } else {
+            std::thread::scope(|scope| {
+                for (i, part) in out.chunks_mut(per * w * 4).enumerate() {
+                    let planes = &planes;
+                    scope.spawn(move || planes.rows(y0 + i * per, part));
                 }
-            };
-            let o = (y * w + x) * 4;
-            rgba[o] = r;
-            rgba[o + 1] = g;
-            rgba[o + 2] = b;
-            rgba[o + 3] = 255;
+            });
+        }
+        sink(y0, out)?;
+        y0 += rows;
+    }
+    Ok((w as u32, h as u32))
+}
+
+/// A decoded picture's planes and the conversion of its samples to RGBA.
+struct Planes {
+    y: *const u8,
+    u: *const u8,
+    v: *const u8,
+    ystride: isize,
+    cstride: isize,
+    w: usize,
+    bpc: u8,
+    deep: bool,
+    maxv: f32,
+    full: bool,
+    identity: bool,
+    has_chroma: bool,
+    sub_x: usize,
+    sub_y: usize,
+    kr: f32,
+    kb: f32,
+}
+
+// SAFETY: the planes are only read, while the picture they point into stays
+// referenced (until `picture_rows` returns, after the scoped threads end).
+unsafe impl Sync for Planes {}
+
+impl Planes {
+    /// Rows `y0..` into `out` (whole rows of RGBA).
+    fn rows(&self, y0: usize, out: &mut [u8]) {
+        let (w, bpc, maxv, full, deep) = (self.w, self.bpc, self.maxv, self.full, self.deep);
+        let kg = 1.0 - self.kr - self.kb;
+        for (dy, row) in out.chunks_exact_mut(w * 4).enumerate() {
+            let y = y0 + dy;
+            // SAFETY: `y` is a row of the picture and `x < w`, so every read is
+            // inside the plane (chroma rows and columns are shifted down).
+            unsafe {
+                let yrow = self.y.offset(y as isize * self.ystride);
+                let crow = (y >> self.sub_y) as isize * self.cstride;
+                for x in 0..w {
+                    let yv = sample(yrow, x, deep);
+                    let (r, g, b) = if !self.has_chroma {
+                        let l = to_u8(norm_luma(yv, maxv, full, bpc));
+                        (l, l, l)
+                    } else {
+                        let cx = x >> self.sub_x;
+                        let uv = sample(self.u.offset(crow), cx, deep);
+                        let vv = sample(self.v.offset(crow), cx, deep);
+                        if self.identity {
+                            // MC identity: planes are G, B, R at `bpc` bits.
+                            (scale8(vv, maxv), scale8(yv, maxv), scale8(uv, maxv))
+                        } else {
+                            let yn = norm_luma(yv, maxv, full, bpc);
+                            let cbn = norm_chroma(uv, maxv, full, bpc);
+                            let crn = norm_chroma(vv, maxv, full, bpc);
+                            let r = yn + 2.0 * (1.0 - self.kr) * crn;
+                            let b = yn + 2.0 * (1.0 - self.kb) * cbn;
+                            let g = (yn - self.kr * r - self.kb * b) / kg;
+                            (to_u8(r), to_u8(g), to_u8(b))
+                        }
+                    };
+                    row[x * 4..x * 4 + 4].copy_from_slice(&[r, g, b, 255]);
+                }
+            }
         }
     }
-    Ok((w as u32, h as u32, rgba))
 }
 
 /// Read one sample at column `i` from a row pointer: a byte for 8-bit sources, a

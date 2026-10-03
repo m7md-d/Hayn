@@ -4,6 +4,7 @@ import '../diagnostics/media_diagnostics.dart';
 import '../../src/rust/api/codec.dart' as rust_codec;
 import '../../src/rust/api/inspect.dart' as rust_inspect;
 import '../../src/rust/api/metadata.dart' as rust;
+import '../../src/rust/api/region.dart' as rust_region;
 import '../../src/rust/api/verify.dart' as rust_verify;
 import '../../src/rust/engine/codec.dart';
 import '../../src/rust/engine/codec/heif_alpha.dart';
@@ -14,6 +15,7 @@ import '../../src/rust/frb_generated.dart';
 export '../../src/rust/engine/codec.dart' show HdrOutcome, Transcoded;
 export '../../src/rust/engine/codec/heif_alpha.dart' show AlphaStream;
 export '../../src/rust/api/inspect.dart' show ProfileSpace;
+export '../../src/rust/api/region.dart' show RegionReader, RegionTile;
 export '../../src/rust/engine/inspect.dart' show Facts, Presence, Transfer;
 export '../../src/rust/engine/verify.dart' show AlphaKept;
 
@@ -188,6 +190,29 @@ abstract final class DarkLibCore {
   }) => _call(
     MediaOperation.probe,
     () => rust_verify.alphaKept(source: source, output: output),
+  );
+
+  /// An AVIF read by regions for display (PERF-03), from the file at [path]
+  /// (deletable once this returns); one item is decoded whole into raw files
+  /// under [cacheDir], gone when the reader is disposed. Null, recorded, for
+  /// anything but an SDR AVIF whose colours convert to sRGB here.
+  static Future<rust_region.RegionReader?> openRegion({
+    required String path,
+    required String cacheDir,
+  }) => _call(
+    MediaOperation.display,
+    () => rust_region.RegionReader.open(path: path, cacheDir: cacheDir),
+  );
+
+  /// Tiles of [reader] for one row of a view (see `RegionReader.tiles`).
+  static Future<List<rust_region.RegionTile>?> regionTiles(
+    rust_region.RegionReader reader, {
+    required List<int> rect,
+    required List<int> cuts,
+    required int sample,
+  }) => _call(
+    MediaOperation.display,
+    () => reader.tiles(rect: rect, cuts: cuts, sample: sample),
   );
 
   /// Best-effort metadata transfer. Rust may return an unchanged target without

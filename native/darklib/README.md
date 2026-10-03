@@ -41,7 +41,7 @@ darklib (crate)
 │   ├── metadata       · strip / extract / inject (JPEG·PNG·WebP·AVIF·HEIF)
 │   │                    + isobmff, xmp, exif helpers (lossless surgery)
 │   ├── color          · ICC extract/inject + CICP(nclx)→ICC synthesis
-│   ├── codec          · decode / encode / transcode (+ avif_dav1d)
+│   ├── codec          · decode / encode / transcode (+ avif_dav1d, region)
 │   └── error          · Result<T, DarkError> — no panics on bad input
 └── api/ + frb_generated   ← thin FFI adapter for Flutter (flutter_rust_bridge)
 ```

@@ -17,6 +17,7 @@ use crate::engine::error::{DarkError, Result};
 
 mod avif_dav1d;
 pub mod heif_alpha;
+pub mod region;
 
 /// A decoded image as 8-bit RGBA.
 pub struct Decoded {

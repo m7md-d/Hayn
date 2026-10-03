@@ -76,79 +76,25 @@ void main() {
       return {'size': size};
     });
     debugPrint('LARGE done viewerZoom: ${report['viewerZoom']}');
-    // The viewer reads by tiles instead (PERF-03): open, then every tile the
-    // full-screen view needs at ×2 and at ×8 on the centre, as RegionTiles
-    // plans them, all held at once. Nothing is decoded whole.
-    debugPrint('LARGE start regionOpen');
-    RegionImage? region;
-    report['regionOpen'] = await _peak(() async {
-      region = await RegionImage.open(source);
-      return {'opened': region != null};
-    });
-    debugPrint('LARGE done regionOpen: ${report['regionOpen']}');
-    if (region != null) {
-      final view = ui.PlatformDispatcher.instance.views.first;
-      final screen = view.physicalSize / view.devicePixelRatio;
-      final image = Size(region!.width.toDouble(), region!.height.toDouble());
-      final box = Size(screen.width, screen.width * image.height / image.width);
-      for (final zoom in [2, 8]) {
-        final name = 'regionZoom$zoom';
-        debugPrint('LARGE start $name');
-        report[name] = await _peak(() async {
-          final seen = Size(screen.width / zoom, screen.height / zoom);
-          final plan = planTiles(
-            image: image,
-            box: box,
-            visible: Rect.fromCenter(
-              center: box.center(Offset.zero),
-              width: seen.width,
-              height: seen.height,
-            ).intersect(Offset.zero & box),
-            screenPxPerLocal: zoom * view.devicePixelRatio,
-            baseLongEdge: 1080,
-          )!;
-          // A row at a time, as RegionTiles asks.
-          final rows = <int, List<PlannedTile>>{};
-          for (final t in plan.tiles) {
-            (rows[t.row] ??= []).add(t);
-          }
-          final tiles = <ui.Image>[];
-          final pending = rows.values.toList();
-          Future<void> decodeRow(List<PlannedTile> row) async {
-            row.sort((a, b) => a.col.compareTo(b.col));
-            final out = await region!.tiles(
-              Rect.fromLTRB(
-                row.first.rect.left,
-                row.first.rect.top,
-                row.last.rect.right,
-                row.first.rect.bottom,
-              ),
-              [for (final t in row.skip(1)) t.rect.left],
-              plan.sample,
-            );
-            tiles.addAll(out ?? const []);
-          }
-
-          // Two rows in flight, as RegionTiles keeps them.
-          Future<void> worker() async {
-            while (pending.isNotEmpty) {
-              await decodeRow(pending.removeAt(0));
-            }
-          }
-
-          await Future.wait([worker(), worker()]);
-          for (final t in tiles) {
-            t.dispose();
-          }
-          return {
-            'sample': plan.sample,
-            'tiles': plan.tiles.length,
-            'decoded': tiles.length,
-          };
-        });
-        debugPrint('LARGE done $name: ${report[name]}');
-      }
-      await region!.close();
+    // The viewer reads by tiles instead (PERF-03), nothing decoded whole.
+    await _measureRegion(report, 'region', source);
+    // AVIF through DarkLib: a grid (DarkLib's past 16 MP; here 8192 px long,
+    // 50 MP, the source scaled down for the test only) and one 12 MP item.
+    for (final (name, edge) in [('avifGrid50mp', 8192), ('avif12mp', 4032)]) {
+      debugPrint('LARGE start $name encode');
+      final sw = Stopwatch()..start();
+      final avif = (await DarkLibCore.transcode(
+        source,
+        format: DarkLibFormat.avif,
+        quality: 80,
+        maxEdge: edge,
+        keepMetadata: false,
+      ))!.bytes;
+      report['${name}Encode'] = {
+        'ms': sw.elapsedMilliseconds,
+        'kb': avif.length ~/ 1024,
+      };
+      await _measureRegion(report, name, avif);
     }
     final facts = await SourceInspector.inspect(source);
     // What the plan makes of it (RUN-01): giant, so Auto and a batch's WebP
@@ -254,6 +200,86 @@ int? _memTotalMb() {
   } catch (_) {
     return null; // iOS has no /proc
   }
+}
+
+/// Opens [bytes] by regions, then fetches every tile the full-screen view
+/// needs at ×2 and at ×8 on the centre, as RegionTiles plans and asks them
+/// (a row per call, two rows in flight), all held at once.
+Future<void> _measureRegion(
+  Map<String, Object?> report,
+  String name,
+  Uint8List bytes,
+) async {
+  debugPrint('LARGE start ${name}Open');
+  RegionImage? region;
+  report['${name}Open'] = await _peak(() async {
+    region = await RegionImage.open(bytes);
+    return {'opened': region != null};
+  });
+  debugPrint('LARGE done ${name}Open: ${report['${name}Open']}');
+  final opened = region;
+  if (opened == null) return;
+  final view = ui.PlatformDispatcher.instance.views.first;
+  final screen = view.physicalSize / view.devicePixelRatio;
+  final image = Size(opened.width.toDouble(), opened.height.toDouble());
+  final box = Size(screen.width, screen.width * image.height / image.width);
+  for (final zoom in [2, 8]) {
+    final key = '${name}Zoom$zoom';
+    debugPrint('LARGE start $key');
+    report[key] = await _peak(() async {
+      final seen = Size(screen.width / zoom, screen.height / zoom);
+      final plan = planTiles(
+        image: image,
+        box: box,
+        visible: Rect.fromCenter(
+          center: box.center(Offset.zero),
+          width: seen.width,
+          height: seen.height,
+        ).intersect(Offset.zero & box),
+        screenPxPerLocal: zoom * view.devicePixelRatio,
+        baseLongEdge: 1080,
+      );
+      if (plan == null) return {'tiles': 0};
+      final rows = <int, List<PlannedTile>>{};
+      for (final t in plan.tiles) {
+        (rows[t.row] ??= []).add(t);
+      }
+      final tiles = <ui.Image>[];
+      final pending = rows.values.toList();
+      Future<void> decodeRow(List<PlannedTile> row) async {
+        row.sort((a, b) => a.col.compareTo(b.col));
+        final out = await opened.tiles(
+          Rect.fromLTRB(
+            row.first.rect.left,
+            row.first.rect.top,
+            row.last.rect.right,
+            row.first.rect.bottom,
+          ),
+          [for (final t in row.skip(1)) t.rect.left],
+          plan.sample,
+        );
+        tiles.addAll(out ?? const []);
+      }
+
+      Future<void> worker() async {
+        while (pending.isNotEmpty) {
+          await decodeRow(pending.removeAt(0));
+        }
+      }
+
+      await Future.wait([worker(), worker()]);
+      for (final t in tiles) {
+        t.dispose();
+      }
+      return {
+        'sample': plan.sample,
+        'tiles': plan.tiles.length,
+        'decoded': tiles.length,
+      };
+    });
+    debugPrint('LARGE done $key: ${report[key]}');
+  }
+  await opened.close();
 }
 
 int _mb(int bytes) => bytes ~/ (1024 * 1024);

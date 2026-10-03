@@ -22,7 +22,9 @@ src/
 │   ├── color.rs           ICC extract/inject + CICP(nclx) → ICC synthesis
 │   └── codec/
 │       ├── mod.rs         decode / encode / transcode + the `Target` enum
-│       └── avif_dav1d.rs  AVIF → RGBA via rav1d (the pure-Rust dav1d)
+│       ├── avif_dav1d.rs  AVIF → RGBA via rav1d (the pure-Rust dav1d)
+│       ├── heif_alpha.rs  HEIF alpha stream out, decoded plane back in
+│       └── region.rs      AVIF read by regions for display (tiles in view)
 └── api/ + frb_generated.rs   FFI adapter for Flutter (flutter_rust_bridge)
 ```
 
@@ -64,7 +66,10 @@ double-rotate.
 The single `unsafe` surface is `codec::avif_dav1d`, which drives rav1d's dav1d
 C-ABI (`open`/`send_data`/`get_picture`/`close`) using rav1d's own `#[repr(C)]`
 types — no hand-mirrored structs — and keeps the entire context/picture lifecycle
-inside one function.
+inside one function. It decodes with up to four threads and hands the picture's
+rows out a band at a time (`decode_item_rows`), each band converted to RGBA on
+up to the same number of scoped threads, so a caller that stores rows
+elsewhere never holds the image twice.
 
 > Downscaling exists only for previews (`max_edge`). The saved/transcoded output
 > is never downscaled; large-image **tiling** (keep dimensions) is the planned

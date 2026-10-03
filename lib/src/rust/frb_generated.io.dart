@@ -6,6 +6,7 @@
 import 'api/codec.dart';
 import 'api/inspect.dart';
 import 'api/metadata.dart';
+import 'api/region.dart';
 import 'api/simple.dart';
 import 'api/verify.dart';
 import 'dart:async';
@@ -26,6 +27,28 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
     required super.generalizedFrbRustBinding,
     required super.portManager,
   });
+
+  CrossPlatformFinalizerArg
+  get rust_arc_decrement_strong_count_RegionReaderPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReaderPtr;
+
+  @protected
+  RegionReader
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader(
+    dynamic raw,
+  );
+
+  @protected
+  RegionReader
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader(
+    dynamic raw,
+  );
+
+  @protected
+  RegionReader
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader(
+    dynamic raw,
+  );
 
   @protected
   String dco_decode_String(dynamic raw);
@@ -70,10 +93,19 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   Float32List dco_decode_list_prim_f_32_strict(dynamic raw);
 
   @protected
+  List<int> dco_decode_list_prim_u_32_loose(dynamic raw);
+
+  @protected
+  Uint32List dco_decode_list_prim_u_32_strict(dynamic raw);
+
+  @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
 
   @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
+
+  @protected
+  List<RegionTile> dco_decode_list_region_tile(dynamic raw);
 
   @protected
   MetadataSummary dco_decode_metadata_summary(dynamic raw);
@@ -89,6 +121,9 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
 
   @protected
   ProfileSpace dco_decode_profile_space(dynamic raw);
+
+  @protected
+  RegionTile dco_decode_region_tile(dynamic raw);
 
   @protected
   Transcoded dco_decode_transcoded(dynamic raw);
@@ -107,6 +142,27 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
 
   @protected
   void dco_decode_unit(dynamic raw);
+
+  @protected
+  BigInt dco_decode_usize(dynamic raw);
+
+  @protected
+  RegionReader
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  RegionReader
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  RegionReader
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader(
+    SseDeserializer deserializer,
+  );
 
   @protected
   String sse_decode_String(SseDeserializer deserializer);
@@ -153,10 +209,19 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   Float32List sse_decode_list_prim_f_32_strict(SseDeserializer deserializer);
 
   @protected
+  List<int> sse_decode_list_prim_u_32_loose(SseDeserializer deserializer);
+
+  @protected
+  Uint32List sse_decode_list_prim_u_32_strict(SseDeserializer deserializer);
+
+  @protected
   List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer);
 
   @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
+
+  @protected
+  List<RegionTile> sse_decode_list_region_tile(SseDeserializer deserializer);
 
   @protected
   MetadataSummary sse_decode_metadata_summary(SseDeserializer deserializer);
@@ -178,6 +243,9 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   ProfileSpace sse_decode_profile_space(SseDeserializer deserializer);
 
   @protected
+  RegionTile sse_decode_region_tile(SseDeserializer deserializer);
+
+  @protected
   Transcoded sse_decode_transcoded(SseDeserializer deserializer);
 
   @protected
@@ -194,6 +262,30 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
 
   @protected
   void sse_decode_unit(SseDeserializer deserializer);
+
+  @protected
+  BigInt sse_decode_usize(SseDeserializer deserializer);
+
+  @protected
+  void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader(
+    RegionReader self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader(
+    RegionReader self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader(
+    RegionReader self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_String(String self, SseSerializer serializer);
@@ -247,11 +339,29 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   );
 
   @protected
+  void sse_encode_list_prim_u_32_loose(
+    List<int> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_prim_u_32_strict(
+    Uint32List self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_prim_u_8_loose(List<int> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_prim_u_8_strict(
     Uint8List self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_region_tile(
+    List<RegionTile> self,
     SseSerializer serializer,
   );
 
@@ -280,6 +390,9 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   void sse_encode_profile_space(ProfileSpace self, SseSerializer serializer);
 
   @protected
+  void sse_encode_region_tile(RegionTile self, SseSerializer serializer);
+
+  @protected
   void sse_encode_transcoded(Transcoded self, SseSerializer serializer);
 
   @protected
@@ -296,6 +409,9 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
 
   @protected
   void sse_encode_unit(void self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_usize(BigInt self, SseSerializer serializer);
 }
 
 // Section: wire_class
@@ -311,4 +427,38 @@ class DarkLibWire implements BaseWire {
   /// The symbols are looked up in [dynamicLibrary].
   DarkLibWire(ffi.DynamicLibrary dynamicLibrary)
     : _lookup = dynamicLibrary.lookup;
+
+  void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader(
+    ffi.Pointer<ffi.Void> ptr,
+  ) {
+    return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader(
+      ptr,
+    );
+  }
+
+  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReaderPtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
+        'frbgen_hayn_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader',
+      );
+  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader =
+      _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReaderPtr
+          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
+
+  void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader(
+    ffi.Pointer<ffi.Void> ptr,
+  ) {
+    return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader(
+      ptr,
+    );
+  }
+
+  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReaderPtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
+        'frbgen_hayn_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader',
+      );
+  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader =
+      _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReaderPtr
+          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 }

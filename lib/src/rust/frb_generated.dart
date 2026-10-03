@@ -6,6 +6,7 @@
 import 'api/codec.dart';
 import 'api/inspect.dart';
 import 'api/metadata.dart';
+import 'api/region.dart';
 import 'api/simple.dart';
 import 'api/verify.dart';
 import 'dart:async';
@@ -75,7 +76,7 @@ class DarkLib extends BaseEntrypoint<DarkLibApi, DarkLibApiImpl, DarkLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 86492306;
+  int get rustContentHash => -1398405487;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -87,6 +88,22 @@ class DarkLib extends BaseEntrypoint<DarkLibApi, DarkLibApiImpl, DarkLibWire> {
 }
 
 abstract class DarkLibApi extends BaseApi {
+  int crateApiRegionRegionReaderHeight({required RegionReader that});
+
+  Future<RegionReader> crateApiRegionRegionReaderOpen({
+    required String path,
+    required String cacheDir,
+  });
+
+  Future<List<RegionTile>> crateApiRegionRegionReaderTiles({
+    required RegionReader that,
+    required List<int> rect,
+    required List<int> cuts,
+    required int sample,
+  });
+
+  int crateApiRegionRegionReaderWidth({required RegionReader that});
+
   Future<AlphaKept> crateApiVerifyAlphaKept({
     required List<int> source,
     required List<int> output,
@@ -139,6 +156,14 @@ abstract class DarkLibApi extends BaseApi {
     required List<int> source,
     required List<int> target,
   });
+
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_RegionReader;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_RegionReader;
+
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_RegionReaderPtr;
 }
 
 class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
@@ -148,6 +173,136 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
     required super.generalizedFrbRustBinding,
     required super.portManager,
   });
+
+  @override
+  int crateApiRegionRegionReaderHeight({required RegionReader that}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader(
+            that,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 1)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_u_32,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiRegionRegionReaderHeightConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiRegionRegionReaderHeightConstMeta =>
+      const TaskConstMeta(debugName: "RegionReader_height", argNames: ["that"]);
+
+  @override
+  Future<RegionReader> crateApiRegionRegionReaderOpen({
+    required String path,
+    required String cacheDir,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(path, serializer);
+          sse_encode_String(cacheDir, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 2,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData:
+              sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiRegionRegionReaderOpenConstMeta,
+        argValues: [path, cacheDir],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiRegionRegionReaderOpenConstMeta =>
+      const TaskConstMeta(
+        debugName: "RegionReader_open",
+        argNames: ["path", "cacheDir"],
+      );
+
+  @override
+  Future<List<RegionTile>> crateApiRegionRegionReaderTiles({
+    required RegionReader that,
+    required List<int> rect,
+    required List<int> cuts,
+    required int sample,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader(
+            that,
+            serializer,
+          );
+          sse_encode_list_prim_u_32_loose(rect, serializer);
+          sse_encode_list_prim_u_32_loose(cuts, serializer);
+          sse_encode_u_32(sample, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 3,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_region_tile,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiRegionRegionReaderTilesConstMeta,
+        argValues: [that, rect, cuts, sample],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiRegionRegionReaderTilesConstMeta =>
+      const TaskConstMeta(
+        debugName: "RegionReader_tiles",
+        argNames: ["that", "rect", "cuts", "sample"],
+      );
+
+  @override
+  int crateApiRegionRegionReaderWidth({required RegionReader that}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader(
+            that,
+            serializer,
+          );
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 4)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_u_32,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiRegionRegionReaderWidthConstMeta,
+        argValues: [that],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiRegionRegionReaderWidthConstMeta =>
+      const TaskConstMeta(debugName: "RegionReader_width", argNames: ["that"]);
 
   @override
   Future<AlphaKept> crateApiVerifyAlphaKept({
@@ -163,7 +318,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 1,
+            funcId: 5,
             port: port_,
           );
         },
@@ -190,7 +345,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(bytes, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 2)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 6)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_bool,
@@ -212,7 +367,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 3)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 7)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -235,7 +390,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(bytes, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 4)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 8)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_format_info,
@@ -258,7 +413,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(bytes, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 5)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_image_format,
@@ -284,7 +439,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 6,
+            funcId: 10,
             port: port_,
           );
         },
@@ -309,7 +464,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(name, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 7)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -337,7 +492,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 8,
+            funcId: 12,
             port: port_,
           );
         },
@@ -371,7 +526,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 9,
+            funcId: 13,
             port: port_,
           );
         },
@@ -401,7 +556,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 10,
+            funcId: 14,
             port: port_,
           );
         },
@@ -429,7 +584,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 11,
+            funcId: 15,
             port: port_,
           );
         },
@@ -459,7 +614,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 12,
+            funcId: 16,
             port: port_,
           );
         },
@@ -486,7 +641,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_list_prim_u_8_loose(bytes, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 13)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 17)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_metadata_summary,
@@ -519,7 +674,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 14,
+            funcId: 18,
             port: port_,
           );
         },
@@ -560,7 +715,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 15,
+            funcId: 19,
             port: port_,
           );
         },
@@ -594,7 +749,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 16,
+            funcId: 20,
             port: port_,
           );
         },
@@ -614,6 +769,41 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
         debugName: "transplant_metadata",
         argNames: ["source", "target"],
       );
+
+  RustArcIncrementStrongCountFnType
+  get rust_arc_increment_strong_count_RegionReader => wire
+      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader;
+
+  RustArcDecrementStrongCountFnType
+  get rust_arc_decrement_strong_count_RegionReader => wire
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader;
+
+  @protected
+  RegionReader
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return RegionReaderImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  RegionReader
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return RegionReaderImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  RegionReader
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return RegionReaderImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
 
   @protected
   String dco_decode_String(dynamic raw) {
@@ -729,6 +919,18 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   }
 
   @protected
+  List<int> dco_decode_list_prim_u_32_loose(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as List<int>;
+  }
+
+  @protected
+  Uint32List dco_decode_list_prim_u_32_strict(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as Uint32List;
+  }
+
+  @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as List<int>;
@@ -738,6 +940,12 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as Uint8List;
+  }
+
+  @protected
+  List<RegionTile> dco_decode_list_region_tile(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_region_tile).toList();
   }
 
   @protected
@@ -789,6 +997,19 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   }
 
   @protected
+  RegionTile dco_decode_region_tile(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return RegionTile(
+      width: dco_decode_u_32(arr[0]),
+      height: dco_decode_u_32(arr[1]),
+      rgba: dco_decode_list_prim_u_8_strict(arr[2]),
+    );
+  }
+
+  @protected
   Transcoded dco_decode_transcoded(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -828,6 +1049,48 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   void dco_decode_unit(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return;
+  }
+
+  @protected
+  BigInt dco_decode_usize(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dcoDecodeU64(raw);
+  }
+
+  @protected
+  RegionReader
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return RegionReaderImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  RegionReader
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return RegionReaderImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
+  }
+
+  @protected
+  RegionReader
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return RegionReaderImpl.frbInternalSseDecode(
+      sse_decode_usize(deserializer),
+      sse_decode_i_32(deserializer),
+    );
   }
 
   @protected
@@ -962,6 +1225,20 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   }
 
   @protected
+  List<int> sse_decode_list_prim_u_32_loose(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var len_ = sse_decode_i_32(deserializer);
+    return deserializer.buffer.getUint32List(len_);
+  }
+
+  @protected
+  Uint32List sse_decode_list_prim_u_32_strict(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var len_ = sse_decode_i_32(deserializer);
+    return deserializer.buffer.getUint32List(len_);
+  }
+
+  @protected
   List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var len_ = sse_decode_i_32(deserializer);
@@ -973,6 +1250,18 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var len_ = sse_decode_i_32(deserializer);
     return deserializer.buffer.getUint8List(len_);
+  }
+
+  @protected
+  List<RegionTile> sse_decode_list_region_tile(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <RegionTile>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_region_tile(deserializer));
+    }
+    return ans_;
   }
 
   @protected
@@ -1040,6 +1329,15 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   }
 
   @protected
+  RegionTile sse_decode_region_tile(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_width = sse_decode_u_32(deserializer);
+    var var_height = sse_decode_u_32(deserializer);
+    var var_rgba = sse_decode_list_prim_u_8_strict(deserializer);
+    return RegionTile(width: var_width, height: var_height, rgba: var_rgba);
+  }
+
+  @protected
   Transcoded sse_decode_transcoded(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_bytes = sse_decode_list_prim_u_8_strict(deserializer);
@@ -1075,6 +1373,51 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   @protected
   void sse_decode_unit(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
+  }
+
+  @protected
+  BigInt sse_decode_usize(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getBigUint64();
+  }
+
+  @protected
+  void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader(
+    RegionReader self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as RegionReaderImpl).frbInternalSseEncode(move: true),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader(
+    RegionReader self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as RegionReaderImpl).frbInternalSseEncode(move: false),
+      serializer,
+    );
+  }
+
+  @protected
+  void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRegionReader(
+    RegionReader self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+      (self as RegionReaderImpl).frbInternalSseEncode(move: null),
+      serializer,
+    );
   }
 
   @protected
@@ -1186,6 +1529,28 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   }
 
   @protected
+  void sse_encode_list_prim_u_32_loose(
+    List<int> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    serializer.buffer.putUint32List(
+      self is Uint32List ? self : Uint32List.fromList(self),
+    );
+  }
+
+  @protected
+  void sse_encode_list_prim_u_32_strict(
+    Uint32List self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    serializer.buffer.putUint32List(self);
+  }
+
+  @protected
   void sse_encode_list_prim_u_8_loose(
     List<int> self,
     SseSerializer serializer,
@@ -1205,6 +1570,18 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.length, serializer);
     serializer.buffer.putUint8List(self);
+  }
+
+  @protected
+  void sse_encode_list_region_tile(
+    List<RegionTile> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_region_tile(item, serializer);
+    }
   }
 
   @protected
@@ -1263,6 +1640,14 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   }
 
   @protected
+  void sse_encode_region_tile(RegionTile self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self.width, serializer);
+    sse_encode_u_32(self.height, serializer);
+    sse_encode_list_prim_u_8_strict(self.rgba, serializer);
+  }
+
+  @protected
   void sse_encode_transcoded(Transcoded self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_list_prim_u_8_strict(self.bytes, serializer);
@@ -1297,4 +1682,52 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   void sse_encode_unit(void self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
   }
+
+  @protected
+  void sse_encode_usize(BigInt self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putBigUint64(self);
+  }
+}
+
+@sealed
+class RegionReaderImpl extends RustOpaque implements RegionReader {
+  // Not to be used by end users
+  RegionReaderImpl.frbInternalDcoDecode(List<dynamic> wire)
+    : super.frbInternalDcoDecode(wire, _kStaticData);
+
+  // Not to be used by end users
+  RegionReaderImpl.frbInternalSseDecode(BigInt ptr, int externalSizeOnNative)
+    : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
+
+  static final _kStaticData = RustArcStaticData(
+    rustArcIncrementStrongCount:
+        DarkLib.instance.api.rust_arc_increment_strong_count_RegionReader,
+    rustArcDecrementStrongCount:
+        DarkLib.instance.api.rust_arc_decrement_strong_count_RegionReader,
+    rustArcDecrementStrongCountPtr:
+        DarkLib.instance.api.rust_arc_decrement_strong_count_RegionReaderPtr,
+  );
+
+  /// Upright height.
+  int get height =>
+      DarkLib.instance.api.crateApiRegionRegionReaderHeight(that: this);
+
+  /// The upright rectangle `rect` = `[left, top, right, bottom)` sampled
+  /// down by `sample` (a power of two), cut at the upright x positions
+  /// `cuts` into tiles, left to right.
+  Future<List<RegionTile>> tiles({
+    required List<int> rect,
+    required List<int> cuts,
+    required int sample,
+  }) => DarkLib.instance.api.crateApiRegionRegionReaderTiles(
+    that: this,
+    rect: rect,
+    cuts: cuts,
+    sample: sample,
+  );
+
+  /// Upright width.
+  int get width =>
+      DarkLib.instance.api.crateApiRegionRegionReaderWidth(that: this);
 }

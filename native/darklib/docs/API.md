@@ -209,6 +209,31 @@ SDR; an unreadable container is `Unknown`. `width`/`height` are the stored size
 from the header (`codec::header_dimensions`; HEIF/AVIF: the primary item or its
 grid canvas), before orientation, 0 when the header does not say.
 
+### Regions for display (`engine::codec::region`)
+
+```rust
+pub struct Tile { pub width: u32, pub height: u32, pub rgba: Vec<u8> } // premultiplied
+impl AvifRegion {
+    pub fn open(bytes: Vec<u8>, cache_dir: &Path) -> Result<AvifRegion>;
+    pub fn width(&self) -> u32;   // upright
+    pub fn height(&self) -> u32;
+    pub fn tiles(&self, rect: [u32; 4], cuts: &[u32], sample: u32) -> Result<Vec<Tile>>;
+}
+```
+An AVIF read a rectangle at a time, for a zoomed view that must not decode the
+whole image (Hayn PERF-03). A **grid** decodes only the cells under a request,
+in parallel (one decoder thread each), keeping the last 32 MiB of cells. **One
+item** is decoded once on `open`, its rows straight into raw RGBA files under
+`cache_dir` (full size, then halves down to 256 px), deleted on drop; a tile is
+a read from the level its `sample` needs. `tiles` takes an upright rectangle
+`[left, top, right, bottom)` and a power-of-two `sample`, and returns it cut at
+the upright x positions `cuts`: upright (`irot`/`imir`), alpha merged, in sRGB
+(`color::ToSrgb` from the profile), premultiplied. Sampled pixels average the
+`sample`×`sample` full-size blocks counted from the stored image's corner (for
+a turned or mirrored image a sampled tile sits within one sampled pixel; full
+size is exact). `open` refuses PQ/HLG, a profile that is not matrix/TRC,
+anything but AVIF, and the decode budget's excess.
+
 ### HEIF alpha (`engine::codec::heif_alpha`)
 
 ```rust
@@ -302,6 +327,21 @@ Y = (aX + b)^g + e for X ≥ d, cX + f below (`engine::color::rgb_space`).
 ```rust
 fn inspect_image(bytes) -> Facts   // async; see engine::inspect above
 ```
+
+### `api::region`
+
+```rust
+impl RegionReader {                       // opaque; Dart disposes it
+    fn open(path: String, cache_dir: String) -> Result<RegionReader, String>  // async
+    fn width(&self) -> u32                // sync getter, upright
+    fn height(&self) -> u32
+    fn tiles(&self, rect: Vec<u32>, cuts: Vec<u32>, sample: u32)
+        -> Result<Vec<RegionTile>, String>   // async
+}
+pub struct RegionTile { pub width: u32, pub height: u32, pub rgba: Vec<u8> }
+```
+`engine::codec::region` over FFI. `open` reads the file at `path` (deletable
+once it returns); the cache files go when the reader is disposed.
 
 ### `api::codec` (HEIF alpha)
 ```rust

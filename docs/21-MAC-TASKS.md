@@ -30,7 +30,7 @@
 | **F3** | قارئ ImageIO المستقل على نواتج F2 | `xcrun swift -module-cache-path /Volumes/CUSU/Development/caches/swift-preservation test_native/inspect_ios_outputs.swift build/ios-preservation/<الجولة>` | يوافق على كل الملفات. وسكربتات `test_native/compare_*.swift` المتعلقة بما تغيّر. وملفات HEIC بالبلاطات من Android: `swift test_native/check_heic_tiles.swift <results>` |
 | **F4** | اختبار الأداء على الآيفون | `tool/test_performance.sh <معرّف الجهاز>` | **8 من 8** بلا تجاوز للحدود ([18-PERFORMANCE](18-PERFORMANCE.md)). يحتاج iPhone 13 Pro موصولًا ومفتوحًا؛ يبقي التطبيق ويثبّت release بعده |
 | **F5** | لقطات README | `tool/screenshots/generate.sh` | لقطات جديدة من محاكي، بلا تعديل يدوي ([presentation.md](../.claude/rules/presentation.md)) |
-| **F6** | الجسر الحقيقي على الماك | `cargo build --locked` في `native/darklib` ثم `flutter test --no-pub test_native/darklib_host_test.dart --dart-define=DARKLIB_TEST_LIBRARY=<المسار>/libdarklib.dylib` | **13 ناجحة** (منذ 2026-10-02؛ كانت 10 ثم 12) |
+| **F6** | الجسر الحقيقي على الماك | `cargo build --locked` في `native/darklib` ثم `flutter test --no-pub test_native/darklib_host_test.dart --dart-define=DARKLIB_TEST_LIBRARY=<المسار>/libdarklib.dylib` | **14 ناجحة** (منذ 2026-10-03؛ كانت 10 ثم 12 ثم 13) |
 
 **أحد هذه لا يُعاد بلا سبب:** المحاكي (F2) والبناء (F1) يستغرقان وقتًا ويثقلان الماك. لا تضف F2 إلى مهمة إن لم تمس الشفرة التي يغطيها (الجدول التالي).
 
@@ -70,24 +70,37 @@
 
 ## المفتوحة
 
-### M-07 · العرض بالبلاطات: iOS يبقى كما كان، ودراسة قارئ المناطق في ImageIO
+### M-07 · العرض بالبلاطات: AVIF من DarkLib على iOS، وما سواه كما كان، ودراسة قارئ المناطق في ImageIO
 - **الحالة:** مفتوحة
-- **طلبها:** وكيل لينكس، 2026-10-03
-- **ما تغيّر:** العارض وشاشة المقارنة يقرآن الصورة بالبلاطات عند التكبير على Android (PERF-03): `RegionTiles` في Dart، و`RegionDecoders.kt`. وفي الشفرة المشتركة:
-  - `HaynComparisonViewer` يقبل متحكمًا من الخارج (`controller`).
-  - شاشة الضغط: «بعد» يمر بـ`PlatformPixels`، وحيث لا قارئ مناطق تُفك اللوحتان بحد 4096 (`boundedImage`). كان «بعد» بلا حد، و«قبل» بـ`cacheWidth: 4096`.
-  - العارض: عند التكبير يحاول `RegionImage.open` أولًا. على iOS يعيد null فورًا بلا قناة، فيبقى `fullResImage` بحد 8192 كما كان.
-  - قيمتان جديدتان في التشخيص (`androidRegion` و`display`).
-  - لا تغيير في Rust ولا FFI ولا Swift.
-- **البنود:** PERF-03.
-- **يلزم:** توصيل الآيفون للخطوة 3.
+- **طلبها:** وكيل لينكس، 2026-10-03 (حُدّثت في اليوم نفسه بعد AVIF)
+- **ما تغيّر:** العارض وشاشة المقارنة يقرآن الصورة بالبلاطات عند التكبير (PERF-03): `RegionTiles` في Dart، و`RegionImage` بقارئين.
+  - **DarkLib وFFI:**
+    - قارئ مناطق AVIF جديد (`engine::codec::region`، FFI ‏`RegionReader`)، فأعيد توليد الروابط. **فـAVIF على iOS صار يُقرأ بالبلاطات**، بالشفرة نفسها التي على Android.
+    - فك AV1 صار بحتى أربعة خيوط (PERF-05)، ويخص كل فك AVIF على iOS أيضًا.
+    - `color::ToSrgb` للون العرض.
+  - **ما سوى AVIF على iOS:** `RegionImage.open` يعيد null بلا قناة، فيبقى `fullResImage` بحد 8192 كما كان.
+  - **الشفرة المشتركة:**
+    - `HaynComparisonViewer` يقبل متحكمًا من الخارج (`controller`).
+    - شاشة الضغط: «بعد» يمر بـ`PlatformPixels`. وحيث لا قارئ مناطق تُفك اللوحتان بحد 4096 (`boundedImage`)، وكان «بعد» بلا حد.
+    - قيمتان جديدتان في التشخيص (`androidRegion` و`display`).
+  - لا تغيير في Swift.
+- **البنود:** PERF-03، PERF-05.
+- **يلزم:** توصيل الآيفون للخطوة 4.
 - **الخطوات:**
-  1. F1.
-  2. على الآيفون أو المحاكي: صورة كبيرة في العارض تُكبَّر وتبقى حادة كما كانت، وشاشة الضغط تعرض «قبل» و«بعد» وتكبّرهما بلا خطأ. **ولا تُفتح صور المستخدم:** صورة اختبار (عينة الأداء) تُضاف إلى معرض المحاكي.
-  3. F4، لأن الشاشتين تغيّرتا.
-  4. **دراسة لا تنفيذ:** كيف تُقرأ منطقة من صورة على iOS بذاكرة محدودة. هل `CGImageSourceCreateImageAtIndex` ثم `cropping(to:)` يفك المنطقة وحدها؟ وكم الزمن والذاكرة لـJPEG بحجم 200 ميقابكسل (عينة RUN-01) ولـHEIC من Apple (شبكة 512)؟ وهل `kCGImageSourceSubsampleFactor` يصغّر أثناء الفك؟ وهل `CATiledLayer` بديل أنسب؟ المطلوب أرقام تحدد التصميم، فيكتب لينكس الجسر بعدها.
-- **النجاح:** بناء نظيف، والسلوك على iOS كما كان، والأداء 8 من 8، وأرقام الدراسة.
-- **يُعاد إلى لينكس:** حجم البناء، ونتيجة الخطوتين 2 و3، وأرقام الخطوة 4 مع السجل.
+  1. F1، وF6 (**14 ناجحة**، وفيها `an AVIF reads by regions and cleans up after itself`)، وF2 لأن FFI تغيّرت.
+  2. `cargo test --locked` في `native/darklib` على الماك (136، وفيها `tests/region.rs`): ملفات الهرم و`read_exact_at` على macOS.
+  3. **على المحاكي:** صورة اختبار تُضاف إلى معرضه: عينة الأداء، ونسخة AVIF منها (`DarkLibCore.transcode`). **ولا تُفتح صور المستخدم.**
+     - في العارض: AVIF يُكبَّر وتظهر تفاصيله حادة (بلاطات من DarkLib)، وJPEG يبقى كما كان.
+     - شاشة الضغط تعرض «قبل» و«بعد» وتكبّرهما بلا خطأ.
+     - لا يبقى ملف `darklib-region-*` في مجلد الكاش بعد الخروج من العارض.
+  4. F4، لأن الشاشتين وفك AVIF تغيّرت.
+  5. **دراسة لا تنفيذ:** كيف تُقرأ منطقة من صورة على iOS بذاكرة محدودة.
+     - هل `CGImageSourceCreateImageAtIndex` ثم `cropping(to:)` يفك المنطقة وحدها؟
+     - كم الزمن والذاكرة لـJPEG بحجم 200 ميقابكسل (عينة RUN-01)، ولـHEIC من Apple (شبكة 512)؟
+     - هل `kCGImageSourceSubsampleFactor` يصغّر أثناء الفك؟ وهل `CATiledLayer` بديل أنسب؟
+     - المطلوب أرقام تحدد التصميم، فيكتب لينكس الجسر بعدها.
+- **النجاح:** بناء نظيف، وF6 ‏14، والمحاكي 11، وRust 136، وAVIF بالبلاطات على المحاكي، وما سواه كما كان، والأداء 8 من 8، وأرقام الدراسة.
+- **يُعاد إلى لينكس:** حجم البناء، ونتيجة كل خطوة، وأرقام الخطوة 5 مع السجل.
 
 ## المنفذة
 

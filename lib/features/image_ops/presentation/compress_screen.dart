@@ -104,7 +104,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
 
   // The compare panes show both images bounded from afar and read them by
   // tiles when zoomed (PERF-03), so neither is ever decoded whole. A region
-  // is null where the platform cannot read one (iOS, AVIF on Android; M-07):
+  // is null where none reads it (non-AVIF on iOS, M-07; a PQ/HLG AVIF):
   // that pane is then decoded within [_comparePreviewEdge].
   final _compareCtrl = TransformationController();
   final _compareKey = GlobalKey();

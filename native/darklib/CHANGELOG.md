@@ -8,6 +8,14 @@ the engine API may change between minor versions.
 ## [Unreleased]
 
 ### Added
+- **`engine::codec::region` and `api::region::RegionReader`**: an AVIF read by
+  regions for display (Hayn PERF-03). A grid decodes only the cells a request
+  covers, in parallel; one item is decoded once into raw RGBA files (a pyramid
+  of halves) in a cache directory, deleted with the reader. Tiles come
+  upright, with alpha, in sRGB, premultiplied, a row at a time. PQ/HLG and
+  non-matrix profiles are refused.
+- **`color::ToSrgb`**: 8-bit RGB in a matrix/TRC space to sRGB (D50 colorants,
+  clipped), for display.
 - **`color::rgb_space` and `api::inspect::profile_space`**: a matrix/TRC ICC
   profile (embedded, or built from `nclx`/`cICP`) as an RGB space — the D50
   RGB→XYZ matrix and the transfer in Android's `TransferParameters` form.
@@ -80,6 +88,10 @@ the engine API may change between minor versions.
   `docs/` set.
 
 ### Changed
+- **AV1 decode uses up to four threads** (was one) and converts YUV → RGBA in
+  bands on the same number of threads; `avif_dav1d::decode_item_rows` hands
+  the rows out band by band. On a Galaxy S25 Edge a 12 MP still decoded in
+  375 ms instead of 820, a 1024 px grid cell in 36 ms instead of 80.
 - The crate now also builds as an `rlib` so the pure `engine` is consumable as a
   normal Rust dependency.
 
