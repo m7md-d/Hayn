@@ -6,12 +6,12 @@
 # `adb reverse` (127.0.0.1 only) and artifacts come back in the drive report.
 # The photo permission the app asks for is answered "Allow all" (user
 # decision 2026-10-02: the library is read, as the performance test reads it).
-# Nothing is written to the phone's storage or gallery, unless HAYN_GALLERY=1:
-# then the crop tests ask for photo access, this script taps "Allow all" in
-# the system dialog (flutter drive reinstalls the app, so `pm grant` cannot
-# precede the run), and the sources and results are saved to the gallery.
-# Those files are left for the phone's owner to remove. The screen must be on.
-# Usage: [HAYN_GALLERY=1] tool/test_android_device.sh [adb-serial]
+# This script taps "Allow all" in the system dialog (flutter drive reinstalls
+# the app, so `pm grant` cannot precede the run). The crop tests save their
+# sources and results to the gallery (`hayn-test-crop-*`) on every run (user
+# decision 2026-10-03: no test is skipped); those files are left for the
+# phone's owner to remove. The screen must be on.
+# Usage: tool/test_android_device.sh [adb-serial]
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -24,9 +24,6 @@ fi
 ADB=(adb -s "$SERIAL")
 PORT=8765
 DEFINES=(--dart-define=HAYN_FIXTURES="http://127.0.0.1:$PORT")
-if [ "${HAYN_GALLERY:-}" = 1 ]; then
-  DEFINES+=(--dart-define=HAYN_GALLERY=true)
-fi
 
 # shellcheck source=tool/android_photos.sh
 source "$ROOT/tool/android_photos.sh"

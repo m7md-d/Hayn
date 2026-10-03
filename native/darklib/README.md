@@ -114,7 +114,7 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-Cross-compiling for mobile, FFI/codegen, and the asm-off rationale are in
+Cross-compiling for mobile, FFI/codegen, and the AV1 assembly setup are in
 [docs/BUILD.md](docs/BUILD.md).
 
 ## Stabilization

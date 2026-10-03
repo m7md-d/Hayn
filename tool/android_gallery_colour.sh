@@ -2,7 +2,7 @@
 # Does Samsung Gallery show a Display P3 HEIC with its colours (IMG-21)?
 # Android's own decoder on the Galaxy S25 Edge ignores a HEIC's profile; this
 # asks the same of the phone's gallery app, with the app's TEST images only:
-# the P3 crop sources that `HAYN_GALLERY=1 tool/test_android_device.sh` saves
+# the P3 crop sources that `tool/test_android_device.sh` saves
 # (hayn-test-crop-source-p3-icc.heic and hayn-test-crop-source-p3.jpg: the
 # same four P3 quadrants, as libheif HEIC and as JPEG). The JPEG's profile is
 # applied everywhere on Android, so it is the reference. Each file is opened
@@ -29,7 +29,7 @@ capture() {
   local id
   id="$(id_of "$1")"
   if [ -z "$id" ]; then
-    echo "Not in the gallery: $1 (run HAYN_GALLERY=1 tool/test_android_device.sh)" >&2
+    echo "Not in the gallery: $1 (run tool/test_android_device.sh)" >&2
     exit 1
   fi
   "${ADB[@]}" shell input keyevent KEYCODE_WAKEUP

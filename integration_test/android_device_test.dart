@@ -55,7 +55,7 @@ void main() {
     // Asked before any test: the request can switch the platform's
     // accessibility on, which a running test reports as a leaked
     // SemanticsHandle.
-    if (_galleryTests) photos = await PhotoManager.requestPermissionExtend();
+    photos = await PhotoManager.requestPermissionExtend();
   });
 
   tearDownAll(
@@ -713,13 +713,13 @@ void main() {
           await PlatformPixels.forDisplay(output, maxEdge: 0),
         ),
       );
-    }, skip: !_galleryTests);
+    });
   }
 
   // T-14/T-15: the real crop task on 10-bit gallery assets. Before IMG-13 it
   // decoded them through Flutter and saved scrambled colours. It writes the
-  // sources and results to the gallery, so it runs only with HAYN_GALLERY=1;
-  // the files stay for the user to remove.
+  // sources and results to the gallery (`hayn-test-crop-*`), every run; the
+  // files stay for the user to remove.
   final tenBit = <String, Future<Uint8List> Function()>{
     'sdr.avif': () => _tenBitAvif(withGainMap: false),
     'gainmap.avif': () => _tenBitAvif(withGainMap: true),
@@ -751,7 +751,7 @@ void main() {
         await _platformDecode(source),
         await _platformDecode(output),
       );
-    }, skip: !_galleryTests);
+    });
   }
 
   // PERF-03: the zoomed views read tiles through BitmapRegionDecoder, which
@@ -1124,9 +1124,6 @@ Future<Uint8List> _transparent(String kind) async {
   expect(out, isNotNull);
   return out!.bytes;
 }
-
-/// Gallery-writing tests are opt-in (tool/test_android_device.sh documents it).
-const _galleryTests = bool.fromEnvironment('HAYN_GALLERY');
 
 /// A 10-bit AVIF from DarkLib (ravif's default depth): the libavif photo with
 /// its ISO gain map kept, or its SDR base alone.

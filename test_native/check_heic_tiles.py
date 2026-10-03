@@ -12,7 +12,7 @@ read by PNG-3 precedence: cICP before iCCP.
    after colour management.
 3. p3heic/*: the Android bridge's WebP and PNG from Apple's P3 HEIC, against
    the source through libheif (IMG-18/21).
-4. crop-p3/*: the crop task's outputs from P3 sources (HAYN_GALLERY=1 runs),
+4. crop-p3/*: the crop task's outputs from P3 sources,
    against the colours LittleCMS gives the P3 quadrants.
 
 Usage (Pillow + pillow-heif, as in ~/hayn-venv):

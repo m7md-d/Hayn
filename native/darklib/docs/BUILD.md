@@ -22,9 +22,25 @@ cargo build --release
 ```
 
 The engine has no system dependencies; `libwebp` and the AV1 codecs build from
-source. Assembly is **off** for the AV1 codecs (`rav1e` and `rav1d`), which keeps
-cross-compilation trivial (no `nasm`/`meson`) at a modest speed cost — re-enable
-it later behind a feature once the asm toolchain is wired into CI.
+source.
+
+**Assembly.** `rav1d` (AV1 decode) builds dav1d's arm64 assembly on every
+`aarch64` target (Android, iOS, Apple-silicon hosts), with the C compiler the
+target already uses, so no extra tool (Hayn PERF-05: about twice the decode
+speed on the phone). Its dotprod/i8mm routines run only where the CPU reports
+them. Two consequences:
+
+- `rav1d` comes from its repository at tag `v1.1.0` (`[patch.crates-io]` in
+  `Cargo.toml`): the published 1.1.0 lacks `src/arm/asm-offsets.h`, which
+  three of its arm64 files include. The Rust and assembly sources are the
+  same as the published crate's. The first build fetches it over the network;
+  return to crates.io once a release ships the header.
+- `build.rs` links the Android library with `-Wl,-Bsymbolic`: the assembly
+  addresses rav1d's tables PC-relative, which Android's linker refuses
+  against exported symbols (`R_AARCH64_ADR_PREL_PG_HI21`).
+
+x86 builds stay without assembly (nasm's objects do not link into the shared
+library, and x86 is only hosts). `rav1e` (AVIF encode) is built without it.
 
 ## Cross-compiling for Android
 

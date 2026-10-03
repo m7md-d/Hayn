@@ -20,7 +20,7 @@
 | قارئا ImageIO وAVFoundation المستقلان (سكربتات `test_native/*.swift`) | **لا** | **وحده** |
 | لقطات README (`tool/screenshots/generate.sh`، تستعمل محاكي iOS) | **لا** | **وحده** |
 | تعديل كود Swift وPodfile ومشروع Xcode | يُحرَّر ولا يُبنى | يُبنى ويُتحقق |
-| القراءة المستقلة للنواتج | ffmpeg وffprobe وPillow وexiftool و`test_native/check_jpeg_mpf.py`، وlibheif 1.23 عبر pillow-heif مع LittleCMS: `check_heif_inject.py` بعد `cargo test --test heif_inject`، و`check_heic_tiles.py <نتائج الهاتف> native/darklib/tests/fixtures` بعد `tool/test_android_device.sh`. ولعرض معرض Samsung: `tool/android_gallery_colour.sh` بعد تشغيل بـ`HAYN_GALLERY=1` | كل ما سبق مع ImageIO |
+| القراءة المستقلة للنواتج | ffmpeg وffprobe وPillow وexiftool و`test_native/check_jpeg_mpf.py`، وlibheif 1.23 عبر pillow-heif مع LittleCMS: `check_heif_inject.py` بعد `cargo test --test heif_inject`، و`check_heic_tiles.py <نتائج الهاتف> native/darklib/tests/fixtures` بعد `tool/test_android_device.sh`. ولعرض معرض Samsung: `tool/android_gallery_colour.sh` بعد تشغيل المجموعة | كل ما سبق مع ImageIO |
 | تحديث الوثائق والسجل | نعم | نعم |
 
 **قاعدة الادعاء:** ما لا يستطيع لينكس تحقيقه لا يُعلن متحققًا. أي سلوك يمس iOS يبقى في السجل بعبارة «غير مختبر على iOS (M-NN)» حتى تنفذ مهمة الماك وتُكتب نتيجتها. نجاح الاختبارات على لينكس يثبت لينكس وAndroid، لا iOS.
@@ -118,9 +118,8 @@ flutter_rust_bridge_codegen generate    # من جذر المستودع؛ لا ت
 الهاتف: Galaxy S25 Edge (Android 16، Snapdragon 8 Elite، بلا AV1 عتادي). ملف الأجهزة والنتائج السابقة في [18-PERFORMANCE](18-PERFORMANCE.md) و[12-STABILIZATION](12-STABILIZATION.md).
 
 ```sh
-tool/test_android_device.sh [serial]                 # الصحة: 43 اختبارًا
-HAYN_GALLERY=1 tool/test_android_device.sh [serial]  # مع اختبارات القص التي تحفظ في المعرض
-tool/test_performance.sh [serial]                    # الأداء: ستة أقسام
+tool/test_android_device.sh [serial]  # الصحة كلها، ومنها القص الذي يحفظ في المعرض
+tool/test_performance.sh [serial]     # الأداء: ستة أقسام
 ```
 
 - **البناء profile لا debug.** debug يبني Rust بلا تحسين، وتحويل gain map واحد يتجاوز 12 دقيقة.

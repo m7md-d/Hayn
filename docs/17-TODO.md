@@ -20,9 +20,9 @@
 T-16 نُفذ كله (2026-10-02 من لينكس): الصحة، والأداء، وIMG-08، وIMG-15، ثم التمرير بعد أن أضاف المستخدم صورًا (611 عنصرًا). النتائج في 14-ISSUES و18-PERFORMANCE.
 
 ### T-17 · HEIC بالبلاطات والعرض بالبلاطات على هاتف Android آخر
-- **البنود:** RUN-01 (الخطوة 5)، IMG-22، IMG-21، DEV-02، PERF-03.
-- **لماذا مؤجل:** القياس كله على هاتف واحد ومرمّز واحد (`c2.qti.hevc.encoder`، Android 16). تحويل الجودة إلى QP معاير عليه، ودون Android 12 يُستعمل CQ أو معدل بتات لم يُقس. ولا يُعرف إن كان مرمّز آخر يحترم `KEY_VIDEO_QP_I_MIN/MAX`، أو يقبل بلاطة 512. والعرض بالبلاطات (PERF-03) يفترض أن `BitmapRegionDecoder` يقرأ البكسلات المخزنة بلا اتجاه، وأن ألوان HEIC تأتي منه كما تأتي من `ImageDecoder` (IMG-21)، وكلاهما ثبت على S25 Edge وحده.
-- **الخطوات:** على الهاتف الآخر `HAYN_GALLERY=1 tool/test_android_device.sh` (اختبارات «HEIC tiles» وتقريرها يسمي المرمّز ونمط المعدل، واختبارات P3 لـIMG-21، و«Region tiles» و«Compare panes» لـPERF-03)، ثم `tool/android_gallery_colour.sh` بمعرض ذلك الهاتف (السكربت يسمي معرض Samsung؛ غيّر الحزمة)، ثم `check_heic_tiles.py` على النواتج، ثم `tool/test_performance.sh` و`HAYN_PERF_LARGE=1` (صفوف `regionZoom2` و`regionZoom8`).
+- **البنود:** RUN-01 (الخطوة 5)، IMG-22، IMG-21، DEV-02، PERF-03، PERF-05.
+- **لماذا مؤجل:** القياس كله على هاتف واحد ومرمّز واحد (`c2.qti.hevc.encoder`، Android 16). تحويل الجودة إلى QP معاير عليه، ودون Android 12 يُستعمل CQ أو معدل بتات لم يُقس. ولا يُعرف إن كان مرمّز آخر يحترم `KEY_VIDEO_QP_I_MIN/MAX`، أو يقبل بلاطة 512. والعرض بالبلاطات (PERF-03) يفترض أن `BitmapRegionDecoder` يقرأ البكسلات المخزنة بلا اتجاه، وأن ألوان HEIC تأتي منه كما تأتي من `ImageDecoder` (IMG-21)، وكلاهما ثبت على S25 Edge وحده. ومعالجه يعلن dotprod وi8mm، فبقية مسارات asm في rav1d (PERF-05) لم تعمل على جهاز بعد: هاتف بلا i8mm (أغلب ما قبل 2022) يشغّل دوال dotprod، وهاتف بلا dotprod (Cortex-A53 أو A73) يشغّل دوال neon العادية.
+- **الخطوات:** على الهاتف الآخر `tool/test_android_device.sh` (اختبارات «HEIC tiles» وتقريرها يسمي المرمّز ونمط المعدل، واختبارات P3 لـIMG-21، و«Region tiles» و«Compare panes» لـPERF-03)، ثم `tool/android_gallery_colour.sh` بمعرض ذلك الهاتف (السكربت يسمي معرض Samsung؛ غيّر الحزمة)، ثم `check_heic_tiles.py` على النواتج، ثم `tool/test_performance.sh` و`HAYN_PERF_LARGE=1` (صفوف `regionZoom2` و`regionZoom8`).
 - **النجاح:** الاختبارات تنجح والقارئ يوافق. وعمود HEIC في الأداء بحجم قريب من 12 ميقابكسل على S25 Edge عند الجودة نفسها، أو يُعاير الجدول للمرمّز ويُسجل.
 
 ## عينات مرخصة

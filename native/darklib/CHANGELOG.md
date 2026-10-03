@@ -92,6 +92,15 @@ the engine API may change between minor versions.
   bands on the same number of threads; `avif_dav1d::decode_item_rows` hands
   the rows out band by band. On a Galaxy S25 Edge a 12 MP still decoded in
   375 ms instead of 820, a 1024 px grid cell in 36 ms instead of 80.
+- **dav1d's arm64 assembly is on** for every `aarch64` target (`asm`,
+  `asm_arm64_dotprod`, `asm_arm64_i8mm`; the latter two chosen at run time
+  from the CPU's features). `rav1d` now comes from its repository at tag
+  `v1.1.0` (`[patch.crates-io]`), since the published 1.1.0 lacks
+  `src/arm/asm-offsets.h`; same Rust and assembly sources. A new `build.rs`
+  links the Android library with `-Wl,-Bsymbolic`. On the S25 Edge, opening
+  a 12 MP AVIF for tiled display (a whole decode) takes 383 ms instead of
+  537, AVIF → WebP 1057 ms instead of 1317; the stripped arm64 library grows
+  by 0.30 MB.
 - The crate now also builds as an `rlib` so the pure `engine` is consumable as a
   normal Rust dependency.
 

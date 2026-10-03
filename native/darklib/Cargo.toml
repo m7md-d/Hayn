@@ -34,8 +34,7 @@ miniz_oxide = "0.8"
 # properties while dropping privacy ones, so an Ultra-HDR JPEG survives a strip.
 # Pure Rust, royalty-free (MIT).
 quick-xml = { version = "0.40", default-features = false }
-# Stage 5: pure-Rust AV1 decode (the dav1d port) for AVIF. asm OFF keeps the
-# cross-compile trivial (no nasm/meson) — mirrors `ravif` above; royalty-free
+# Stage 5: pure-Rust AV1 decode (the dav1d port) for AVIF; royalty-free
 # (BSD-2, AV1 is patent-free). bitdepth_16 unlocks 10-bit/HDR decode. HEIC stays
 # HW-only (HEVC carries active patents — CLAUDE.md §5).
 rav1d = { version = "1.1.0", default-features = false, features = [
@@ -43,5 +42,22 @@ rav1d = { version = "1.1.0", default-features = false, features = [
     "bitdepth_16",
 ] }
 
+# dav1d's arm64 assembly (PERF-05): about twice the AV1 decode speed on the
+# phones, built by `cc` (no nasm). The dotprod/i8mm routines run only where
+# the CPU reports them (rav1d detects at run time). Off on x86: nasm's objects
+# do not link into a shared library, and x86 is only the emulator and hosts.
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+rav1d = { version = "1.1.0", default-features = false, features = [
+    "asm",
+    "asm_arm64_dotprod",
+    "asm_arm64_i8mm",
+] }
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
+
+# rav1d 1.1.0 as published lacks src/arm/asm-offsets.h, which three arm64
+# assembly files include; its repository at the same tag has it (PERF-05).
+# Back to crates.io once a release ships the header.
+[patch.crates-io]
+rav1d = { git = "https://github.com/memorysafety/rav1d", tag = "v1.1.0" }
