@@ -27,6 +27,14 @@ bash tool/test_ios_preservation.sh
 - JPEG لصورة شفافة (أو مجهولة الشفافية) يُدمج على الأبيض (قرار 2026-09-29)، ويُقاس البكسل الناتج مقابل القيمة المحسوبة. قبل ذلك كانت هذه الحالة تُرفض.
 - فتح واجهة المكتبة ثم الإعدادات في التطبيق الحقيقي.
 
+## العرض بالبلاطات: `ios_region_test.dart` (M-07، 2026-10-09)
+
+مجموعة منفصلة للعارض وشاشة الضغط في التطبيق الحقيقي: AVIF يُقرأ بلاطات بـDarkLib، وما سواه يبقى على الفك المحدود. تحفظ صورها في Photos ولا تفتح غيرها: صورة الأداء، ورقعة شطرنج بمربعات 4 بكسل لا تظهرها الصورة المصغّرة، ونسخ AVIF منهما من DarkLib وبعمق 8. وتعيد استعمال ما حفظه تشغيل سابق، بالعنوان `hayn-region-*` بين أحدث 60 صورة.
+
+- **على الآيفون (بطلب المستخدم 2026-10-09، والصور تبقى في معرضه):** profile كاختبار الأداء. الأوامر في رأس الملف: نسخ صورة الأداء ونسختي 8 بت إلى `Documents/preservation-fixtures` بـ`devicectl`، ثم `flutter drive --profile --keep-app-running`، ثم إعادة تثبيت release. النتيجة 9 من 10 (IMG-23)، والتفصيل في M-07.
+- **على المحاكي:** `CARGO_PROFILE_DEV_OPT_LEVEL=3 bash tool/test_ios_preservation.sh integration_test/ios_region_test.dart`. Rust تُبنى debug هناك، ونقل البلاطات عبر الجسر في Dart debug بطيء.
+- **مقارنة P3 على الماك:** `swift test_native/compare_region_tiles.swift <مجلد النواتج>`، على `photo.avif` وشريط بلاطاته.
+
 غياب محرك Android على iOS يسجل حاليًا `androidAvif.encode.unavailable` قبل ترميز AVIF برمجيًا. الاختبار يسمح بهذه الرسالة المحددة فقط؛ لا يتجاهل أعطال DarkLib أو نجاح backend بديل.
 
 ## IMG-05 وسياسة HDR — 2026-09-28

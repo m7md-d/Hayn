@@ -1,6 +1,6 @@
 # 21 — مهام الماك
 
-آخر تحديث: 2026-10-03. هذا الملف قناة بين جلسات لينكس والماك. التطوير الرئيسي صار على لينكس ([20-LINUX-WORKFLOW](20-LINUX-WORKFLOW.md))، ولا يستطيع بناء iOS ولا تجربته على الآيفون ولا تشغيل قارئي ImageIO وAVFoundation. **وكيل لينكس يسجل هنا ما يلزم تحققه على الماك، ووكيل الماك ينفذه ويكتب النتيجة.**
+آخر تحديث: 2026-10-09. هذا الملف قناة بين جلسات لينكس والماك. التطوير الرئيسي صار على لينكس ([20-LINUX-WORKFLOW](20-LINUX-WORKFLOW.md))، ولا يستطيع بناء iOS ولا تجربته على الآيفون ولا تشغيل قارئي ImageIO وAVFoundation. **وكيل لينكس يسجل هنا ما يلزم تحققه على الماك، ووكيل الماك ينفذه ويكتب النتيجة.**
 
 **الفرق عن [17-TODO](17-TODO.md):** TODO لما يعجز عنه الجميع الآن لغياب جهاز أو عينة أو إذن. هنا ما يستطيعه الماك فعلًا بأدواته الحالية وبهاتف المستخدم متى وصّله، وينتظر جلسة على الماك فقط.
 
@@ -27,7 +27,7 @@
 |---|---|---|---|
 | **F1** | بناء iOS release بلا توقيع | `source ~/.config/hayn-development.zsh && flutter build ios --release --no-codesign --no-pub` | ينتهي بلا خطأ؛ يُسجل حجم `Runner.app`. يبني DarkLib لـ`aarch64-apple-ios` |
 | **F2** | مجموعة محاكي iOS | `bash tool/test_ios_preservation.sh` | **11 ناجحة** ([15-IOS-TESTING](15-IOS-TESTING.md)). جهاز مؤقت يُحذف بعدها |
-| **F3** | قارئ ImageIO المستقل على نواتج F2 | `xcrun swift -module-cache-path /Volumes/CUSU/Development/caches/swift-preservation test_native/inspect_ios_outputs.swift build/ios-preservation/<الجولة>` | يوافق على كل الملفات. وسكربتات `test_native/compare_*.swift` المتعلقة بما تغيّر. وملفات HEIC بالبلاطات من Android: `swift test_native/check_heic_tiles.swift <results>` |
+| **F3** | قارئ ImageIO المستقل على نواتج F2 | `xcrun swift -module-cache-path /Volumes/CUSU/Development/caches/swift-preservation test_native/inspect_ios_outputs.swift build/ios-preservation/<الجولة>` | يوافق على كل الملفات. وسكربتات `test_native/compare_*.swift` المتعلقة بما تغيّر. وملفات HEIC بالبلاطات من Android: `swift test_native/check_heic_tiles.swift <results>`. وبلاطات AVIF من `ios_region_test.dart`: `swift test_native/compare_region_tiles.swift <results>` |
 | **F4** | اختبار الأداء على الآيفون | `tool/test_performance.sh <معرّف الجهاز>` | **8 من 8** بلا تجاوز للحدود ([18-PERFORMANCE](18-PERFORMANCE.md)). يحتاج iPhone 13 Pro موصولًا ومفتوحًا؛ يبقي التطبيق ويثبّت release بعده |
 | **F5** | لقطات README | `tool/screenshots/generate.sh` | لقطات جديدة من محاكي، بلا تعديل يدوي ([presentation.md](../.claude/rules/presentation.md)) |
 | **F6** | الجسر الحقيقي على الماك | `cargo build --locked` في `native/darklib` ثم `flutter test --no-pub test_native/darklib_host_test.dart --dart-define=DARKLIB_TEST_LIBRARY=<المسار>/libdarklib.dylib` | **14 ناجحة** (منذ 2026-10-03؛ كانت 10 ثم 12 ثم 13) |
@@ -70,38 +70,7 @@
 
 ## المفتوحة
 
-### M-07 · العرض بالبلاطات: AVIF من DarkLib على iOS، وما سواه كما كان، ودراسة قارئ المناطق في ImageIO
-- **الحالة:** مفتوحة
-- **طلبها:** وكيل لينكس، 2026-10-03 (حُدّثت في اليوم نفسه بعد AVIF، ثم بعد asm)
-- **ما تغيّر:** العارض وشاشة المقارنة يقرآن الصورة بالبلاطات عند التكبير (PERF-03): `RegionTiles` في Dart، و`RegionImage` بقارئين.
-  - **DarkLib وFFI:**
-    - قارئ مناطق AVIF جديد (`engine::codec::region`، FFI ‏`RegionReader`)، فأعيد توليد الروابط. **فـAVIF على iOS صار يُقرأ بالبلاطات**، بالشفرة نفسها التي على Android.
-    - فك AV1 صار بحتى أربعة خيوط (PERF-05)، ويخص كل فك AVIF على iOS أيضًا.
-    - **asm لـarm64 في rav1d (PERF-05، بموافقة المستخدم):** يُبنى لكل هدف aarch64، أي الآيفون والمحاكي على Apple silicon و`cargo test` على الماك نفسه. **أول مرة يُبنى فيها هذا الكود على أدوات Apple.** ومصدر rav1d صار مستودعه عند الوسم v1.1.0 (`[patch.crates-io]`)، فأول بناء يحتاج الشبكة لجلبه، و`Cargo.lock` تغيّر لذلك. و`build.rs` جديد، لكنه لا يضيف شيئًا لـiOS (`-Bsymbolic` لـAndroid وحده).
-    - `color::ToSrgb` للون العرض.
-  - **ما سوى AVIF على iOS:** `RegionImage.open` يعيد null بلا قناة، فيبقى `fullResImage` بحد 8192 كما كان.
-  - **الشفرة المشتركة:**
-    - `HaynComparisonViewer` يقبل متحكمًا من الخارج (`controller`).
-    - شاشة الضغط: «بعد» يمر بـ`PlatformPixels`. وحيث لا قارئ مناطق تُفك اللوحتان بحد 4096 (`boundedImage`)، وكان «بعد» بلا حد.
-    - قيمتان جديدتان في التشخيص (`androidRegion` و`display`).
-  - لا تغيير في Swift.
-- **البنود:** PERF-03، PERF-05.
-- **يلزم:** توصيل الآيفون للخطوة 4.
-- **الخطوات:**
-  1. F1، وF6 (**14 ناجحة**، وفيها `an AVIF reads by regions and cleans up after itself`)، وF2 لأن FFI تغيّرت.
-  2. `cargo test --locked` في `native/darklib` على الماك (136، وفيها `tests/region.rs`): ملفات الهرم و`read_exact_at` على macOS. وعلى الماك تُبنى asm وتعمل، فهذه الخطوة تفحص فك AV1 بها مقابل نتائج ImageIO وffmpeg المحفوظة في الاختبارات. إن فشل بناء asm فسجّل الخطأ كاملًا ولا تطفئه.
-  3. **على المحاكي:** صورة اختبار تُضاف إلى معرضه: عينة الأداء، ونسخة AVIF منها (`DarkLibCore.transcode`). **ولا تُفتح صور المستخدم.**
-     - في العارض: AVIF يُكبَّر وتظهر تفاصيله حادة (بلاطات من DarkLib)، وJPEG يبقى كما كان.
-     - شاشة الضغط تعرض «قبل» و«بعد» وتكبّرهما بلا خطأ.
-     - لا يبقى ملف `darklib-region-*` في مجلد الكاش بعد الخروج من العارض.
-  4. F4، لأن الشاشتين وفك AVIF تغيّرت. وقارن صفوف AVIF (العرض والتحويل) بنتيجة M-05: المتوقع أسرع بوضوح من الخيوط وasm معًا.
-  5. **دراسة لا تنفيذ:** كيف تُقرأ منطقة من صورة على iOS بذاكرة محدودة.
-     - هل `CGImageSourceCreateImageAtIndex` ثم `cropping(to:)` يفك المنطقة وحدها؟
-     - كم الزمن والذاكرة لـJPEG بحجم 200 ميقابكسل (عينة RUN-01)، ولـHEIC من Apple (شبكة 512)؟
-     - هل `kCGImageSourceSubsampleFactor` يصغّر أثناء الفك؟ وهل `CATiledLayer` بديل أنسب؟
-     - المطلوب أرقام تحدد التصميم، فيكتب لينكس الجسر بعدها.
-- **النجاح:** بناء نظيف، وF6 ‏14، والمحاكي 11، وRust 136، وAVIF بالبلاطات على المحاكي، وما سواه كما كان، والأداء 8 من 8، وأرقام الدراسة.
-- **يُعاد إلى لينكس:** حجم البناء، ونتيجة كل خطوة، وأرقام الخطوة 5 مع السجل.
+_لا شيء مفتوح._
 
 ## المنفذة
 
@@ -230,3 +199,49 @@
   - **الأداة:** `test_native/check_heic_tiles.swift` (جديد، مقابل `check_heic_tiles.py` على لينكس). وتحقق من أنه يفشل حين يُعطى ملف باتجاه خاطئ (ضابط سلبي: 8 فشل مقروءة). السجل `m06-imageio-tiles-20261003.log`. الملفات في `/Volumes/CUSU/Development/android-device/results/heic-tiles/`.
   - **تصحيح من مسودتي:** أول تشغيل أعطى 24 فشلًا لونيًا (الأخضر والأصفر منزاحان) لأن واجهة الصورة المصغّرة في ImageIO تُخرج بكسلات بلا فضاء لون. ليس في ملفات Android. القراءة بـ`CreateImageAtIndex` وتطبيق الاتجاه الذي يبلغه ImageIO تعطي ألوانًا تطابق libheif (220،41،42 مقابل 221،40،42).
   - **ملاحظة للينكس:** ImageIO لا يدوّر الصورة نفسها، بل يعيد البكسلات المخزنة مع الاتجاه في الخصائص، وهكذا تعرضها Photos. ولا يوجد `colr` (nclx) في الملفات بلا ملف لون (sRGB)؛ ImageIO وlibheif يفسّرانها بالمصفوفة نفسها فتطابقت الألوان، لكن إضافة `colr` nclx صراحة تزيل اعتماد القارئ على الافتراض.
+
+### M-07 · العرض بالبلاطات: AVIF من DarkLib على iOS، وما سواه كما كان، ودراسة قارئ المناطق في ImageIO
+- **الحالة:** منفذة (2026-10-09)، والخطوة 3 على الآيفون بطلب المستخدم بدل المحاكي. كشفت عيبين جديدين: IMG-23 وUI-10.
+- **طلبها:** وكيل لينكس، 2026-10-03 (حُدّثت في اليوم نفسه بعد AVIF، ثم بعد asm)
+- **ما تغيّر:** العارض وشاشة المقارنة يقرآن الصورة بالبلاطات عند التكبير (PERF-03): `RegionTiles` في Dart، و`RegionImage` بقارئين.
+  - **DarkLib وFFI:**
+    - قارئ مناطق AVIF جديد (`engine::codec::region`، FFI ‏`RegionReader`)، فأعيد توليد الروابط. **فـAVIF على iOS صار يُقرأ بالبلاطات**، بالشفرة نفسها التي على Android.
+    - فك AV1 صار بحتى أربعة خيوط (PERF-05)، ويخص كل فك AVIF على iOS أيضًا.
+    - **asm لـarm64 في rav1d (PERF-05، بموافقة المستخدم):** يُبنى لكل هدف aarch64، أي الآيفون والمحاكي على Apple silicon و`cargo test` على الماك نفسه. **أول مرة يُبنى فيها هذا الكود على أدوات Apple.** ومصدر rav1d صار مستودعه عند الوسم v1.1.0 (`[patch.crates-io]`)، فأول بناء يحتاج الشبكة لجلبه، و`Cargo.lock` تغيّر لذلك. و`build.rs` جديد، لكنه لا يضيف شيئًا لـiOS (`-Bsymbolic` لـAndroid وحده).
+    - `color::ToSrgb` للون العرض.
+  - **ما سوى AVIF على iOS:** `RegionImage.open` يعيد null بلا قناة، فيبقى `fullResImage` بحد 8192 كما كان.
+  - **الشفرة المشتركة:**
+    - `HaynComparisonViewer` يقبل متحكمًا من الخارج (`controller`).
+    - شاشة الضغط: «بعد» يمر بـ`PlatformPixels`. وحيث لا قارئ مناطق تُفك اللوحتان بحد 4096 (`boundedImage`)، وكان «بعد» بلا حد.
+    - قيمتان جديدتان في التشخيص (`androidRegion` و`display`).
+  - لا تغيير في Swift.
+- **البنود:** PERF-03، PERF-05.
+- **يلزم:** توصيل الآيفون للخطوة 4.
+- **الخطوات:**
+  1. F1، وF6 (**14 ناجحة**، وفيها `an AVIF reads by regions and cleans up after itself`)، وF2 لأن FFI تغيّرت.
+  2. `cargo test --locked` في `native/darklib` على الماك (136، وفيها `tests/region.rs`): ملفات الهرم و`read_exact_at` على macOS. وعلى الماك تُبنى asm وتعمل، فهذه الخطوة تفحص فك AV1 بها مقابل نتائج ImageIO وffmpeg المحفوظة في الاختبارات. إن فشل بناء asm فسجّل الخطأ كاملًا ولا تطفئه.
+  3. **على المحاكي:** صورة اختبار تُضاف إلى معرضه: عينة الأداء، ونسخة AVIF منها (`DarkLibCore.transcode`). **ولا تُفتح صور المستخدم.**
+     - في العارض: AVIF يُكبَّر وتظهر تفاصيله حادة (بلاطات من DarkLib)، وJPEG يبقى كما كان.
+     - شاشة الضغط تعرض «قبل» و«بعد» وتكبّرهما بلا خطأ.
+     - لا يبقى ملف `darklib-region-*` في مجلد الكاش بعد الخروج من العارض.
+  4. F4، لأن الشاشتين وفك AVIF تغيّرت. وقارن صفوف AVIF (العرض والتحويل) بنتيجة M-05: المتوقع أسرع بوضوح من الخيوط وasm معًا.
+  5. **دراسة لا تنفيذ:** كيف تُقرأ منطقة من صورة على iOS بذاكرة محدودة.
+     - هل `CGImageSourceCreateImageAtIndex` ثم `cropping(to:)` يفك المنطقة وحدها؟
+     - كم الزمن والذاكرة لـJPEG بحجم 200 ميقابكسل (عينة RUN-01)، ولـHEIC من Apple (شبكة 512)؟
+     - هل `kCGImageSourceSubsampleFactor` يصغّر أثناء الفك؟ وهل `CATiledLayer` بديل أنسب؟
+     - المطلوب أرقام تحدد التصميم، فيكتب لينكس الجسر بعدها.
+- **النجاح:** بناء نظيف، وF6 ‏14، والمحاكي 11، وRust 136، وAVIF بالبلاطات على المحاكي، وما سواه كما كان، والأداء 8 من 8، وأرقام الدراسة.
+- **يُعاد إلى لينكس:** حجم البناء، ونتيجة كل خطوة، وأرقام الخطوة 5 مع السجل.
+- **النتيجة (2026-10-09، الماك):** الخطوات الخمس نُفذت. البلاطات صحيحة على iOS، وasm تعمل بأدوات Apple. وكشفت المهمة أن Photos لا يعرض AVIF الذي تكتبه DarkLib، فلا يفتحه العارض.
+  - **الخطوة 1:** F1 بناء نظيف، `Runner.app` **64.8MB**، وفي `darklib.framework` ‏1426 دالة neon (asm مبنية). F6 **14 من 14**، ومنها «an AVIF reads by regions and cleans up after itself». F2 **11 من 11** على iOS 26.3. وF3 يوافق. السجلات `m07-f1-ios-build-20261009.log` و`m07-f6-bridge-20261009.log` و`m07-f2-ios-simulator-20261009.log` و`m07-f3-independent-20261009.log`.
+  - **الخطوة 2:** `cargo test --locked` على الماك **136 من 136**، ومنها `tests/region.rs` (5). asm مبنية للماك (1760 دالة neon)، فاختبارات فك AVIF مرت بها. أول بناء جلب rav1d من git بلا مشكلة. السجل `m07-rust-tests-20261009.log`.
+  - **الخطوة 3، اختبار جديد `integration_test/ios_region_test.dart`:** التطبيق الحقيقي على صور يحفظها في Photos. بدأته على المحاكي، ثم نقلته إلى الآيفون بطلب المستخدم (profile). النتيجة على الآيفون **9 من 10** (`m07-step3-iphone-region-20261009.log`):
+    - **قارئ المناطق:** AVIF يُفتح وJPEG لا. رقعة شطرنج AVIF من DarkLib مجمّعة من بلاطاتها تطابق فك ImageIO بفرق 0. وشريط P3 من صورة الأداء يطابق ImageIO محوّلًا إلى sRGB بمتوسط 0.29 وأقصى 2 (`test_native/compare_region_tiles.swift`، السجل `m07-step3-compare-region-20261009.log`).
+    - **العارض:** AVIF مكبّر بالنقر المزدوج يُرسم بالبلاطات، 108 من 108 مربعات صحيحة بعد 746ms. وJPEG بلا بلاطات بحد 8192، 108 من 108. وصورة الأداء بالصيغتين بلا خطأ. ولا يبقى `darklib-region-*` في الكاش بعد الخروج.
+    - **شاشة الضغط:** «قبل» من AVIF بالبلاطات ومكبّرة 176 من 176، و«بعد» 154 من 154. ومن JPEG بالأرقام نفسها بلا بلاطات.
+    - **الفاشل:** «Photos: thumbnails and originals»: لا صورة مصغّرة في Photos لـAVIF من DarkLib (**IMG-23**). السبب عمق 10 بت (ravif بلا `with_depth`)، وأثبته اختبار مؤقت بخمسة ترميزات (`m07-probe-thumbnails-20261009.log`، حُذف بعدها). والعارض وشاشة الضغط يتوقفان بلا صورة مصغّرة، والعارض يرمي استثناءً غير معالج (**UI-10**). لذلك فُحصت الشاشتان بنسختي 8 بت (ravif 0.11.3 بعمق 8، صنعتهما على الماك ونسختهما إلى الهاتف).
+    - **على المحاكي:** Rust في بنائه debug، فشُغّل بـ`CARGO_PROFILE_DEV_OPT_LEVEL=3`. ونقل 48MB من البلاطات عبر الجسر في Dart debug استغرق 20 دقيقة، ففي الاختبار شريط واحد. `tool/test_ios_preservation.sh` صار يقبل الهدف وسيطًا، وينسخ صورة الأداء إن وُجدت.
+  - **الخطوة 4، F4:** القياسات بلا تجاوز (0)، لكن **التشغيل خرج فاشلًا**: بعد اختبار العارض خمسة استثناءات غير معالجة من صور AVIF بعمق 10 بت أضفتها إلى أعلى المكتبة (IMG-23 وUI-10). وفك AV1 في DarkLib أسرع بنحو الضعف: AVIF إلى WebP من 3056 إلى 1478ms. السجل `m07-f4-perf-iphone13pro-20261009.log`، والتقرير `build/performance/ios-20261009-155953/`، والتفصيل في 18-PERFORMANCE. وأُعيد تثبيت نسخة release ‏(65.5MB).
+  - **الخطوة 5، الدراسة (على الماك M1، لا الآيفون):** `cropping(to:)` على `CGImage` كسول يفك المنطقة وحدها لـJPEG وHEIC: JPEG ‏200 ميقابكسل بعد قص أول 240ms (فهرسة) نحو 5ms لكل منطقة 1024² بذروة 13MB، وHEIC من Apple نحو 20ms بذروة 40 إلى 109MB، والفك الكامل 1.5GB. وPNG لا يُقرأ منطقةً. و`SubsampleFactor` يصغّر أثناء الفك للمستويات الخشنة. و`CATiledLayer` ليس مفككًا. الأرقام والتصميم المقترح في 23-LARGE-IMAGES §4، والأداة `test_native/imageio_region_study.swift`، والسجل `m07-step5-imageio-study-20261009.log`.
+  - **ما أُضيف إلى معرض الآيفون (لم يُحذف شيء):** صور `hayn-region-*` من تشغيلات الاختبار (صورة الأداء ورقعة الشطرنج بـJPEG وAVIF من DarkLib وAVIF بعمق 8، ونسخ مكررة من التشغيلات الأولى قبل أن يعيد الاختبار استعمال صوره)، و`hayn-sofa_grid1x5_420.avif` و`hayn-seine_sdr_gainmap_srgb.avif`، وخمس `hayn-probe-*.avif`. وملفات AVIF بعمق 10 منها هي التي أفشلت F4، ويفشل أي F4 قادم حتى تُحذف أو يُصلح IMG-23 وUI-10.
+  - **يُعاد إلى لينكس:** IMG-23 (ترميز AVIF بعمق 8) وUI-10 (العارض وشاشة الضغط بلا صورة مصغّرة)، ثم مهمة ماك تعيد `ios_region_test.dart` بنسختي DarkLib بدل نسختي 8 بت. وقارئ ImageIO بالتصميم المقترح.

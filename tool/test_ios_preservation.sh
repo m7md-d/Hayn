@@ -5,7 +5,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 BUNDLE_ID="app.naqaa.hayn"
-TARGET="integration_test/ios_preservation_test.dart"
+# Another suite on the same throwaway device: integration_test/ios_region_test.dart.
+TARGET="${1:-integration_test/ios_preservation_test.dart}"
 RUNTIME=$(xcrun simctl list runtimes available | awk '/^iOS/ { id = $NF } END { print id }')
 if [ -z "$RUNTIME" ]; then
   echo "Install an iOS simulator runtime in Xcode first." >&2
@@ -46,6 +47,10 @@ xcrun simctl privacy "$UDID" grant photos "$BUNDLE_ID"
 CONTAINER=$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data)
 mkdir -p "$CONTAINER/Documents/preservation-fixtures"
 cp native/darklib/tests/fixtures/*.avif "$CONTAINER/Documents/preservation-fixtures/"
+# The performance photo (tool/test_performance.sh fetches it), for the region suite.
+if [ -f build/perf-fixtures/photo-12mp.jpg ]; then
+  cp build/perf-fixtures/photo-12mp.jpg "$CONTAINER/Documents/preservation-fixtures/"
+fi
 xcrun simctl shutdown "$UDID"
 # iOS 26 ignores simctl's legacy auth_version=1. Patch only our throwaway
 # device, while offline, as in the existing screenshot runner.
