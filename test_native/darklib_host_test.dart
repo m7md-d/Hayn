@@ -553,10 +553,24 @@ void main() {
       expect((seq, count), (3, 3));
       expect(joined.toBytes(), profile);
 
-      // A PNG has no place for IPTC: the rest crosses, the drop is recorded.
+      // A PNG has no place for Photoshop's own resources (here its
+      // resolution, 0x03ED): the rest crosses, the drop is recorded.
+      final resources = [
+        ...'Photoshop 3.0'.codeUnits, 0, //
+        ...'8BIM'.codeUnits,
+        0x03,
+        0xED,
+        0,
+        0,
+        0,
+        0,
+        0,
+        16,
+        ...List.filled(16, 1),
+      ];
       final withIptc = BytesBuilder()
         ..add(plain.sublist(0, 2))
-        ..add([0xFF, 0xED, 0, 2 + 14, ...'Photoshop 3.0'.codeUnits, 0])
+        ..add([0xFF, 0xED, 0, 2 + resources.length, ...resources])
         ..add(plain.sublist(2));
       final before = MediaDiagnostics.recent.length;
       final png = Uint8List.fromList(
@@ -574,4 +588,32 @@ void main() {
       ]);
     },
   );
+
+  // The metadata model (user decision 2026-10-09): ExifTool's fixture to
+  // WebP through DarkLib's own conversion. IPTC-IIM has no place in WebP and
+  // goes in as XMP; nothing is recorded lost.
+  test('metadata crosses to another container through the model', () async {
+    final rich = File(
+      'native/darklib/tests/fixtures/meta_rich.jpg',
+    ).readAsBytesSync();
+    final before = MediaDiagnostics.recent.length;
+    final out = (await DarkLibCore.transcode(
+      rich,
+      format: DarkLibFormat.webp,
+      quality: 90,
+    ))!;
+    expect(out.dropped, isEmpty);
+    expect(
+      MediaDiagnostics.recent.skip(before).map((d) => d.code),
+      isNot(contains(MediaDiagnosticCode.metadataDropped)),
+    );
+    final summary = rust_meta.readMetadataSummary(bytes: out.bytes);
+    expect(
+      (summary.hasExif, summary.hasXmp, summary.hasIcc),
+      (true, true, true),
+    );
+    expect(summary.hasGps, isTrue);
+    expect(summary.orientation, 1, reason: 'the pixels are upright');
+    expect(String.fromCharCodes(out.bytes).contains('IPTC headline'), isTrue);
+  });
 }

@@ -111,7 +111,7 @@ if loss.alpha { /* warn: JPEG can't hold transparency */ }
 ## Building
 
 ```sh
-cargo test           # 60+ unit/golden tests, all pure-Rust
+cargo test           # 170+ unit/golden tests, all pure-Rust
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```

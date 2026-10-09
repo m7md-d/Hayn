@@ -1076,11 +1076,12 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   Transcoded dco_decode_transcoded(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 2)
-      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
     return Transcoded(
       bytes: dco_decode_list_prim_u_8_strict(arr[0]),
       hdr: dco_decode_hdr_outcome(arr[1]),
+      dropped: dco_decode_list_meta_kind(arr[2]),
     );
   }
 
@@ -1438,7 +1439,8 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_bytes = sse_decode_list_prim_u_8_strict(deserializer);
     var var_hdr = sse_decode_hdr_outcome(deserializer);
-    return Transcoded(bytes: var_bytes, hdr: var_hdr);
+    var var_dropped = sse_decode_list_meta_kind(deserializer);
+    return Transcoded(bytes: var_bytes, hdr: var_hdr, dropped: var_dropped);
   }
 
   @protected
@@ -1775,6 +1777,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_list_prim_u_8_strict(self.bytes, serializer);
     sse_encode_hdr_outcome(self.hdr, serializer);
+    sse_encode_list_meta_kind(self.dropped, serializer);
   }
 
   @protected

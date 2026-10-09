@@ -16,6 +16,7 @@ import 'package:hayn/src/rust/frb_generated.dart';
 /// Any DarkLib call would throw: none may run. Transcodes are recorded.
 class _Api extends Fake implements DarkLibApi {
   final transcodes = <CodecFormat>[];
+  final depths = <int>[];
 
   @override
   Future<Transcoded> crateApiCodecTranscode({
@@ -27,6 +28,7 @@ class _Api extends Fake implements DarkLibApi {
     required int bitDepth,
   }) async {
     transcodes.add(format);
+    depths.add(bitDepth);
     throw 'unsupported';
   }
 }
@@ -169,4 +171,43 @@ void main() {
       );
     },
   );
+
+  // IMG-23 (user decision 2026-10-09): "match" is the depth of the image the
+  // user picked. DarkLib got 0 and wrote its default, 10, for an 8-bit JPEG.
+  test('"match" gives the engine the source\'s depth', () async {
+    messenger.setMockMethodCallHandler(channel, (_) async => null);
+    for (final (source, want) in [(8, 8), (10, 10), (16, 10), (null, 8)]) {
+      api.depths.clear();
+      try {
+        await ImageEncoder.encode(
+          source: Uint8List(16),
+          target: DefaultFormat.avif,
+          quality: 80,
+          facts: SourceFacts(
+            alpha: false,
+            directHdr: false,
+            gainMap: false,
+            bitDepth: source,
+          ),
+          keepMetadata: false,
+        );
+      } on ImageEncodingFailure {
+        // No engine here; what it was given is the point.
+      }
+      expect(api.depths.first, want, reason: 'source $source');
+    }
+    expect(ImageEncoder.depthFor(8, const SourceFacts.sdr(alpha: false)), 8);
+    expect(
+      ImageEncoder.depthFor(
+        0,
+        const SourceFacts(
+          alpha: false,
+          directHdr: false,
+          gainMap: false,
+          bitDepth: 10,
+        ),
+      ),
+      10,
+    );
+  });
 }

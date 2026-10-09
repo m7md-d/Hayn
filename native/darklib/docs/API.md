@@ -135,7 +135,16 @@ take — a segment too large, IPTC outside JPEG, a layout outside the
 supported ones — and `inject` is its bytes (Hayn RV-04). That is what was
 written, not proof that it was read the same way: an independent reader
 still decides preservation. FFI: `api::metadata::transplant_metadata`
-returns `Transplanted { bytes, dropped }`.
+returns `Transplanted { bytes, dropped }`, and `codec::Transcoded` has
+`dropped` too.
+
+Every writer prepares `meta` through one step, `carry::for_target` (the
+intermediate-form contract, Hayn docs/10-DARKLIB.md): EXIF without its old
+thumbnail and upright, one XMP packet (a JPEG's Extended XMP joined, then
+split again for a JPEG target with an MD5 GUID), IPTC-IIM as JPEG's APP13 or
+as IPTC Core XMP elsewhere (the source's XMP wins; a conflict without a
+matching IPTCDigest is reported), ICC as it is. `Canonical::xmp` is always
+the bare packet (a PNG's `iTXt` unwrapped and inflated).
 
 ```rust
 let meta  = metadata::extract(src);

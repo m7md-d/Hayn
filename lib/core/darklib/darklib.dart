@@ -9,6 +9,7 @@ import '../../src/rust/api/verify.dart' as rust_verify;
 import '../../src/rust/engine/codec.dart';
 import '../../src/rust/engine/codec/heif_alpha.dart';
 import '../../src/rust/engine/inspect.dart';
+import '../../src/rust/engine/metadata.dart';
 import '../../src/rust/engine/verify.dart';
 import '../../src/rust/frb_generated.dart';
 
@@ -133,18 +134,22 @@ abstract final class DarkLibCore {
     bool keepMetadata = true,
     int maxEdge = 0,
     int bitDepth = 0,
-  }) => _call(
-    MediaOperation.encode,
-    () => rust_codec.transcode(
-      bytes: bytes,
-      format: format,
-      quality: quality,
-      maxEdge: maxEdge,
-      keepMetadata: keepMetadata,
-      bitDepth: bitDepth,
-    ),
-    isEmpty: (t) => t.bytes.isEmpty,
-  );
+  }) async {
+    final out = await _call(
+      MediaOperation.encode,
+      () => rust_codec.transcode(
+        bytes: bytes,
+        format: format,
+        quality: quality,
+        maxEdge: maxEdge,
+        keepMetadata: keepMetadata,
+        bitDepth: bitDepth,
+      ),
+      isEmpty: (t) => t.bytes.isEmpty,
+    );
+    _recordDropped(out?.dropped);
+    return out;
+  }
 
   /// The JPEG [bytes] re-encoded at [quality] a band of rows at a time
   /// (RUN-01 step 6): libjpeg-turbo's settings with optimal Huffman tables,
@@ -251,15 +256,20 @@ abstract final class DarkLibCore {
       () => rust.transplantMetadata(source: source, target: target),
       isEmpty: (t) => t.bytes.isEmpty,
     );
-    // What the target's container could not take, one record a kind (RV-04).
-    for (final _ in out?.dropped ?? const []) {
+    _recordDropped(out?.dropped);
+    return out?.bytes;
+  }
+
+  /// What the output's container could not take at all, one record a kind
+  /// (RV-04; the metadata model carries the rest).
+  static void _recordDropped(List<MetaKind>? dropped) {
+    for (final _ in dropped ?? const <MetaKind>[]) {
       MediaDiagnostics.record(
         MediaBackend.darklib,
         MediaOperation.transplant,
         MediaDiagnosticCode.metadataDropped,
       );
     }
-    return out?.bytes;
   }
 }
 

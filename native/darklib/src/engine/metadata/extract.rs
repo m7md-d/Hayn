@@ -4,7 +4,8 @@
 //! verbatim (no parse→reserialize) so a later `transplant`/`inject` can't drop
 //! MakerNotes or private boxes.
 
-use super::{exif, isobmff, Canonical};
+use super::carry::XMP_EXT_SIG;
+use super::{exif, isobmff, xmp_carry, Canonical};
 use crate::engine::format::{detect, ImageFormat};
 
 const XMP_SIG: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
@@ -47,6 +48,8 @@ fn jpeg(b: &[u8]) -> Canonical {
         return c;
     }
     let mut icc: Vec<(u8, u8, &[u8])> = Vec::new();
+    // Extended XMP segments: GUID, full length, offset, data.
+    let mut extended: Vec<(&[u8], u32, u32, &[u8])> = Vec::new();
     let mut i = 2usize;
     while i + 4 <= b.len() {
         if b[i] != 0xFF {
@@ -75,6 +78,12 @@ fn jpeg(b: &[u8]) -> Canonical {
                     c.exif.get_or_insert_with(|| rest.to_vec());
                 } else if let Some(rest) = payload.strip_prefix(XMP_SIG) {
                     c.xmp.get_or_insert_with(|| rest.to_vec());
+                } else if let Some(rest) = payload.strip_prefix(XMP_EXT_SIG) {
+                    if rest.len() >= 40 {
+                        let n = u32::from_be_bytes([rest[32], rest[33], rest[34], rest[35]]);
+                        let at = u32::from_be_bytes([rest[36], rest[37], rest[38], rest[39]]);
+                        extended.push((&rest[..32], n, at, &rest[40..]));
+                    }
                 }
             }
             0xE2 => {
@@ -83,15 +92,47 @@ fn jpeg(b: &[u8]) -> Canonical {
                     icc.push((payload[12], payload[13], &payload[14..]));
                 }
             }
-            0xED => {
-                c.iptc.get_or_insert_with(|| payload.to_vec());
-            }
+            0xED => match &mut c.iptc {
+                // Photoshop continues resources too large for one segment in
+                // the next, each behind its own signature.
+                Some(iptc) => {
+                    if let Some(rest) = payload.strip_prefix(PHOTOSHOP_SIG) {
+                        iptc.extend_from_slice(rest);
+                    }
+                }
+                None => c.iptc = Some(payload.to_vec()),
+            },
             _ => {}
         }
         i = seg_end;
     }
     c.icc = icc_profile(icc);
+    c.xmp_extended = c
+        .xmp
+        .as_deref()
+        .and_then(xmp_carry::extended_guid)
+        .and_then(|guid| extended_xmp(&extended, guid.as_bytes()));
     c
+}
+
+/// The APP13 signature of Photoshop's image resources.
+const PHOTOSHOP_SIG: &[u8] = b"Photoshop 3.0\0";
+
+/// The Extended XMP the main packet names by `guid`, joined from its
+/// segments by offset: every byte of the stated length once, else none (a
+/// gap, an overlap or a disagreeing length is not a packet to guess at).
+fn extended_xmp(segments: &[(&[u8], u32, u32, &[u8])], guid: &[u8]) -> Option<Vec<u8>> {
+    let mut parts: Vec<_> = segments.iter().filter(|s| s.0 == guid).collect();
+    let total = parts.first()?.1 as usize;
+    parts.sort_by_key(|s| s.2);
+    let mut out = Vec::with_capacity(total.min(1 << 24));
+    for &&(_, n, at, data) in &parts {
+        if n as usize != total || at as usize != out.len() {
+            return None;
+        }
+        out.extend_from_slice(data);
+    }
+    (out.len() == total).then_some(out)
 }
 
 /// The profile from its APP2 chunks, joined by their numbers (Hayn RV-04):
@@ -151,7 +192,9 @@ fn png(b: &[u8]) -> Canonical {
                 c.icc.get_or_insert(profile);
             }
         } else if kind == b"iTXt" && data.starts_with(b"XML:com.adobe.xmp\0".as_slice()) {
-            c.xmp.get_or_insert_with(|| data.to_vec());
+            if let Some(packet) = itxt_text(data) {
+                c.xmp.get_or_insert(packet);
+            }
         }
         if kind == b"IEND" {
             break;
@@ -190,6 +233,24 @@ fn webp(b: &[u8]) -> Canonical {
         i = chunk_end;
     }
     c
+}
+
+/// The text of an `iTXt` chunk: keyword, compression flag and method,
+/// language tag and translated keyword (each null-terminated), then the text,
+/// inflated when the flag says so. `None` for a chunk that does not parse.
+fn itxt_text(data: &[u8]) -> Option<Vec<u8>> {
+    let key = data.iter().position(|&b| b == 0)?;
+    let (flag, method) = (*data.get(key + 1)?, *data.get(key + 2)?);
+    let rest = data.get(key + 3..)?;
+    let lang = rest.iter().position(|&b| b == 0)?;
+    let rest = &rest[lang + 1..];
+    let translated = rest.iter().position(|&b| b == 0)?;
+    let text = &rest[translated + 1..];
+    match (flag, method) {
+        (0, _) => Some(text.to_vec()),
+        (1, 0) => miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(text, 64 << 20).ok(),
+        _ => None,
+    }
 }
 
 /// Decompress a PNG `iCCP` chunk to the raw ICC profile. Layout: profile name

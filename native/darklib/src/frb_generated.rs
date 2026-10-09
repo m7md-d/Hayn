@@ -1156,9 +1156,11 @@ impl SseDecode for crate::engine::codec::Transcoded {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_bytes = <Vec<u8>>::sse_decode(deserializer);
         let mut var_hdr = <crate::engine::codec::HdrOutcome>::sse_decode(deserializer);
+        let mut var_dropped = <Vec<crate::engine::metadata::MetaKind>>::sse_decode(deserializer);
         return crate::engine::codec::Transcoded {
             bytes: var_bytes,
             hdr: var_hdr,
+            dropped: var_dropped,
         };
     }
 }
@@ -1578,6 +1580,7 @@ impl flutter_rust_bridge::IntoDart for crate::engine::codec::Transcoded {
         [
             self.bytes.into_into_dart().into_dart(),
             self.hdr.into_into_dart().into_dart(),
+            self.dropped.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -1939,6 +1942,7 @@ impl SseEncode for crate::engine::codec::Transcoded {
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <Vec<u8>>::sse_encode(self.bytes, serializer);
         <crate::engine::codec::HdrOutcome>::sse_encode(self.hdr, serializer);
+        <Vec<crate::engine::metadata::MetaKind>>::sse_encode(self.dropped, serializer);
     }
 }
 

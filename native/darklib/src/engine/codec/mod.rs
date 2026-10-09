@@ -380,6 +380,9 @@ pub enum HdrOutcome {
 pub struct Transcoded {
     pub bytes: Vec<u8>,
     pub hdr: HdrOutcome,
+    /// The metadata kinds the source held that the output could not (Hayn
+    /// RV-04): the caller records them.
+    pub dropped: Vec<crate::engine::metadata::MetaKind>,
 }
 
 /// Decode → (optional resize) → encode to `target`. With `keep_metadata` the
@@ -425,11 +428,16 @@ pub fn transcode(
             && isobmff::read_orientation(bytes).is_none();
         hdr = HdrOutcome::GainMapDropped;
         if let (true, Target::Avif { quality, depth }) = (keepable, target) {
-            match transcode_hdr_avif(bytes, quality, depth, &carried) {
+            // The container is built here, so the metadata goes through the
+            // model's step to a container as an inject's would.
+            let metadata::carry::Prepared { ready, dropped, .. } =
+                metadata::carry::prepared(&carried, false);
+            match transcode_hdr_avif(bytes, quality, depth, &ready) {
                 Some(out) => {
                     return Ok(Transcoded {
                         bytes: out,
                         hdr: HdrOutcome::GainMapKept,
+                        dropped,
                     })
                 }
                 None => hdr = HdrOutcome::GainMapKeepFailed,
@@ -438,9 +446,11 @@ pub fn transcode(
     }
 
     let out = encode(&decode(bytes, max_edge)?, target)?;
+    let carried = metadata::inject_reporting(&out, &carried);
     Ok(Transcoded {
-        bytes: metadata::inject(&out, &carried),
+        bytes: carried.bytes,
         hdr,
+        dropped: carried.dropped,
     })
 }
 

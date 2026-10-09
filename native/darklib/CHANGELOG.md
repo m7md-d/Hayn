@@ -8,6 +8,20 @@ the engine API may change between minor versions.
 ## [Unreleased]
 
 ### Added
+- **One intermediate form for metadata** (Hayn IMG-26): every writer goes
+  through `metadata::carry::for_target`, so a conversion between any two
+  containers loses only what the target cannot hold at all. JPEG's Extended
+  XMP is read (`Canonical::xmp_extended`, joined by GUID and offset) and
+  written, split from one packet when it does not fit a segment (`xmp_carry`,
+  with an in-crate MD5 for the GUID, RFC 1321 vectors); IPTC-IIM goes into
+  XMP by IPTC Core where the container has no IIM (`iptc`, the Metadata
+  Working Group's IPTCDigest rule for conflicts); EXIF loses its old
+  thumbnail (`exif::without_thumbnail`, `for_new_pixels`); a PNG's compressed
+  `iTXt` XMP is inflated and the model holds the bare packet; continued
+  APP13 segments are joined. `codec::Transcoded::dropped` reports what a
+  transcode could not carry (FFI change). Fixtures from ExifTool and Pillow,
+  `tests/metadata_model.rs`; Hayn's `test_native/check_metadata_model.py`
+  reads the outputs with ExifTool.
 - **Streaming JPEG re-encode** (Hayn RUN-01 step 6): `api::codec::jpeg_reencode`
   over `engine::codec::jpeg_stream`. JPEG → JPEG a band of rows at a time with
   libjpeg-turbo's code (new dependency `mozjpeg-sys` 2.2.3, v6 profile), then

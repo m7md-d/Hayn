@@ -4,6 +4,7 @@
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
 import '../frb_generated.dart';
+import 'metadata.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 /// What a transcode did with an HDR gain map. The HDR policy (user decision,
@@ -28,10 +29,18 @@ class Transcoded {
   final Uint8List bytes;
   final HdrOutcome hdr;
 
-  const Transcoded({required this.bytes, required this.hdr});
+  /// The metadata kinds the source held that the output could not (Hayn
+  /// RV-04): the caller records them.
+  final List<MetaKind> dropped;
+
+  const Transcoded({
+    required this.bytes,
+    required this.hdr,
+    required this.dropped,
+  });
 
   @override
-  int get hashCode => bytes.hashCode ^ hdr.hashCode;
+  int get hashCode => bytes.hashCode ^ hdr.hashCode ^ dropped.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -39,5 +48,6 @@ class Transcoded {
       other is Transcoded &&
           runtimeType == other.runtimeType &&
           bytes == other.bytes &&
-          hdr == other.hdr;
+          hdr == other.hdr &&
+          dropped == other.dropped;
 }

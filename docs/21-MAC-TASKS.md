@@ -70,23 +70,26 @@
 
 ## المفتوحة
 
-### M-09 · HEIC بعمق 10 على iOS، وشاشة الضغط بلا صورة مصغّرة، ونقل البيانات بتقرير، ومراجعة الكود
+### M-09 · HEIC بعمق 10 على iOS، وشاشة الضغط بلا صورة مصغّرة، والصيغة الوسيطة للبيانات، ومراجعة الكود
 - **الحالة:** مفتوحة
 - **طلبها:** وكيل لينكس، 2026-10-09 (بعد نتيجة M-08 والمراجعة الخارجية [24](24-CODE-REVIEW.md))
 - **ما تغيّر:**
   - **Swift (`AppDelegate.swift`، `ImageEncoderNative`):** `redraw16Bit` يرسم الصورة في سياق 16 بت للقناة (64 بت للبكسل، `premultipliedLast` أو `noneSkipLast`، في فضاء لونها) حين يُطلب HEIC بعمق 10 والصورة 8، كما نجح في `m08-step4-heic16-mac-20261009.log`. وإن فشل يعيد nil. **لم يُبنَ على لينكس.**
   - **Dart:** العمق المختار (8 أو 10) يُقرأ من رأس HEIC وAVIF الناتج، وناتج بعمق آخر ليس النتيجة (`depthMismatch`). وتقدير الذاكرة لـHEIC بعمق 10 من مصدر 8 خارج Android ‏9 بايتات للبكسل (لم يُقس). وشاشة الضغط تبني اللوحة من الأصل حين لا صورة مصغّرة (UI-10). وهوية نتيجة المعاينة (RV-01)، والبوابة (RV-02/RV-03)، والقص في قبول واحد.
-  - **DarkLib وFFI:** `transplant_metadata` يعيد `Transplanted { bytes, dropped }`، فأعيد توليد الروابط (ومعها `lib/src/rust/engine/metadata.dart`). وICC في JPEG بأجزاء مرقمة، وقراءته بأرقامها، وIPTC في APP13 (RV-04).
+  - **DarkLib وFFI:** `transplant_metadata` يعيد `Transplanted { bytes, dropped }`، و`Transcoded` صار فيه `dropped`، فأعيد توليد الروابط (ومعها `lib/src/rust/engine/metadata.dart`). وICC في JPEG بأجزاء مرقمة، وقراءته بأرقامها، وIPTC في APP13 (RV-04).
+  - **الصيغة الوسيطة للبيانات (IMG-26، قرار المستخدم 2026-10-10):** كل كاتب في DarkLib يمر بـ`carry::for_target`: Extended XMP يُقرأ ويُكتب، وIPTC إلى XMP خارج JPEG، وEXIF بلا صورة مصغّرة قديمة، وXMP المضغوط من PNG يُفك. **مسار ImageIO على iOS لا يمر بها** (`ImageEncoderNative` ينسخ خصائص المصدر بنفسه)، فلا نعرف ما يحمله.
+  - **«مطابق»** صار عمق الصورة المختارة (`ImageEncoder.depthFor`)، على المنصتين.
 - **البنود:** IMG-23، UI-10، RV-01 إلى RV-04، RUN-02.
 - **يلزم:** توصيل الآيفون للخطوات 3 إلى 5.
 - **الخطوات:**
-  1. F1 (Swift وFFI تغيّرتا)، وF6 (**17**، فيها «a large profile crosses in numbered chunks; what cannot is recorded»).
-  2. `cargo test --locked` في `native/darklib` (**158**). وF2 (على الآيفون كما في M-08 إن طلب المستخدم، وإلا المحاكي) وF3.
+  1. F1 (Swift وFFI تغيّرتا)، وF6 (**18**، فيها «a large profile crosses in numbered chunks; what cannot is recorded» و«metadata crosses to another container through the model»).
+  2. `cargo test --locked` في `native/darklib` (**174**، فيها `tests/metadata_model.rs`). ثم القارئ المستقل على الماك: `mkdir -p /tmp/mm && (cd native/darklib && DARKLIB_METADATA_OUT=/tmp/mm cargo test --locked --test metadata_model) && EXIFTOOL=<exiftool> python3 test_native/check_metadata_model.py native/darklib/tests/fixtures /tmp/mm` (20 «ok»). وF2 (على الآيفون كما في M-08 إن طلب المستخدم، وإلا المحاكي) وF3.
+  2b. **بيانات مسار ImageIO:** `ImageEncoder.encode` على الآيفون لـ`meta_rich.jpg` و`meta_extended_xmp.jpg` و`meta_zxmp.png` إلى HEIC وJPEG مع حفظ البيانات (اختبار مؤقت في `ios_region_test.dart` أو دائم)، ثم `check_metadata_model.py` على النواتج بأسماء `rich-to.heic` وما يشبهه. المطلوب: ما يحمله ImageIO وما يسقطه (XMP، وExtended XMP، وIPTC، والصورة المصغّرة، والاتجاه)، ليقرر لينكس نقل iOS إلى الصيغة الوسيطة (ImageIO يرمّز بلا بيانات، وDarkLib تحملها كما في Android).
   3. **`ios_region_test.dart` على الآيفون:** «Compare: checker.avif» يعرض «قبل» و«بعد» بلا صورة مصغّرة، و«Depth»: HEIC بـ«10 بت» من JPEG بعمق 8 يخرج **10** بقراءة DarkLib وImageIO و`sips`، وألوانه كألوان الـ8 (فرق متوسط صغير)، وصورته المصغّرة في Photos. وإن خرج 8 فالمتوقع الآن فشل الترميز بـ`depthMismatch`، لا ملف 8 على أنه 10: سجّله.
   4. **ذروة HEIC بعمق 10 لـ200 ميقابكسل:** `HAYN_PERF_LARGE=1 tool/test_performance.sh <الجهاز>` بعد إضافة صف HEIC بـ`bitDepth: 10` في `large_image_test.dart` (مؤقتًا، أو دائمًا إن رأيته مفيدًا). المتوقع نحو 8 بايتات للبكسل (+1.5GB) مقابل التقدير 9 (1.7GB)، والمتاح نحو 2.68GB. وفي التشغيل نفسه صفا `crop12mp` و`crop200mp` (القص في قبول واحد).
   5. F4: لا تجاوز ولا استثناء.
-- **النجاح:** بناء نظيف، وF6 ‏17، وRust ‏158، وF2 ‏11، والخطوات 3 إلى 5 كما وُصفت.
-- **يُعاد إلى لينكس:** عمق HEIC الذي كُتب وألوانه، وذروة HEIC بعمق 10 وزمنه، وصفا القص وبايتاتهما للبكسل على الآيفون، وحجم `Runner.app`، وأي فشل.
+- **النجاح:** بناء نظيف، وF6 ‏18، وRust ‏174 والقارئ المستقل 20، وF2 ‏11، والخطوات 2b و3 إلى 5 كما وُصفت.
+- **يُعاد إلى لينكس:** عمق HEIC الذي كُتب وألوانه، وذروة HEIC بعمق 10 وزمنه، وصفا القص وبايتاتهما للبكسل على الآيفون، وجدول ما يحمله ImageIO من البيانات، وحجم `Runner.app`، وأي فشل.
 
 ## المنفذة
 

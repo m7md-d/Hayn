@@ -6,14 +6,18 @@
 //! Each format keeps its own surgery in a submodule; this module only sniffs
 //! the container and dispatches.
 
+pub(crate) mod carry;
 pub mod exif;
 mod extract;
 mod inject;
+mod iptc;
 pub mod isobmff;
 pub mod jpeg;
+mod md5;
 pub mod png;
 pub mod webp;
 mod xmp;
+mod xmp_carry;
 
 pub use extract::extract;
 pub use inject::{inject, inject_reporting, Injected};
@@ -21,15 +25,24 @@ pub use inject::{inject, inject_reporting, Injected};
 use crate::engine::error::{DarkError, Result};
 use crate::engine::format::{detect, ImageFormat};
 
-/// Canonical metadata model: the raw EXIF (TIFF block), XMP, ICC and IPTC blobs
-/// kept VERBATIM (no parse→reserialize, so MakerNotes / private boxes survive)
-/// plus the unified orientation derived from EXIF (1 = upright). Produced by
-/// [`extract`]; consumed by the summary today and by transplant/inject later.
+/// Canonical metadata model, the intermediate form every conversion carries
+/// metadata through (Hayn metadata model, docs/10-DARKLIB.md): the raw EXIF
+/// (TIFF block), XMP, ICC and IPTC blobs kept VERBATIM (no parse→reserialize,
+/// so MakerNotes / private boxes survive) plus the unified orientation derived
+/// from EXIF (1 = upright). The same in every container: `xmp` is the bare
+/// packet (a PNG's `iTXt` unwrapped and inflated), `icc` the raw profile
+/// (JPEG's chunks joined, PNG's inflated, a `nclx`/`cICP` made a profile).
+/// Produced by [`extract`]; written by [`inject`] through `carry::for_target`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Canonical {
     pub exif: Option<Vec<u8>>,
     pub xmp: Option<Vec<u8>>,
+    /// A JPEG's Extended XMP, joined from its segments: the properties that
+    /// did not fit the main packet, which names it by GUID.
+    pub xmp_extended: Option<Vec<u8>>,
     pub icc: Option<Vec<u8>>,
+    /// A JPEG's APP13 payload (Photoshop's image resources, IPTC-IIM among
+    /// them), its segments joined.
     pub iptc: Option<Vec<u8>>,
     pub orientation: u16,
 }

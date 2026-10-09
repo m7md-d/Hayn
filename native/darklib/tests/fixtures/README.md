@@ -73,6 +73,14 @@
 
 P3 بـICC وحده بلا وسم لون آخر موجود في `apple_gainmap_*.jpg`؛ JPEG لا يحمل cICP.
 
+## البيانات الوصفية من ExifTool وPillow
+
+كاتبان مستقلان عن DarkLib (2026-10-10)، لاختبار النموذج الوسيط للبيانات الوصفية (`tests/metadata_model.rs`، وقارئه المستقل `test_native/check_metadata_model.py`). البكسلات تدرج اصطناعي 64×48 بلا رخصة كتبه Pillow 12.3.0، ثم أضاف ExifTool 13.59 البيانات:
+
+- **`meta_rich.jpg`:** EXIF (الكاميرا والعدسة والتاريخ مع المنطقة الزمنية وGPS والارتفاع، و`Orientation` ‏6، وصورة مصغّرة في IFD1)، وXMP (`dc:title` و`dc:creator` و`dc:subject` و`photoshop:City` و`Iptc4xmpCore:Location`)، وIPTC-IIM بقيم تخالف XMP عمدًا ومعها ما ليس في XMP (`Headline` و`Credit`)، و`IPTCDigest` (المورد 0x0425) يطابقه، وملف Display P3 من `apple_png_p3_icc.png`. الأوامر: `-Make=… -GPSLatitude=… -Orientation#=6 "-ThumbnailImage<=…" -XMP-dc:Title=… -IPTC:By-line=… -IPTC:Headline=… -IPTCDigest=new "-icc_profile<=p3.icc"`.
+- **`meta_extended_xmp.jpg`:** `meta_rich.jpg` ووصف XMP بنحو 72800 حرف (`-XMP-dc:Description=…`)، فقسّمه ExifTool إلى حزمة رئيسية وExtended XMP بـ`HasExtendedXMP` ‏`D725E577…`.
+- **`meta_zxmp.png`:** ‏EXIF وGPS وXMP (وصف مكرر بنحو 5KB) وملف Display P3 من ExifTool، ثم أعاد Pillow كتابة XMP في `iTXt` **مضغوطًا** (`add_itxt(…, zip=True)`). مواصفة XMP لا تضغطه في PNG، وبعض الكتّاب يفعل.
+
 ## البصمات
 
 | الملف | بايت | SHA-256 |
@@ -104,6 +112,9 @@ P3 بـICC وحده بلا وسم لون آخر موجود في `apple_gainmap_*
 | `pillow_webp_lossy_alpha.webp` | 314 | `d223a2fdcd9976431443eba88252fc5134e564262fff2b8872e9c4a5e2e809eb` |
 | `pillow_webp_lossy_opaque.webp` | 266 | `beafd7b54b8f03cf37dbc5b1800f2d2a9482a6df6041e8001a64d933bebf21c4` |
 | `progressive.jpg` | 672 | `add155dc2da8a63b503c0ade9db780ec89f0eea9b4f878adcc4eee8e38e61679` |
+| `meta_rich.jpg` | 7173 | `d59e09c1d4e523512b4857229d2244ecb1d4822ca8950fc5cde7a445708d5556` |
+| `meta_extended_xmp.jpg` | 80559 | `8126bf89443ea21599413fac080994888603ee3fd54a562ec3479e972ffbb5cd` |
+| `meta_zxmp.png` | 1133 | `11d49d5de94332a7360ded6f42c206bda48a80f991bf7b03fa12e1bc6fed6ebd` |
 
 ## الاستخدام الحالي
 

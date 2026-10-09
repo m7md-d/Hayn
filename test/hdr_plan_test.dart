@@ -66,6 +66,7 @@ class _Api extends Fake implements DarkLibApi {
         format == DarkLibFormat.avif ? DefaultFormat.avif : DefaultFormat.webp,
       ),
       hdr: hdr,
+      dropped: const [],
     );
   }
 

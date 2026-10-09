@@ -41,6 +41,7 @@ class _Api extends Fake implements DarkLibApi {
                   : DefaultFormat.webp,
             ),
       hdr: HdrOutcome.none,
+      dropped: const [],
     );
   }
 }

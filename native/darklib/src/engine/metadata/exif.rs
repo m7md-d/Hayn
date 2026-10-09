@@ -42,8 +42,13 @@ impl Tiff<'_> {
     }
 }
 
+/// An IFD entry: tag, type, count, and where its value (or offset) is.
+type Entry = (u16, u16, u32, usize);
+/// Byte ranges, start to end.
+type Ranges = Vec<(usize, usize)>;
+
 /// One IFD's entries as (tag, type, count, value-or-offset field position).
-fn read_ifd(t: &Tiff, off: usize) -> Option<Vec<(u16, u16, u32, usize)>> {
+fn read_ifd(t: &Tiff, off: usize) -> Option<Vec<Entry>> {
     let count = t.u16(off)? as usize;
     let mut p = off.checked_add(2)?;
     let mut out = Vec::with_capacity(count.min(4096));
@@ -197,6 +202,125 @@ pub fn with_orientation_1(tiff: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Bytes of one value of TIFF `typ`; 0 for an unknown type.
+fn type_size(typ: u16) -> usize {
+    match typ {
+        1 | 2 | 6 | 7 => 1,
+        3 | 8 => 2,
+        4 | 9 | 11 | 13 => 4,
+        5 | 10 | 12 => 8,
+        _ => 0,
+    }
+}
+
+/// The byte ranges of the IFD at `off` and of its values stored outside it.
+fn ifd_ranges(t: &Tiff, off: usize) -> Option<(Vec<Entry>, Ranges)> {
+    let entries = read_ifd(t, off)?;
+    let mut ranges = vec![(off, off + 2 + 12 * entries.len() + 4)];
+    for &(_, typ, count, field) in &entries {
+        let size = type_size(typ).checked_mul(count as usize)?;
+        if size > 4 {
+            let at = t.u32(field)? as usize;
+            ranges.push((at, at.checked_add(size)?));
+        }
+    }
+    Some((entries, ranges))
+}
+
+/// A copy of `tiff` without its thumbnail (IFD1), for new pixels (Hayn
+/// metadata model): the thumbnail is a picture of the old ones, and once
+/// those are turned upright its own orientation is wrong too. IFD0 stops
+/// linking to it, its bytes are zeroed (they show the old picture), and the
+/// block is cut where they were last in it, as they usually are. No IFD1, or a
+/// block not read: unchanged.
+pub fn without_thumbnail(tiff: &[u8]) -> Vec<u8> {
+    let mut out = tiff.to_vec();
+    let Some((le, ifd0)) = header(tiff) else {
+        return out;
+    };
+    let t = Tiff { b: tiff, le };
+    let Some((ifd0_entries, mut kept)) = ifd_ranges(&t, ifd0) else {
+        return out;
+    };
+    let next_at = ifd0 + 2 + 12 * ifd0_entries.len();
+    let Some(ifd1) = t.u32(next_at).filter(|&o| o != 0).map(|o| o as usize) else {
+        return out;
+    };
+    let Some((ifd1_entries, mut gone)) = ifd_ranges(&t, ifd1) else {
+        return out;
+    };
+    // The thumbnail's data: a JPEG (0x201/0x202) or one strip (0x111/0x117).
+    let value = |entries: &[Entry], tag: u16| {
+        entries
+            .iter()
+            .find(|e| e.0 == tag && e.2 == 1)
+            .and_then(|&(_, typ, _, field)| match typ {
+                3 => t.u16(field).map(|v| v as usize),
+                4 => t.u32(field).map(|v| v as usize),
+                _ => None,
+            })
+    };
+    for (at, len) in [(0x0201, 0x0202), (0x0111, 0x0117)] {
+        if let (Some(at), Some(len)) = (value(&ifd1_entries, at), value(&ifd1_entries, len)) {
+            gone.push((at, at.saturating_add(len)));
+        }
+    }
+    // What the other IFDs use: Exif (0x8769), GPS (0x8825), Interop (0xA005).
+    let mut pending: Vec<usize> = [0x8769, 0x8825]
+        .iter()
+        .filter_map(|&tag| value(&ifd0_entries, tag))
+        .collect();
+    while let Some(off) = pending.pop() {
+        let Some((entries, ranges)) = ifd_ranges(&t, off) else {
+            break;
+        };
+        pending.extend(value(&entries, 0xA005));
+        kept.extend(ranges);
+    }
+    let write = |out: &mut Vec<u8>, at: usize, v: u32| {
+        let b = if le { v.to_le_bytes() } else { v.to_be_bytes() };
+        out[at..at + 4].copy_from_slice(&b);
+    };
+    write(&mut out, next_at, 0);
+    // A malformed block may point IFD1 into data still in use: never zero that.
+    let in_use = |s: usize, e: usize| kept.iter().any(|&(ks, ke)| s < ke && ks < e);
+    for &(start, end) in &gone {
+        if in_use(start, end) {
+            continue;
+        }
+        if let Some(bytes) = out.get_mut(start..end.min(tiff.len())) {
+            bytes.fill(0);
+        }
+    }
+    // Cut only what ends the block: bytes after it may be a MakerNote's,
+    // whose offsets can reach past the length it declares.
+    let kept_end = kept.iter().map(|r| r.1).max().unwrap_or(0);
+    let gone_start = gone.iter().map(|r| r.0).min().unwrap_or(usize::MAX);
+    let gone_end = gone.iter().map(|r| r.1).max().unwrap_or(0);
+    if gone_start >= kept_end && gone_end >= out.len() && gone_start < out.len() {
+        out.truncate(gone_start.max(8));
+    }
+    out
+}
+
+/// The byte order and IFD0 offset of a TIFF block.
+fn header(tiff: &[u8]) -> Option<(bool, usize)> {
+    let le = match tiff.get(0..2)? {
+        b"II" => true,
+        b"MM" => false,
+        _ => return None,
+    };
+    let t = Tiff { b: tiff, le };
+    (t.u16(2)? == 0x002A).then_some(())?;
+    Some((le, t.u32(4)? as usize))
+}
+
+/// EXIF for new pixels: turned upright ([`with_orientation_1`]) and without
+/// the old thumbnail ([`without_thumbnail`]).
+pub fn for_new_pixels(tiff: &[u8]) -> Vec<u8> {
+    without_thumbnail(&with_orientation_1(tiff))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,5 +387,49 @@ mod tests {
     fn non_tiff_is_none() {
         assert!(summarize(b"not a tiff at all").is_none());
         assert!(summarize(&[]).is_none());
+    }
+
+    /// `sample_tiff` with an IFD1 linking a 6-byte "thumbnail" after it.
+    fn with_thumbnail() -> Vec<u8> {
+        let mut v = sample_tiff();
+        let ifd1 = v.len() as u32;
+        let next_at = 8 + 2 + 4 * 12;
+        v[next_at..next_at + 4].copy_from_slice(&ifd1.to_le_bytes());
+        let data = ifd1 + 2 + 2 * 12 + 4;
+        v.extend_from_slice(&2u16.to_le_bytes());
+        for (tag, value) in [(0x0201u16, data), (0x0202, 6)] {
+            v.extend_from_slice(&tag.to_le_bytes());
+            v.extend_from_slice(&4u16.to_le_bytes());
+            v.extend_from_slice(&1u32.to_le_bytes());
+            v.extend_from_slice(&value.to_le_bytes());
+        }
+        v.extend_from_slice(&0u32.to_le_bytes());
+        v.extend_from_slice(b"\xFF\xD8OLD!");
+        v
+    }
+
+    #[test]
+    fn the_old_thumbnail_goes_with_its_bytes() {
+        let tiff = with_thumbnail();
+        let out = without_thumbnail(&tiff);
+        assert_eq!(out, sample_tiff(), "unlinked and cut where it was last");
+        assert_eq!(summarize(&out), summarize(&tiff), "the rest as it was");
+        // Not last in the block (something follows): zeroed, not cut.
+        let mut tiff = with_thumbnail();
+        let gps = sample_tiff().len() - 4 - 12 - 2;
+        tiff.extend_from_slice(b"tail");
+        let out = without_thumbnail(&tiff);
+        assert_eq!(out.len(), tiff.len());
+        assert!(!out.windows(4).any(|w| w == b"OLD!"));
+        assert!(out.ends_with(b"tail"));
+        assert_eq!(&out[gps..gps + 2], &1u16.to_le_bytes(), "GPS IFD untouched");
+        // No IFD1: unchanged; for new pixels also upright.
+        assert_eq!(without_thumbnail(&sample_tiff()), sample_tiff());
+        assert_eq!(
+            summarize(&for_new_pixels(&with_thumbnail()))
+                .unwrap()
+                .orientation,
+            1
+        );
     }
 }

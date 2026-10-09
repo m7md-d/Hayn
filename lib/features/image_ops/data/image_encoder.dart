@@ -279,6 +279,9 @@ abstract final class ImageEncoder {
     final candidates = allowFormatFallback
         ? fallbackChain(target, hasAlpha, giant: facts.giant)
         : [target];
+    // What every engine is given: the user's 8 or 10, or "match" resolved
+    // from what they encode (an SDR rendition or a flattened PNG is 8).
+    final depth = depthFor(bitDepth, plan);
     for (final fmt in candidates) {
       if (fmt != target) {
         MediaDiagnostics.record(
@@ -312,7 +315,7 @@ abstract final class ImageEncoder {
           facts: plan,
           keepMetadata: keepMetadata,
           keepOriginalTime: keepOriginalTime,
-          bitDepth: bitDepth,
+          bitDepth: depth,
           jpegRoute: fmt == target ? jpegRoute : JpegRoute.platform,
         );
       } on DarkLibPreservationFailure {
@@ -875,14 +878,22 @@ abstract final class ImageEncoder {
     return out;
   }
 
-  /// The HEIC depth on Android (IMG-23): the user's 8 or 10, or the
-  /// source's ("match": 10 for a deeper source). 10 needs HEVC Main10; a
-  /// device without it writes 8, recorded (the picker offers 10 only where
-  /// it exists, so this is a "match" of a deep source).
+  /// The depth an encode writes for the user's [chosen] one (IMG-23): 8 or
+  /// 10 as chosen, and "match" (0) the depth of the image the user picked
+  /// (user decision 2026-10-09): 10 for a deeper source, 8 otherwise and
+  /// when the header does not say. Before, "match" was the engine's own
+  /// default: AVIF 10 from DarkLib whatever the source, 8 from the AV1
+  /// hardware.
+  static int depthFor(int chosen, SourceFacts facts) =>
+      chosen == 8 || chosen == 10
+      ? chosen
+      : ((facts.bitDepth ?? 8) > 8 ? 10 : 8);
+
+  /// The HEIC depth on Android: [depthFor]. 10 needs HEVC Main10; a device
+  /// without it writes 8, recorded (the picker offers 10 only where it
+  /// exists, so this is a "match" of a deep source).
   static Future<int> _androidHeicDepth(int bitDepth, SourceFacts facts) async {
-    final want = bitDepth == 8 || bitDepth == 10
-        ? bitDepth
-        : ((facts.bitDepth ?? 8) > 8 ? 10 : 8);
+    final want = depthFor(bitDepth, facts);
     if (want == 8 || await NativeImageEncoder.heicTenBit()) return want;
     MediaDiagnostics.record(
       MediaBackend.androidHeic,

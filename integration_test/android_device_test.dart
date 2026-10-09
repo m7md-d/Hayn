@@ -1094,13 +1094,15 @@ void main() {
     ctrl.dispose();
   });
 
-  // IMG-23: bit depth is the user's choice, 8 or 10, and "match" follows the
-  // source; AVIF stays 10-bit by default. The output must say the depth it
-  // was asked for, decode, and keep its colours.
+  // IMG-23: bit depth is the user's choice, 8 or 10, and "match" is the
+  // depth of the picked image (user decision 2026-10-09; it was DarkLib's
+  // default, 10): here an 8-bit PNG. The output must say the depth it was
+  // asked for, decode, and keep its colours.
   testWidgets('AVIF at 8 and 10 bits, and the default', (_) async {
     final source = _gradient(301, 97);
     final facts = await SourceInspector.inspect(source);
-    for (final (chosen, want) in [(0, 10), (8, 8), (10, 10)]) {
+    expect(facts.bitDepth, 8);
+    for (final (chosen, want) in [(0, 8), (8, 8), (10, 10)]) {
       final result = await ImageEncoder.encode(
         source: source,
         target: DefaultFormat.avif,
