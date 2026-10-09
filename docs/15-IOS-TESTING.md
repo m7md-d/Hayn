@@ -27,11 +27,12 @@ bash tool/test_ios_preservation.sh
 - JPEG لصورة شفافة (أو مجهولة الشفافية) يُدمج على الأبيض (قرار 2026-09-29)، ويُقاس البكسل الناتج مقابل القيمة المحسوبة. قبل ذلك كانت هذه الحالة تُرفض.
 - فتح واجهة المكتبة ثم الإعدادات في التطبيق الحقيقي.
 
-## العرض بالبلاطات: `ios_region_test.dart` (M-07، 2026-10-09)
+## العرض بالبلاطات والعمق: `ios_region_test.dart` (M-07 وM-08، 2026-10-09)
 
-مجموعة منفصلة للعارض وشاشة الضغط في التطبيق الحقيقي: AVIF يُقرأ بلاطات بـDarkLib، وما سواه يبقى على الفك المحدود. تحفظ صورها في Photos ولا تفتح غيرها: صورة الأداء، ورقعة شطرنج بمربعات 4 بكسل لا تظهرها الصورة المصغّرة، ونسخ AVIF منهما من DarkLib وبعمق 8. وتعيد استعمال ما حفظه تشغيل سابق، بالعنوان `hayn-region-*` بين أحدث 60 صورة.
+مجموعة منفصلة للعارض وشاشة الضغط في التطبيق الحقيقي: AVIF يُقرأ بلاطات بـDarkLib، وما سواه يبقى على الفك المحدود. تحفظ صورها في Photos ولا تفتح غيرها: صورة الأداء، ورقعة شطرنج بمربعات 4 بكسل لا تظهرها الصورة المصغّرة، ونسختا AVIF منهما من DarkLib بعمقها الافتراضي 10، ولا يصنع Photos لهما صورة مصغّرة (IMG-23). فالعارض وشاشة الضغط يُختبران بلا صورة مصغّرة (UI-10)، واختبار Photos يسجل غيابها لـAVIF بعمق 10 ولا يفشل به. واختبار «Depth» يمر بمرمّز شاشة الضغط: AVIF بعمق 8 (ويُحفظ ليُفحص صورته المصغّرة) وHEIC بعمق 10، ويقرأ العمق بـDarkLib وImageIO، ويسجل `memoryInfo`. وتعيد استعمال ما حفظه تشغيل سابق، بالعنوان `hayn-region-*` بين أحدث 60 صورة، إن طابقت بايتات AVIF.
 
-- **على الآيفون (بطلب المستخدم 2026-10-09، والصور تبقى في معرضه):** profile كاختبار الأداء. الأوامر في رأس الملف: نسخ صورة الأداء ونسختي 8 بت إلى `Documents/preservation-fixtures` بـ`devicectl`، ثم `flutter drive --profile --keep-app-running`، ثم إعادة تثبيت release. النتيجة 9 من 10 (IMG-23)، والتفصيل في M-07.
+- **على الآيفون (بطلب المستخدم 2026-10-09، والصور تبقى في معرضه):** profile كاختبار الأداء. الأوامر في رأس الملف: نسخ صورة الأداء إلى `Documents/preservation-fixtures` بـ`devicectl`، ثم `flutter drive --profile --keep-app-running`، ثم إعادة تثبيت release. M-07: ‏7 من 8 (IMG-23). M-08: ‏7 من 9، والفاشلان «Depth» (HEIC يخرج 8، IMG-23) و«Compare: checker.avif» (UI-10).
+- **F2 على الآيفون (M-08، بطلب المستخدم بدل المحاكي):** `ios_preservation_test.dart` بـ`flutter drive --profile` بعد نسخ `native/darklib/tests/fixtures/*.avif` إلى `Documents/preservation-fixtures`، ثم سحب `Documents/preservation-results` بـ`devicectl device copy from` لـF3. نجحت 11، ويحفظ أربع صور `hayn-integration-*` بحجم 16×12 في معرض الهاتف. وعلى الآيفون يعطي ImageIO نسخة SDR من PQ، بخلاف محاكي iOS 26.3.
 - **على المحاكي:** `CARGO_PROFILE_DEV_OPT_LEVEL=3 bash tool/test_ios_preservation.sh integration_test/ios_region_test.dart`. Rust تُبنى debug هناك، ونقل البلاطات عبر الجسر في Dart debug بطيء.
 - **مقارنة P3 على الماك:** `swift test_native/compare_region_tiles.swift <مجلد النواتج>`، على `photo.avif` وشريط بلاطاته.
 

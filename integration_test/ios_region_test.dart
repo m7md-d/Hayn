@@ -13,9 +13,13 @@ import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:hayn/app/app.dart';
 import 'package:hayn/core/darklib/darklib.dart';
+import 'package:hayn/features/settings/providers/preferences_providers.dart';
 import 'package:hayn/features/image_ops/data/gallery_saver.dart';
+import 'package:hayn/features/image_ops/data/image_encoder.dart';
 import 'package:hayn/features/image_ops/data/native_image_encoder.dart';
+import 'package:hayn/features/image_ops/data/native_image_info.dart';
 import 'package:hayn/features/image_ops/data/region_image.dart';
+import 'package:hayn/features/image_ops/data/source_facts.dart';
 import 'package:hayn/features/image_ops/presentation/compress_screen.dart';
 import 'package:hayn/features/image_ops/presentation/widgets/region_tiles.dart';
 import 'package:hayn/features/library/presentation/asset_detail_screen.dart';
@@ -23,17 +27,18 @@ import 'package:hayn/features/library/presentation/library_screen.dart';
 import 'package:hayn/features/onboarding/providers/onboarding_provider.dart';
 import 'package:hayn/shared/widgets/comparison_viewer.dart';
 
-// The zoomed viewer and the compare screen on iOS (M-07, PERF-03): an AVIF is
-// read by regions through DarkLib, every other format keeps its bounded
-// decode. The real app, with images this test saves into Photos: the
+// The zoomed viewer and the compare screen on iOS (M-07, M-08, PERF-03): an
+// AVIF is read by regions through DarkLib, every other format keeps its
+// bounded decode. The real app, with images this test saves into Photos: the
 // performance photo, a checkerboard whose 4 px squares the 1080 px rendition
-// cannot show, and AVIF copies of both from DarkLib and at 8 bits. It opens
-// only those, never the library's own photos.
+// cannot show, and DarkLib's AVIF of both at its default 10 bits, which
+// Photos makes no thumbnail for (IMG-23, UI-10). Plus the depth the user
+// picks (8 for AVIF, 10 for HEIC) as the compress screen's encoder writes it.
+// It opens only those, never the library's own photos.
 //
 // On the iPhone (profile, as tool/test_performance.sh runs; the saved images
-// stay in its Photos, named hayn-region-*): copy photo-12mp.jpg and the two
-// 8-bit AVIFs into Documents/preservation-fixtures with `devicectl device copy
-// to`, then `flutter drive --profile --keep-app-running -d <id> --driver
+// stay in its Photos, named hayn-region-*): copy photo-12mp.jpg into
+// Documents/preservation-fixtures with `devicectl device copy to`, then `flutter drive --profile --keep-app-running -d <id> --driver
 // test_driver/integration_test.dart --target integration_test/ios_region_test.dart`.
 // Artifacts land in Documents/preservation-results.
 // On a simulator: tool/test_ios_preservation.sh integration_test/ios_region_test.dart
@@ -61,14 +66,19 @@ void main() {
     bytes['photo.avif'] = await avif(photo, 80);
     bytes['checker.jpg'] = checker;
     bytes['checker.avif'] = await avif(checker, 100);
-    // DarkLib's AVIFs are 10-bit, which Photos makes no thumbnail for
-    // (IMG-23), so the viewer never shows them. The same two images at 8 bits
-    // (ravif 0.11.3, depth 8, quality 90, speed 8; made on the Mac) carry
-    // the viewer and compare checks until DarkLib writes 8-bit.
-    bytes['checker-8bit.avif'] = await _fixture('checker-8bit.avif');
-    bytes['photo-8bit.avif'] = await _fixture('photo-8bit.avif');
+    // The user's 8-bit choice, through the compress screen's encoder: Photos
+    // must give it a thumbnail (IMG-23).
+    bytes['photo-depth8.avif'] = (await ImageEncoder.encode(
+      source: photo,
+      target: DefaultFormat.avif,
+      quality: 80,
+      facts: await SourceInspector.inspect(photo),
+      keepMetadata: true,
+      bitDepth: 8,
+    )).bytes;
     // A run saves into the owner's Photos on a phone: an earlier run's copy,
-    // among the newest images, is used again instead of piling up.
+    // among the newest images, is used again instead of piling up, unless
+    // this build writes the AVIF differently.
     final newest = await (await PhotoManager.getAssetPathList(
       onlyAll: true,
       type: RequestType.image,
@@ -76,32 +86,41 @@ void main() {
         orders: [const OrderOption(type: OrderOptionType.createDate)],
       ),
     )).first.getAssetListPaged(page: 0, size: 60);
-    final earlier = {for (final a in newest) await a.titleAsync: a.id};
+    final earlier = <String, AssetEntity>{};
+    for (final a in newest) {
+      earlier.putIfAbsent(await a.titleAsync, () => a); // the newest copy
+    }
+    final reused = <String>[];
     for (final e in bytes.entries) {
       await _artifact(e.key, e.value);
       final filename = 'hayn-region-${e.key}';
-      if (earlier[filename] case final id?) {
-        saved[e.key] = id;
-        continue;
+      if (earlier[filename] case final a?) {
+        // Photos adds to a JPEG's original; an AVIF's comes back as saved.
+        if (!e.key.endsWith('.avif') ||
+            listEquals(await a.originBytes, e.value)) {
+          saved[e.key] = a.id;
+          reused.add(e.key);
+          continue;
+        }
       }
       final asset = await GallerySaver.saveImage(e.value, filename: filename);
       expect(asset, isNotNull, reason: 'Photos refused ${e.key}');
       saved[e.key] = asset!.id;
     }
-    _log(
-      'reused ${saved.values.where(earlier.containsValue).length} of '
-      '${saved.length} images from an earlier run',
-    );
+    _log('reused $reused of ${saved.length} images from an earlier run');
   });
 
   // What Photos gives back for each saved file: the viewer and the compare
   // screen start from its thumbnail, the tiles from its original. Recorded
-  // for all before any is judged: each needs a thumbnail, and an AVIF's
-  // original must come back as saved (Photos adds to a JPEG's).
+  // for all before any is judged: each needs a thumbnail, except a 10-bit
+  // AVIF, which Photos makes none for (IMG-23: its limit, which the viewer
+  // and the compare screen must live with, UI-10); and an AVIF's original
+  // must come back as saved (Photos adds to a JPEG's).
   testWidgets('Photos: thumbnails and originals of the saved files', (_) async {
     final wrong = <String>[];
     for (final e in saved.entries) {
       final entity = (await AssetEntity.fromId(e.value))!;
+      final depth = (await DarkLibCore.inspect(bytes[e.key]!))?.bitDepth;
       String thumb;
       try {
         final t = await entity.thumbnailDataWithSize(
@@ -111,13 +130,20 @@ void main() {
       } catch (error) {
         thumb = 'throws ${error.toString().split('\n').first}';
       }
-      if (!thumb.endsWith('bytes')) wrong.add('${e.key}: no thumbnail');
+      final photosLimit = e.key.endsWith('.avif') && depth == 10;
+      if (photosLimit && thumb.endsWith('bytes')) {
+        _log('photos ${e.key}: Photos now makes a 10-bit AVIF thumbnail');
+      }
+      if (!photosLimit && !thumb.endsWith('bytes')) {
+        wrong.add('${e.key}: no thumbnail');
+      }
       final origin = await entity.originBytes;
       final same = listEquals(origin, bytes[e.key]);
       if (!same && e.key.endsWith('.avif')) wrong.add('${e.key}: changed');
       final region = origin == null ? null : await RegionImage.open(origin);
       _log(
-        'photos ${e.key}: thumbnail $thumb; original ${origin?.length} '
+        'photos ${e.key} ($depth-bit): thumbnail $thumb; original '
+        '${origin?.length} '
         'bytes${same ? '' : ' (changed)'}; region '
         '${region == null ? 'none' : '${region.width}x${region.height}'}',
       );
@@ -163,10 +189,51 @@ void main() {
     await _artifact('photo-region-${w}x$height-at$top.rgba', band.rgba);
   });
 
+  // The depth the user picks is the depth written: AVIF through DarkLib,
+  // HEIC through ImageIO, which offers 10 bits on iOS
+  // (FormatCapabilities.heicTenBit) for an 8-bit JPEG too. Read back by
+  // DarkLib and by ImageIO. And what iOS reports to the heavy-work gate.
+  testWidgets('Depth: AVIF at 8 and HEIC at 10 come out as chosen', (_) async {
+    final memory = await NativeImageEncoder.channel
+        .invokeMethod<Map<Object?, Object?>>('memoryInfo');
+    _log('memoryInfo: $memory');
+    expect(memory?['available'], isA<int>());
+    final photo = bytes['photo.jpg']!;
+    final heic = (await ImageEncoder.encode(
+      source: photo,
+      target: DefaultFormat.heic,
+      quality: 80,
+      facts: await SourceInspector.inspect(photo),
+      keepMetadata: true,
+      bitDepth: 10,
+    ));
+    await _artifact('photo-depth10.heic', heic.bytes);
+    final depths = <String, (int?, int?)>{};
+    for (final (name, data) in [
+      ('photo.avif', bytes['photo.avif']!),
+      ('photo-depth8.avif', bytes['photo-depth8.avif']!),
+      ('photo-depth10.heic (${heic.format.name})', heic.bytes),
+    ]) {
+      depths[name] = (
+        (await DarkLibCore.inspect(data))?.bitDepth,
+        (await NativeImageProbe.probe(data))?.bitDepth,
+      );
+      _log('depth $name: DarkLib, ImageIO ${depths[name]}');
+    }
+    expect(depths['photo.avif'], (10, 10), reason: 'DarkLib default');
+    expect(depths['photo-depth8.avif'], (8, 8));
+    expect(heic.format, DefaultFormat.heic);
+    expect(
+      depths.entries.last.value.$2,
+      10,
+      reason: 'HEIC at 10 bits from an 8-bit JPEG',
+    );
+  });
+
   for (final name in [
-    'checker-8bit.avif',
+    'checker.avif',
     'checker.jpg',
-    'photo-8bit.avif',
+    'photo.avif',
     'photo.jpg',
   ]) {
     final tiled = name.endsWith('.avif');
@@ -230,7 +297,7 @@ void main() {
   // The compare screen: "before" is the AVIF, read by tiles; "after" the
   // encode in the saved default format. Both show and zoom without error;
   // the "before" half must show every square.
-  for (final name in ['checker-8bit.avif', 'checker.jpg']) {
+  for (final name in ['checker.avif', 'checker.jpg']) {
     testWidgets('Compare: $name shows both panes and zooms', (tester) async {
       await _openApp(tester);
       final router = GoRouter.of(tester.element(find.byType(LibraryScreen)));
