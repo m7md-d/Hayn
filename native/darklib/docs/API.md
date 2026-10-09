@@ -120,7 +120,11 @@ or in `idat` (a grid descriptor, as Android's `MediaMuxer` writes it, `mdat`
 first or last); the ICC goes to the primary and, for a grid, to every tile —
 Android reads a grid's colour from its first tile. Pair them around a re-encode to
 carry metadata across a transcode. `inject` returns the input unchanged if it
-can't safely add the items (current verify-or-bail behavior). The current return
+can't safely add the items (current verify-or-bail behavior). In JPEG and PNG
+each kind `meta` carries replaces the target's own (a JPEG from Android's
+`Bitmap.compress` already names its bitmap's profile; two would make readers
+drop both, Hayn IMG-24); a kind `meta` lacks stays, and a leading JFIF stays
+first. WebP rebuilds its metadata chunks from `meta`. The current return
 type does not report that degradation; callers cannot treat this as proof of
 metadata preservation. Explicit result diagnostics are planned.
 
@@ -158,7 +162,7 @@ pub enum Target {
     Jpeg(u8),                               // quality 1..=100 (opaque)
     Png,                                    // lossless
     Webp { quality: u8, lossless: bool },
-    Avif { quality: u8 },                   // software (rav1e)
+    Avif { quality: u8, depth: Option<u8> }, // software (rav1e); 8 or 10, None = 10
 }
 
 pub enum HdrOutcome { None, GainMapKept, GainMapDropped, GainMapKeepFailed }
@@ -169,6 +173,9 @@ pub fn encode(img: &Decoded, target: Target) -> Result<Vec<u8>>;
 pub fn transcode(bytes: &[u8], target: Target, max_edge: Option<u32>,
                  keep_metadata: bool) -> Result<Transcoded>;
 ```
+AVIF `depth` is the user's choice (Hayn IMG-23): 8 or 10 bits per channel;
+`None` keeps rav1e's default, 10, which is smaller and closer than 8 even for
+8-bit input. It reaches the single item, the grid tiles and a kept gain map.
 `decode` handles PNG/JPEG/WebP/AVIF (EXIF orientation baked into pixels); **HEIC is
 not software-decoded** → `Err` (use a hardware/platform decoder). `max_edge`
 downscales for **previews only** — `None` keeps full resolution; never downscale a
@@ -193,9 +200,14 @@ assert_eq!(out.hdr, codec::HdrOutcome::None); // an SDR source
 pub enum Transfer { Unknown, NoHdrSignal, Pq, Hlg }
 pub enum Presence { Unknown, Absent, Present }
 pub struct Facts { pub transfer: Transfer, pub gain_map: Presence, pub alpha: Presence,
-                   pub width: u32, pub height: u32, pub orientation: u8 }
+                   pub width: u32, pub height: u32, pub orientation: u8,
+                   pub bit_depth: u8 }
 pub fn inspect(bytes: &[u8]) -> Facts;
 ```
+`bit_depth`: bits per channel as stored — HEIF/AVIF `pixi`, else `av1C`
+(high_bitdepth/twelve_bit) or `hvcC` (bitDepthLumaMinus8) of the primary or
+of a grid's first tile; PNG `IHDR`; JPEG the `SOF` precision; WebP 8; 0 when
+the header does not say. What "match the source" means for a depth choice.
 `width`/`height`: the stored size from the header (0 unknown). `orientation`:
 the EXIF code (1..=8) that turns the stored pixels upright — `irot`/`imir`
 for AVIF/HEIF (via `isobmff::exif_orientation`), the EXIF tag otherwise; 0
@@ -307,9 +319,10 @@ powers a "what will be removed" preview and works cross-platform incl. HEIC/AVIF
 ```rust
 enum CodecFormat { Jpeg, Png, Webp, WebpLossless, Avif }
 fn transcode(bytes, format: CodecFormat, quality: u32, max_edge: u32,
-             keep_metadata: bool) -> Result<Transcoded, String>
+             keep_metadata: bool, bit_depth: u32) -> Result<Transcoded, String>
 ```
-`max_edge == 0` means keep original size. The result carries the bytes and the
+`max_edge == 0` means keep original size. `bit_depth` 8 or 10 sets an AVIF's
+depth; anything else keeps the default, 10. The result carries the bytes and the
 `HdrOutcome`. It throws on a container the codec layer can't decode yet (notably
 **HEIC** — decode it on the platform side and feed pixels in), and throws
 `preservation_required:hdr_transfer_unsupported` for PQ/HLG.

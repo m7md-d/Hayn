@@ -2,6 +2,7 @@ import AVFoundation
 import CoreMedia
 import Flutter
 import ImageIO
+import os
 import Photos
 import UIKit
 
@@ -130,6 +131,15 @@ import UIKit
               result(out.map { FlutterStandardTypedData(bytes: $0) })
             }
           }
+        // Memory for the heavy-work gate (RUN-02): what the app can still
+        // allocate before jetsam ends it. 0 off a device (the simulator has no
+        // limit), which reads as unknown, never as none. iOS reports no
+        // threshold: 100 MB stays free.
+        case "memoryInfo":
+          let available = os_proc_available_memory()
+          result(available > 0
+            ? ["available": Int(available), "threshold": 100 << 20]
+            : nil)
         default:
           result(FlutterMethodNotImplemented)
         }

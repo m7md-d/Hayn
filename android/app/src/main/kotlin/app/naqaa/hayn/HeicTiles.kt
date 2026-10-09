@@ -14,6 +14,7 @@ import android.os.Build
 import android.util.Log
 import java.io.File
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HeicTiles — HEIC at any size with memory that does not follow it (RUN-01).
@@ -37,10 +38,14 @@ import java.nio.ByteBuffer
 // this for opaque sources only. Every failure returns null, with a reason in
 // the log.
 //
-// Each tile gets a fixed QP (Android 12+; the encoder has no CQ mode). The
-// caller uses this for giant images only: at 12 MP it was a little more
-// accurate than HeifWriter at equal size but 0.2 to 0.5 s slower, and the
-// user chose speed there (docs/18-PERFORMANCE.md).
+// Each tile gets a fixed QP (Android 12+; the encoder has no CQ mode). Every
+// HEIC on Android comes from here since IMG-24: HeifWriter took RGB_565
+// through a GL texture, banding every image and crashing at an odd width.
+//
+// Bit depth is the user's choice (IMG-23): 8, or 10 where the encoder offers
+// HEVC Main10 with P010 input (Android 13+). At 10 the bands are decoded as
+// RGBA_1010102, which keeps the decoder's colour space as ARGB_8888 does, so
+// a 10-bit source keeps its precision.
 // ─────────────────────────────────────────────────────────────────────────────
 
 object HeicTiles {
@@ -56,14 +61,22 @@ object HeicTiles {
     /// [rateMode]: "qp" (a fixed QP per tile), "cq" or "vbr".
     class Result(val path: String, val codec: String, val rateMode: String)
 
+    /// True when [encodeToFile] can write 10 bits: an HEVC encoder with Main10
+    /// and P010 input (Android 13+).
+    fun tenBitAvailable(): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && encoderName(tenBit = true) != null
+
     /// Encodes [src] to a HEIC file in [dir]. [orientation] is the EXIF code
-    /// (1–8, 0 = none) that turns the decoded pixels upright.
-    fun encodeToFile(src: ByteArray, quality: Int, orientation: Int, dir: File): Result? {
+    /// (1–8, 0 = none) that turns the decoded pixels upright; [depth] 10
+    /// writes Main10 (see [tenBitAvailable]), anything else 8 bits.
+    fun encodeToFile(src: ByteArray, quality: Int, orientation: Int, depth: Int, dir: File): Result? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return null
+        val tenBit = depth >= 10
+        if (tenBit && Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return fail("10-bit needs Android 13")
         var file: File? = null
         var bands: Bands? = null
         return try {
-            bands = bandsOf(src) ?: return fail("no decoder")
+            bands = bandsOf(src, tenBit) ?: return fail("no decoder")
             val w = bands.width
             val h = bands.height
             val cols = (w + TILE - 1) / TILE
@@ -80,9 +93,9 @@ object HeicTiles {
                 8 -> false to 270
                 else -> false to 0
             }
-            val name = encoderName() ?: return fail("no HEVC encoder")
+            val name = encoderName(tenBit) ?: return fail("no HEVC encoder (10-bit $tenBit)")
             file = File.createTempFile("hayn-heic-", ".heic", dir)
-            val mode = encode(name, bands, w, h, rows, cols, mirror, degrees, quality, file)
+            val mode = encode(name, bands, w, h, rows, cols, mirror, degrees, quality, tenBit, file)
                 ?: throw IllegalStateException("encode")
             Result(file.absolutePath, name, mode)
         } catch (e: Throwable) {
@@ -108,16 +121,27 @@ object HeicTiles {
         fun close()
     }
 
-    private val ARGB = BitmapFactory.Options().apply {
-        inPreferredConfig = Bitmap.Config.ARGB_8888
+    /// The band's pixel layout: 8 bits per channel, or 10 for Main10.
+    private fun configFor(tenBit: Boolean): Bitmap.Config =
+        if (tenBit && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Bitmap.Config.RGBA_1010102
+        } else {
+            Bitmap.Config.ARGB_8888
+        }
+
+    private fun optionsFor(tenBit: Boolean) = BitmapFactory.Options().apply {
+        inPreferredConfig = configFor(tenBit)
     }
 
     /// JPEG and HEIF decode a region without the rows above it.
-    private class Regions(private val decoder: BitmapRegionDecoder) : Bands {
+    private class Regions(
+        private val decoder: BitmapRegionDecoder,
+        private val options: BitmapFactory.Options,
+    ) : Bands {
         override val width get() = decoder.width
         override val height get() = decoder.height
         override fun band(y0: Int, rows: Int): Bitmap? =
-            decoder.decodeRegion(Rect(0, y0, width, y0 + rows), ARGB)
+            decoder.decodeRegion(Rect(0, y0, width, y0 + rows), options)
         override fun close() = decoder.recycle()
     }
 
@@ -139,9 +163,10 @@ object HeicTiles {
     }
 
     @Suppress("DEPRECATION")
-    private fun bandsOf(src: ByteArray): Bands? {
+    private fun bandsOf(src: ByteArray, tenBit: Boolean): Bands? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(src, 0, src.size, bounds)
+        val options = optionsFor(tenBit)
         return when (bounds.outMimeType) {
             "image/jpeg", "image/heif", "image/heic" -> Regions(
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -149,21 +174,33 @@ object HeicTiles {
                 } else {
                     BitmapRegionDecoder.newInstance(src, 0, src.size, false)
                 } ?: return null,
+                options,
             )
-            else -> Whole(BitmapFactory.decodeByteArray(src, 0, src.size, ARGB) ?: return null)
+            else -> Whole(BitmapFactory.decodeByteArray(src, 0, src.size, options) ?: return null)
         }
     }
 
-    /// A hardware HEVC encoder taking 512×512 flexible YUV, else any.
-    private fun encoderName(): String? {
+    /// The input colour format: flexible 8-bit YUV, or P010 for Main10.
+    @Suppress("InlinedApi")
+    private fun colorFormatFor(tenBit: Boolean): Int =
+        if (tenBit) {
+            MediaCodecInfo.CodecCapabilities.COLOR_FormatYUVP010
+        } else {
+            MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible
+        }
+
+    /// A hardware HEVC encoder taking 512×512 tiles in [colorFormatFor], with
+    /// Main10 for [tenBit]; else any such encoder.
+    private fun encoderName(tenBit: Boolean): String? {
         val candidates = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.filter { info ->
             info.isEncoder && info.supportedTypes.any { it.equals(HEVC, ignoreCase = true) } &&
                 runCatching {
                     val caps = info.getCapabilitiesForType(HEVC)
                     caps.videoCapabilities.isSizeSupported(TILE, TILE) &&
-                        caps.colorFormats.contains(
-                            MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible,
-                        )
+                        caps.colorFormats.contains(colorFormatFor(tenBit)) &&
+                        (!tenBit || caps.profileLevels.any {
+                            it.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10
+                        })
                 }.getOrDefault(false)
         }
         val hardware = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -198,6 +235,7 @@ object HeicTiles {
         mirror: Boolean,
         degrees: Int,
         quality: Int,
+        tenBit: Boolean,
         out: File,
     ): String? {
         val codec = MediaCodec.createByCodecName(name)
@@ -214,10 +252,13 @@ object HeicTiles {
                 else -> "vbr"
             }
             val format = MediaFormat.createVideoFormat(HEVC, TILE, TILE).apply {
-                setInteger(
-                    MediaFormat.KEY_COLOR_FORMAT,
-                    MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible,
-                )
+                setInteger(MediaFormat.KEY_COLOR_FORMAT, colorFormatFor(tenBit))
+                if (tenBit) {
+                    setInteger(
+                        MediaFormat.KEY_PROFILE,
+                        MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10,
+                    )
+                }
                 // Every tile is an intra frame, as in HeifWriter.
                 setInteger(MediaFormat.KEY_FRAME_RATE, 30)
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 0)
@@ -313,16 +354,18 @@ object HeicTiles {
                 val y0 = r * TILE
                 val bh = minOf(TILE, h - y0)
                 val decoded = bands.band(y0, bh) ?: return fail("band $r")
-                // A 10-bit HEIF comes as RGBA_1010102 whatever is asked;
-                // copy keeps its colour space.
-                val band = if (decoded.config == Bitmap.Config.ARGB_8888) {
+                // A 10-bit HEIF comes as RGBA_1010102 whatever is asked, an
+                // 8-bit source may come as ARGB_8888 at 10; copy keeps the
+                // colour space.
+                val config = configFor(tenBit)
+                val band = if (decoded.config == config) {
                     decoded
                 } else {
-                    decoded.copy(Bitmap.Config.ARGB_8888, false).also { decoded.recycle() }
+                    decoded.copy(config, false).also { decoded.recycle() }
                         ?: return fail("band ${decoded.config}")
                 }
                 try {
-                    if (band.config != Bitmap.Config.ARGB_8888 || band.width != w ||
+                    if (band.config != config || band.width != w ||
                         band.height != bh || !sdr(band.colorSpace)
                     ) {
                         return fail("band ${band.config} ${band.width}x${band.height} ${band.colorSpace?.name}")
@@ -342,8 +385,13 @@ object HeicTiles {
                             }
                         } while (ix < 0)
                         val image = checkNotNull(codec.getInputImage(ix))
-                        fillTile(image, pixels, stride, w, bh, c * TILE, mirror)
-                        codec.queueInputBuffer(ix, 0, TILE * TILE * 3 / 2, queued * 33_333L, 0)
+                        if (tenBit) {
+                            fillTile10(image, pixels, stride, w, bh, c * TILE, mirror)
+                        } else {
+                            fillTile(image, pixels, stride, w, bh, c * TILE, mirror)
+                        }
+                        val size = TILE * TILE * 3 / 2 * (if (tenBit) 2 else 1)
+                        codec.queueInputBuffer(ix, 0, size, queued * 33_333L, 0)
                         queued++
                         lastProgress = System.currentTimeMillis()
                         drain(0)
@@ -383,7 +431,10 @@ object HeicTiles {
         space is ColorSpace.Rgb && space.transferParameters != null
 
     /// One TILE×TILE frame from the band: BT.601 limited range, 4:2:0 by
-    /// averaging each 2×2 block. Past the image's right or bottom edge the
+    /// averaging each 2×2 block. Coefficients in 16-bit fixed point, rounded:
+    /// the common 8-bit ones (66/129/25, -38/-74/112, 112/-94/-18) were off
+    /// by up to a level in U and V, which moved a saturated P3 green's blue
+    /// by 8 levels once converted to sRGB (IMG-24). Past the image's right or bottom edge the
     /// last column or row repeats (the grid crops it). [mirror] reads the
     /// band right to left.
     private fun fillTile(
@@ -442,8 +493,8 @@ object HeicTiles {
                 val bl = (ba + bb + bc + bd + 2) shr 2
                 val cx = tx shr 1
                 val cy = ty shr 1
-                uBuf.put(cy * uRow + cx * uPix, ((-38 * r - 74 * g + 112 * bl + 128 shr 8) + 128).toByte())
-                vBuf.put(cy * vRow + cx * vPix, ((112 * r - 94 * g - 18 * bl + 128 shr 8) + 128).toByte())
+                uBuf.put(cy * uRow + cx * uPix, chroma(-9714 * r - 19071 * g + 28784 * bl))
+                vBuf.put(cy * vRow + cx * vPix, chroma(28784 * r - 24103 * g - 4681 * bl))
             }
             yBuf.position(ty * yRow)
             yBuf.put(y0Line)
@@ -452,6 +503,78 @@ object HeicTiles {
         }
     }
 
+    /// [fillTile] at 10 bits: RGBA_1010102 in (R in the low 10 bits of each
+    /// little-endian word), P010 out (each sample in the top 10 bits of a
+    /// little-endian 16-bit word), BT.601 limited range for 10 bits (luma
+    /// 64–940, chroma 64–960).
+    private fun fillTile10(
+        image: android.media.Image,
+        px: ByteArray,
+        stride: Int,
+        w: Int,
+        bh: Int,
+        x0: Int,
+        mirror: Boolean,
+    ) {
+        val yPlane = image.planes[0]
+        val uPlane = image.planes[1]
+        val vPlane = image.planes[2]
+        val yBuf = yPlane.buffer.order(ByteOrder.LITTLE_ENDIAN)
+        val uBuf = uPlane.buffer.order(ByteOrder.LITTLE_ENDIAN)
+        val vBuf = vPlane.buffer.order(ByteOrder.LITTLE_ENDIAN)
+        val yRow = yPlane.rowStride
+        val yPix = yPlane.pixelStride
+        val uRow = uPlane.rowStride
+        val vRow = vPlane.rowStride
+        val uPix = uPlane.pixelStride
+        val vPix = vPlane.pixelStride
+        val col = IntArray(TILE) { tx ->
+            val x = minOf(x0 + tx, w - 1)
+            (if (mirror) w - 1 - x else x) * 4
+        }
+        fun word(i: Int): Int = (px[i].toInt() and 0xFF) or ((px[i + 1].toInt() and 0xFF) shl 8) or
+            ((px[i + 2].toInt() and 0xFF) shl 16) or ((px[i + 3].toInt() and 0xFF) shl 24)
+        var rs = 0
+        var gs = 0
+        var bs = 0
+        // One pixel's luma at (tx, ty) of the tile; its RGB summed for chroma.
+        fun pixel(rowOff: Int, tx: Int, ty: Int) {
+            val p = word(rowOff + col[tx])
+            val r = p and 0x3FF
+            val g = (p shr 10) and 0x3FF
+            val b = (p shr 20) and 0x3FF
+            rs += r
+            gs += g
+            bs += b
+            val y = (16780 * r + 32942 * g + 6398 * b + 32768 shr 16) + 64
+            yBuf.putShort(ty * yRow + tx * yPix, (y shl 6).toShort())
+        }
+        for (ty in 0 until TILE step 2) {
+            val r0 = minOf(ty, bh - 1) * stride
+            val r1 = minOf(ty + 1, bh - 1) * stride
+            for (tx in 0 until TILE step 2) {
+                rs = 0
+                gs = 0
+                bs = 0
+                pixel(r0, tx, ty)
+                pixel(r0, tx + 1, ty)
+                pixel(r1, tx, ty + 1)
+                pixel(r1, tx + 1, ty + 1)
+                val r = (rs + 2) shr 2
+                val g = (gs + 2) shr 2
+                val b = (bs + 2) shr 2
+                val u = (-9685 * r - 19015 * g + 28700 * b + 32768 shr 16) + 512
+                val v = (28700 * r - 24033 * g - 4667 * b + 32768 shr 16) + 512
+                val cx = tx shr 1
+                val cy = ty shr 1
+                uBuf.putShort(cy * uRow + cx * uPix, (u shl 6).toShort())
+                vBuf.putShort(cy * vRow + cx * vPix, (v shl 6).toShort())
+            }
+        }
+    }
+
     private fun luma(r: Int, g: Int, b: Int): Byte =
-        ((66 * r + 129 * g + 25 * b + 128 shr 8) + 16).toByte()
+        ((16829 * r + 33039 * g + 6416 * b + 32768 shr 16) + 16).toByte()
+
+    private fun chroma(sum: Int): Byte = ((sum + 32768 shr 16) + 128).toByte()
 }

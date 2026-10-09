@@ -118,7 +118,14 @@ fn picture(w: u32, h: u32) -> Decoded {
 
 #[test]
 fn one_item_tiles_are_the_whole_decode() {
-    let avif = codec::encode(&picture(700, 450), Target::Avif { quality: 90 }).unwrap();
+    let avif = codec::encode(
+        &picture(700, 450),
+        Target::Avif {
+            quality: 90,
+            depth: None,
+        },
+    )
+    .unwrap();
     let whole = codec::decode(&avif, None).unwrap();
     let dir = cache("one-item");
     let region = AvifRegion::open(avif, &dir).unwrap();
@@ -203,7 +210,10 @@ fn a_profile_converts_to_srgb() {
             height: 48,
             rgba: px,
         },
-        Target::Avif { quality: 100 },
+        Target::Avif {
+            quality: 100,
+            depth: None,
+        },
     )
     .unwrap();
     let p3 = metadata::extract(&fixture("apple_png_p3_icc.png"));

@@ -718,6 +718,7 @@ fn wire__crate__api__codec__transcode_impl(
             let api_quality = <u32>::sse_decode(&mut deserializer);
             let api_max_edge = <u32>::sse_decode(&mut deserializer);
             let api_keep_metadata = <bool>::sse_decode(&mut deserializer);
+            let api_bit_depth = <u32>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, String>((move || {
@@ -727,6 +728,7 @@ fn wire__crate__api__codec__transcode_impl(
                         api_quality,
                         api_max_edge,
                         api_keep_metadata,
+                        api_bit_depth,
                     )?;
                     Ok(output_ok)
                 })())
@@ -875,6 +877,7 @@ impl SseDecode for crate::engine::inspect::Facts {
         let mut var_width = <u32>::sse_decode(deserializer);
         let mut var_height = <u32>::sse_decode(deserializer);
         let mut var_orientation = <u8>::sse_decode(deserializer);
+        let mut var_bitDepth = <u8>::sse_decode(deserializer);
         return crate::engine::inspect::Facts {
             transfer: var_transfer,
             gain_map: var_gainMap,
@@ -882,6 +885,7 @@ impl SseDecode for crate::engine::inspect::Facts {
             width: var_width,
             height: var_height,
             orientation: var_orientation,
+            bit_depth: var_bitDepth,
         };
     }
 }
@@ -1288,6 +1292,7 @@ impl flutter_rust_bridge::IntoDart for crate::engine::inspect::Facts {
             self.width.into_into_dart().into_dart(),
             self.height.into_into_dart().into_dart(),
             self.orientation.into_into_dart().into_dart(),
+            self.bit_depth.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -1609,6 +1614,7 @@ impl SseEncode for crate::engine::inspect::Facts {
         <u32>::sse_encode(self.width, serializer);
         <u32>::sse_encode(self.height, serializer);
         <u8>::sse_encode(self.orientation, serializer);
+        <u8>::sse_encode(self.bit_depth, serializer);
     }
 }
 

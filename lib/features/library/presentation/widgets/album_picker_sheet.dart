@@ -157,9 +157,13 @@ class _AlbumRowWidgetState extends State<_AlbumRowWidget> {
         : <AssetEntity>[];
     Uint8List? thumb;
     if (list.isNotEmpty) {
-      thumb = await list.first.thumbnailDataWithSize(
-        const ThumbnailSize.square(160),
-      );
+      try {
+        thumb = await list.first.thumbnailDataWithSize(
+          const ThumbnailSize.square(160),
+        );
+      } catch (_) {
+        thumb = null; // the tile shows without a cover (UI-10)
+      }
     }
     if (mounted) {
       setState(() {

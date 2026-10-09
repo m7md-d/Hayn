@@ -18,8 +18,9 @@ pub enum CodecFormat {
 
 /// Decode → optional downscale (long edge ≤ `max_edge`; 0 = keep original size)
 /// → encode to `format` at `quality` (1..=100; ignored for PNG). Throws on a
-/// container the codec layer can't handle yet.
-fn target_of(format: CodecFormat, quality: u32) -> codec::Target {
+/// container the codec layer can't handle yet. `bit_depth` 8 or 10 is the
+/// user's choice for AVIF; anything else keeps the default, 10.
+fn target_of(format: CodecFormat, quality: u32, bit_depth: u32) -> codec::Target {
     let q = quality.clamp(1, 100) as u8;
     match format {
         CodecFormat::Jpeg => codec::Target::Jpeg(q),
@@ -32,7 +33,14 @@ fn target_of(format: CodecFormat, quality: u32) -> codec::Target {
             quality: 100,
             lossless: true,
         },
-        CodecFormat::Avif => codec::Target::Avif { quality: q },
+        CodecFormat::Avif => codec::Target::Avif {
+            quality: q,
+            depth: match bit_depth {
+                8 => Some(8),
+                10 => Some(10),
+                _ => None,
+            },
+        },
     }
 }
 
@@ -46,17 +54,24 @@ pub fn flatten_on_white(bytes: Vec<u8>) -> Result<Vec<u8>, String> {
 /// `keep_metadata` carries EXIF/XMP/ICC. The result says what happened to an
 /// HDR gain map. Throws `preservation_required:…` for PQ/HLG, which this
 /// engine cannot render correctly as SDR, and a plain message for containers
-/// the codec layer can't handle.
+/// the codec layer can't handle. `bit_depth`: 8 or 10 for an AVIF, 0 for the
+/// default (10).
 pub fn transcode(
     bytes: Vec<u8>,
     format: CodecFormat,
     quality: u32,
     max_edge: u32,
     keep_metadata: bool,
+    bit_depth: u32,
 ) -> Result<Transcoded, String> {
     let edge = if max_edge == 0 { None } else { Some(max_edge) };
-    codec::transcode(&bytes, target_of(format, quality), edge, keep_metadata)
-        .map_err(|e| e.to_string())
+    codec::transcode(
+        &bytes,
+        target_of(format, quality, bit_depth),
+        edge,
+        keep_metadata,
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// The alpha plane of a HEIF image's primary item as an Annex-B HEVC stream,

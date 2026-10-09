@@ -19,19 +19,22 @@ Future<Uint8List> flattenOnWhite({required List<int> bytes}) =>
 /// `keep_metadata` carries EXIF/XMP/ICC. The result says what happened to an
 /// HDR gain map. Throws `preservation_required:…` for PQ/HLG, which this
 /// engine cannot render correctly as SDR, and a plain message for containers
-/// the codec layer can't handle.
+/// the codec layer can't handle. `bit_depth`: 8 or 10 for an AVIF, 0 for the
+/// default (10).
 Future<Transcoded> transcode({
   required List<int> bytes,
   required CodecFormat format,
   required int quality,
   required int maxEdge,
   required bool keepMetadata,
+  required int bitDepth,
 }) => DarkLib.instance.api.crateApiCodecTranscode(
   bytes: bytes,
   format: format,
   quality: quality,
   maxEdge: maxEdge,
   keepMetadata: keepMetadata,
+  bitDepth: bitDepth,
 );
 
 /// The alpha plane of a HEIF image's primary item as an Annex-B HEVC stream,

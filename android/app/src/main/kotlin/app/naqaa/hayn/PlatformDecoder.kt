@@ -7,6 +7,7 @@ import android.graphics.ImageDecoder
 import android.os.Build
 import androidx.annotation.RequiresApi
 import java.io.File
+import java.io.FileOutputStream
 import java.nio.ByteBuffer
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -35,6 +36,10 @@ import java.nio.ByteBuffer
 // side carries it through DarkLib. [maxEdge] > 0 (previews) samples the
 // decode down by a power of two while the long edge stays at least maxEdge.
 // Every failure returns null so callers fall back.
+//
+// The same decode also writes JPEG (IMG-24), in place of flutter_image_compress,
+// which decoded into RGB_565: 5/6/5 bits, banding in every JPEG. Here the
+// bitmap is ARGB_8888 and Bitmap.compress encodes it (libjpeg-turbo).
 // ─────────────────────────────────────────────────────────────────────────────
 
 object PlatformDecoder {
@@ -42,7 +47,10 @@ object PlatformDecoder {
     /// The file goes through [PngFile] (PERF-02): banded, fast deflate, never
     /// whole on the Java heap. The caller reads and deletes it. [colours] is
     /// "keep", "srgb" or "raw" (above); [space] the source profile's D50
-    /// matrix (9, column-major) and transfer (7), or null.
+    /// matrix (9, column-major) and transfer (7), or null. [jpegQuality] in
+    /// 1..100 writes a JPEG instead. Skia tags it with the bitmap's space; with
+    /// "raw" colours the caller carries the source's profile, which names the
+    /// values and replaces that tag (DarkLib's inject, IMG-24).
     fun bakeUprightToFile(
         src: ByteArray,
         toSdr: Boolean,
@@ -50,6 +58,7 @@ object PlatformDecoder {
         colours: String,
         space: FloatArray?,
         dir: File,
+        jpegQuality: Int = 0,
     ): String? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return null
         var file: File? = null
@@ -87,8 +96,16 @@ object PlatformDecoder {
             if (colours == "srgb" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 bitmap = toSrgb(bitmap, space)
             }
-            file = File.createTempFile("hayn-bake-", ".png", dir)
-            PngFile.write(bitmap, file, tagged = colours != "raw")
+            if (jpegQuality in 1..100) {
+                file = File.createTempFile("hayn-bake-", ".jpg", dir)
+                val written = FileOutputStream(file).buffered(1 shl 16).use {
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, jpegQuality, it)
+                }
+                if (!written) throw IllegalStateException("JPEG encode failed")
+            } else {
+                file = File.createTempFile("hayn-bake-", ".png", dir)
+                PngFile.write(bitmap, file, tagged = colours != "raw")
+            }
             file.absolutePath
         } catch (_: Throwable) {
             file?.delete()

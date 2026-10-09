@@ -7,10 +7,12 @@ import 'package:photo_manager/photo_manager.dart';
 import '../../../app/l10n/app_localizations.dart';
 import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
+import '../../../core/diagnostics/media_diagnostics.dart';
 import '../../../core/isolates/task_runner.dart';
 import '../../../shared/widgets/widgets.dart';
 import '../../library/presentation/providers/asset_entity_cache.dart';
 import '../data/image_crop_task.dart';
+import '../data/original_rendition.dart';
 import 'widgets/aspect_ratio_chips.dart';
 import 'widgets/crop_canvas.dart';
 import 'widgets/rotate_flip_bar.dart';
@@ -71,9 +73,24 @@ class _CropScreenState extends ConsumerState<CropScreen> {
     final a = _asset;
     if (a == null) return;
     // 2048-px preview is plenty for an editor without ballooning memory.
-    final data = await a.thumbnailDataWithSize(
-      const ThumbnailSize.square(2048),
-    );
+    Uint8List? data;
+    try {
+      data = await a.thumbnailDataWithSize(const ThumbnailSize.square(2048));
+    } catch (_) {
+      data = null;
+    }
+    // No thumbnail from the library (UI-10): the original's own rendition.
+    if (data == null || data.isEmpty) {
+      MediaDiagnostics.record(
+        MediaBackend.gallery,
+        MediaOperation.display,
+        MediaDiagnosticCode.unavailable,
+      );
+      final origin = await a.originBytes;
+      data = origin == null
+          ? null
+          : await OriginalRendition.png(origin, maxEdge: 2048);
+    }
     if (mounted) setState(() => _bytes = data);
   }
 

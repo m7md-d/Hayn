@@ -1736,6 +1736,18 @@ abstract class AppLocalizations {
   /// **'Compressing…'**
   String get compressComputing;
 
+  /// No description provided for @compressPreviewFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t compress this image'**
+  String get compressPreviewFailed;
+
+  /// No description provided for @viewerUnshowable.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t show this image'**
+  String get viewerUnshowable;
+
   /// No description provided for @formatNoteNoAlpha.
   ///
   /// In en, this message translates to:

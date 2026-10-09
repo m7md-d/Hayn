@@ -1,5 +1,6 @@
 package app.naqaa.hayn
 
+import android.app.ActivityManager
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
@@ -61,18 +62,32 @@ class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, IMAGE_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
+                    // Memory for the heavy-work gate (RUN-02): what can be
+                    // allocated before the system reclaims, and its threshold.
+                    // Whether HEIC can be written at 10 bits (IMG-23).
+                    "heicTenBit" -> result.success(HeicTiles.tenBitAvailable())
+                    "memoryInfo" -> {
+                        val info = ActivityManager.MemoryInfo()
+                        (getSystemService(ACTIVITY_SERVICE) as ActivityManager)
+                            .getMemoryInfo(info)
+                        result.success(
+                            mapOf("available" to info.availMem, "threshold" to info.threshold),
+                        )
+                    }
                     "bakeUprightFile" -> {
                         val bytes = call.argument<ByteArray>("bytes")
                         val toSdr = call.argument<Boolean>("toSdr") ?: false
                         val maxEdge = call.argument<Int>("maxEdge") ?: 0
                         val colours = call.argument<String>("colours") ?: "srgb"
                         val space = call.argument<FloatArray>("space")
+                        val jpegQuality = call.argument<Int>("jpegQuality") ?: 0
                         if (bytes == null) {
                             result.success(null)
                         } else {
                             decodeExecutor.execute {
                                 val out = PlatformDecoder.bakeUprightToFile(
                                     bytes, toSdr, maxEdge, colours, space, cacheDir,
+                                    jpegQuality,
                                 )
                                 mainHandler.post { result.success(out) }
                             }
@@ -84,11 +99,12 @@ class MainActivity : FlutterActivity() {
                         val bytes = call.argument<ByteArray>("bytes")
                         val quality = call.argument<Int>("quality") ?: 80
                         val orientation = call.argument<Int>("orientation") ?: 0
+                        val depth = call.argument<Int>("depth") ?: 8
                         if (bytes == null) {
                             result.success(null)
                         } else {
                             decodeExecutor.execute {
-                                val out = HeicTiles.encodeToFile(bytes, quality, orientation, cacheDir)
+                                val out = HeicTiles.encodeToFile(bytes, quality, orientation, depth, cacheDir)
                                 mainHandler.post {
                                     result.success(
                                         out?.let {

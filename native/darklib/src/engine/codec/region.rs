@@ -868,6 +868,7 @@ mod tests {
                 rgba,
             },
             90,
+            None,
             64,
         )
         .unwrap();

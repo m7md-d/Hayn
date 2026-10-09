@@ -937,6 +937,12 @@ class AppLocalizationsAr extends AppLocalizations {
   String get compressComputing => 'جارٍ الضغط…';
 
   @override
+  String get compressPreviewFailed => 'تعذّر ضغط هذه الصورة';
+
+  @override
+  String get viewerUnshowable => 'تعذّر عرض هذه الصورة';
+
+  @override
   String get formatNoteNoAlpha => 'بدون شفافية';
 
   @override

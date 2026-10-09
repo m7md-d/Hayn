@@ -11,6 +11,8 @@ import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
 import '../../../app/theme/motion.dart';
 import '../../../core/capabilities/format_capabilities.dart';
+import '../../../core/diagnostics/media_diagnostics.dart';
+import '../../../core/isolates/heavy_work.dart';
 import '../../../core/isolates/task_runner.dart';
 import '../../../data/index/index_providers.dart';
 import '../../../shared/widgets/widgets.dart';
@@ -99,8 +101,12 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   String? _encodedSig;
   double _encodeMs = 0; // active image's real encode time (anchors the ETA)
   bool _encoding = false;
+  bool _encodeFailed = false; // the last preview encode failed (no result)
   int _encodeSeq = 0;
   Timer? _debounce;
+  // The preview waits in the heavy-work gate like a task (RUN-02); a newer
+  // one withdraws it if it has not started.
+  HeavyWorkTicket? _encodeTicket;
 
   // The compare panes show both images bounded from afar and read them by
   // tiles when zoomed (PERF-03), so neither is ever decoded whole. A region
@@ -133,6 +139,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   @override
   void dispose() {
     _debounce?.cancel();
+    _encodeTicket?.withdraw();
     _estimateDebounce?.cancel();
     _compareCtrl.dispose();
     _beforeRegion?.close();
@@ -157,9 +164,24 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
     final id = _ids[_activeAssetIndex];
     final entity = await AssetEntityCache.load(id);
     if (entity == null || !mounted) return;
-    final thumb = await entity.thumbnailDataWithSize(
-      const ThumbnailSize.square(1080),
-    );
+    // Only the dimmed backdrop while encoding: the library may give none
+    // (UI-10: iOS Photos makes none for a 10-bit AVIF), which must not stop
+    // the panes, which come from the original.
+    Uint8List? thumb;
+    try {
+      thumb = await entity.thumbnailDataWithSize(
+        const ThumbnailSize.square(1080),
+      );
+    } catch (_) {
+      thumb = null;
+    }
+    if (thumb == null) {
+      MediaDiagnostics.record(
+        MediaBackend.gallery,
+        MediaOperation.display,
+        MediaDiagnosticCode.unavailable,
+      );
+    }
     final origin = await entity.originBytes;
     if (!mounted) return;
     final facts = origin == null ? null : await SourceInspector.inspect(origin);
@@ -210,7 +232,12 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
     );
     final q = _quality.round();
     final seq = ++_encodeSeq;
-    setState(() => _encoding = true);
+    _encodeTicket?.withdraw();
+    final ticket = _encodeTicket = HeavyWorkTicket();
+    setState(() {
+      _encoding = true;
+      _encodeFailed = false;
+    });
     if (!_isSingle) _scheduleEstimate(); // show prior + spinner while encoding
     try {
       final sw = Stopwatch()..start();
@@ -225,6 +252,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
         keepMetadata: _keepMetadata,
         keepOriginalTime: _keepOriginalTime,
         bitDepth: _bitDepth,
+        ticket: ticket,
       );
       sw.stop();
       if (!mounted || seq != _encodeSeq) return;
@@ -251,7 +279,15 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
       }
     } catch (_) {
       if (!mounted || seq != _encodeSeq) return;
-      setState(() => _encoding = false);
+      // No result for these settings: never show the previous ones' instead.
+      setState(() {
+        _encoding = false;
+        _encodeFailed = true;
+        _encoded = null;
+        _encodedShown = null;
+        _afterRegion?.close();
+        _afterRegion = null;
+      });
       if (!_isSingle) _runEstimate();
     }
   }
@@ -296,6 +332,30 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
     final enc = _encoded;
     final l = AppLocalizations.of(context);
     final hc = context.hc;
+    if (!_encoding && enc == null && _encodeFailed) {
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          if (_previewBytes != null)
+            Opacity(
+              opacity: 0.3,
+              child: Image.memory(
+                _previewBytes!,
+                fit: BoxFit.contain,
+                gaplessPlayback: true,
+              ),
+            ),
+          Center(
+            child: Text(
+              l.compressPreviewFailed,
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: hc.text2),
+            ),
+          ),
+        ],
+      );
+    }
     if (_encoding || enc == null) {
       return Stack(
         fit: StackFit.expand,
@@ -641,7 +701,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
                           quality: _quality,
                           keepMetadata: _keepMetadata,
                           bitDepth: _isSingle ? _bitDepth : null,
-                          sourceBitDepth: _info?.bitDepth,
+                          sourceBitDepth: _facts?.bitDepth ?? _info?.bitDepth,
                           onBitDepthChanged: (v) {
                             setState(() => _bitDepth = v);
                             _scheduleEncode();

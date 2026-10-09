@@ -83,8 +83,9 @@ abstract final class NativeImageEncoder {
 
   /// Android's HEIC from bands and 512 tiles (RUN-01): memory bounded by a
   /// band whatever the size, where the plugin's HeifWriter needs the whole
-  /// image in one graphics buffer. Used for giant images; smaller ones take
-  /// HeifWriter, which is faster (docs/18-PERFORMANCE.md). The pixels
+  /// image in one graphics buffer. Every HEIC on Android since IMG-24: the
+  /// plugin fed HeifWriter RGB_565 through a GL texture, banding every
+  /// image and crashing the GPU driver at an odd width. The pixels
   /// stay as stored and [orientation] (an EXIF code, 0 = none) goes into the
   /// container. No metadata, no profile and no alpha are written: the caller
   /// carries the first two and sends only opaque, SDR sources. Null when
@@ -93,12 +94,16 @@ abstract final class NativeImageEncoder {
     required Uint8List source,
     required int quality,
     required int orientation,
+    int depth = 8,
   }) async {
     try {
-      final res = await channel.invokeMapMethod<String, Object?>(
-        'encodeHeicTiles',
-        {'bytes': source, 'quality': quality, 'orientation': orientation},
-      );
+      final res = await channel
+          .invokeMapMethod<String, Object?>('encodeHeicTiles', {
+            'bytes': source,
+            'quality': quality,
+            'orientation': orientation,
+            'depth': depth,
+          });
       final bytes = await _readTemp(res?['path'] as String?);
       if (bytes == null || bytes.isEmpty) {
         MediaDiagnostics.record(
@@ -130,12 +135,77 @@ abstract final class NativeImageEncoder {
     }
   }
 
+  /// Android's JPEG (IMG-24): ImageDecoder's upright ARGB_8888 pixels,
+  /// encoded by Bitmap.compress (libjpeg-turbo), where flutter_image_compress
+  /// decoded into RGB_565. The values stay as the decoder reads them, tagged
+  /// at most with the bitmap's space: the caller carries the source's
+  /// profile, which names them and replaces that tag, and on request the
+  /// rest (EXIF orientation set upright).
+  /// Opaque sources only (a transparent one is flattened before). Null when
+  /// unavailable or failed, with a diagnostic.
+  static Future<Uint8List?> encodeJpeg({
+    required Uint8List source,
+    required int quality,
+    bool toSdr = false,
+  }) async {
+    try {
+      final out = await _readTemp(
+        await channel.invokeMethod<String>('bakeUprightFile', {
+          'bytes': source,
+          'toSdr': toSdr,
+          'colours': BakeColours.raw.name,
+          'jpegQuality': quality.clamp(1, 100),
+        }),
+      );
+      if (out == null || out.isEmpty) {
+        MediaDiagnostics.record(
+          MediaBackend.androidJpeg,
+          MediaOperation.encode,
+          MediaDiagnosticCode.emptyOutput,
+        );
+        return null;
+      }
+      return out;
+    } on MissingPluginException {
+      MediaDiagnostics.record(
+        MediaBackend.androidJpeg,
+        MediaOperation.encode,
+        MediaDiagnosticCode.unavailable,
+      );
+      return null;
+    } catch (_) {
+      MediaDiagnostics.record(
+        MediaBackend.androidJpeg,
+        MediaOperation.encode,
+        MediaDiagnosticCode.exception,
+      );
+      return null;
+    }
+  }
+
   /// Android selects the ImageDecoder bridge; tests may flip it.
   @visibleForTesting
   static bool onAndroid = Platform.isAndroid;
 
-  /// Android: HEIC comes from [encodeHeicTiles], or from the plugin's
-  /// HeifWriter, neither writing a profile or EXIF.
+  /// Whether [encodeHeicTiles] can write 10 bits (HEVC Main10, Android 13+;
+  /// IMG-23). Asked once; false where unknown.
+  static Future<bool> heicTenBit() => _heicTenBit ??= () async {
+    try {
+      return await channel.invokeMethod<bool>('heicTenBit') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }();
+  static Future<bool>? _heicTenBit;
+
+  @visibleForTesting
+  static void resetHeicTenBit() => _heicTenBit = null;
+
+  /// Running on Android (flipped by tests through [onAndroid]).
+  static bool get android => onAndroid;
+
+  /// Android: HEIC comes from [encodeHeicTiles] and JPEG from [encodeJpeg],
+  /// neither writing a profile or EXIF.
   static bool get androidHeic => onAndroid;
 
   /// The engine behind [bakeUpright] on this platform.

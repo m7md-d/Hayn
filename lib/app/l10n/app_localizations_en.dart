@@ -926,6 +926,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get compressComputing => 'Compressing…';
 
   @override
+  String get compressPreviewFailed => 'Couldn\'t compress this image';
+
+  @override
+  String get viewerUnshowable => 'Couldn\'t show this image';
+
+  @override
   String get formatNoteNoAlpha => 'Without transparency';
 
   @override

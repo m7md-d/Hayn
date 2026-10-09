@@ -8,6 +8,14 @@ the engine API may change between minor versions.
 ## [Unreleased]
 
 ### Added
+- **AVIF bit depth by choice** (Hayn IMG-23): `Target::Avif { quality, depth }`
+  and `api::codec::transcode(…, bit_depth)`. 8 or 10; anything else keeps
+  rav1e's default, 10 (smaller and closer than 8 on a Galaxy S25 Edge test,
+  and the user's decision). Reaches the single item, grid tiles and a kept
+  gain map.
+- **`Facts.bit_depth`** from `inspect`: the source's bits per channel from its
+  container (`pixi`/`av1C`/`hvcC`, PNG `IHDR`, JPEG `SOF`; WebP 8), 0 when
+  unknown; new `isobmff::primary_bit_depth`.
 - **`engine::codec::region` and `api::region::RegionReader`**: an AVIF read by
   regions for display (Hayn PERF-03). A grid decodes only the cells a request
   covers, in parallel; one item is decoded once into raw RGBA files (a pyramid
@@ -88,6 +96,11 @@ the engine API may change between minor versions.
   `docs/` set.
 
 ### Changed
+- **`metadata::inject` replaces in JPEG and PNG** (Hayn IMG-24): each kind it
+  carries (EXIF, XMP, ICC) replaces the target's own instead of being added
+  beside it; a kind it lacks stays; JFIF stays the first segment. Before, a
+  JPEG from Android's `Bitmap.compress` came out with two "chunk 1 of 1"
+  profiles, which LittleCMS rejects.
 - **AV1 decode uses up to four threads** (was one) and converts YUV → RGBA in
   bands on the same number of threads; `avif_dav1d::decode_item_rows` hands
   the rows out band by band. On a Galaxy S25 Edge a 12 MP still decoded in

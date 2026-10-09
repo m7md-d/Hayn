@@ -62,6 +62,11 @@ pub struct Facts {
     /// `irot`/`imir` for HEIF/AVIF (their EXIF tag is not what readers
     /// apply), the EXIF tag otherwise. 0 when the file names none (upright).
     pub orientation: u8,
+    /// Bits per channel as stored (8, 10, 12, 16), from the container: HEIF/
+    /// AVIF `pixi` or coding configuration, PNG `IHDR`, JPEG `SOF`; WebP is
+    /// 8. 0 when the header does not say. What "match the source" means for
+    /// the user's bit-depth choice (Hayn IMG-23).
+    pub bit_depth: u8,
 }
 
 const UNKNOWN: Facts = Facts {
@@ -71,6 +76,7 @@ const UNKNOWN: Facts = Facts {
     width: 0,
     height: 0,
     orientation: 0,
+    bit_depth: 0,
 };
 
 impl Presence {
@@ -99,7 +105,38 @@ pub fn inspect(b: &[u8]) -> Facts {
             _ => 0,
         },
     };
+    facts.bit_depth = bit_depth(b).unwrap_or(0);
     facts
+}
+
+/// Bits per channel as the container states them (see [`Facts::bit_depth`]).
+fn bit_depth(b: &[u8]) -> Option<u8> {
+    match detect(b) {
+        ImageFormat::Avif | ImageFormat::Heic => isobmff::primary_bit_depth(b),
+        // IHDR is the first chunk: sig 8, length 4, type 4, width and height 8.
+        ImageFormat::Png => (b.get(12..16) == Some(b"IHDR")).then(|| b.get(24).copied())?,
+        ImageFormat::Jpeg => jpeg_precision(b),
+        ImageFormat::Webp => Some(8),
+        _ => None,
+    }
+}
+
+/// The sample precision of a JPEG's frame header (SOF0..SOF15, less DHT,
+/// JPG and DAC): 8, or 12 for extended files.
+fn jpeg_precision(b: &[u8]) -> Option<u8> {
+    let mut i = 2usize;
+    while i + 4 < b.len() && b[i] == 0xFF {
+        let marker = b[i + 1];
+        if marker == 0xDA || marker == 0xD9 {
+            return None;
+        }
+        let len = ((b[i + 2] as usize) << 8) | b[i + 3] as usize;
+        if (0xC0..=0xCF).contains(&marker) && !matches!(marker, 0xC4 | 0xC8 | 0xCC) {
+            return b.get(i + 4).copied();
+        }
+        i += 2 + len;
+    }
+    None
 }
 
 fn facts_of(b: &[u8]) -> Facts {
@@ -115,6 +152,7 @@ fn facts_of(b: &[u8]) -> Facts {
             width: 0,
             height: 0,
             orientation: 0,
+            bit_depth: 0,
         },
         _ => UNKNOWN,
     }
@@ -133,6 +171,7 @@ fn isobmff_facts(b: &[u8]) -> Facts {
         width: 0,
         height: 0,
         orientation: 0,
+        bit_depth: 0,
     }
 }
 
@@ -202,6 +241,7 @@ fn png_facts(b: &[u8]) -> Facts {
         width: 0,
         height: 0,
         orientation: 0,
+        bit_depth: 0,
     }
 }
 
@@ -265,6 +305,7 @@ fn jpeg_facts(b: &[u8]) -> Facts {
         width: 0,
         height: 0,
         orientation: 0,
+        bit_depth: 0,
     }
 }
 

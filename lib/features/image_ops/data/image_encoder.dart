@@ -7,6 +7,7 @@ import 'package:flutter_image_compress/flutter_image_compress.dart' as fic;
 
 import '../../../core/darklib/darklib.dart';
 import '../../settings/providers/preferences_providers.dart';
+import '../../../core/isolates/heavy_work.dart';
 import 'alpha_flatten.dart';
 import 'native_avif_encoder.dart';
 import 'native_image_encoder.dart';
@@ -62,6 +63,10 @@ abstract final class ImageEncoder {
   /// backend recovery within the requested format remains allowed. A preservation
   /// rejection is terminal. Diagnostics accompany success or failure. What the
   /// chosen format cannot hold (alpha in JPEG, HDR) is dropped without asking.
+  ///
+  /// Runs through [HeavyWork] (RUN-02) with [memoryEstimate]: it waits its
+  /// turn, fails with `insufficientMemory` when it can never fit, and throws
+  /// [HeavyWorkWithdrawn] when [ticket] is withdrawn before it starts.
   static Future<EncodedImage> encode({
     required Uint8List source,
     required DefaultFormat target,
@@ -73,6 +78,7 @@ abstract final class ImageEncoder {
     int bitDepth = 0,
     int? maxWidth,
     int? maxHeight,
+    HeavyWorkTicket? ticket,
   }) => MediaDiagnostics.trace((trace) async {
     if (target == DefaultFormat.auto) {
       // Auto must be resolved by ImageFormatPolicy before encoding.
@@ -83,7 +89,47 @@ abstract final class ImageEncoder {
       );
       throw ImageEncodingFailure(target, trace.events);
     }
+    try {
+      return await HeavyWork.instance.run(
+        estimateBytes: memoryEstimate(facts, target, source.length),
+        ticket: ticket,
+        body: () => _admitted(
+          trace: trace,
+          source: source,
+          target: target,
+          quality: quality,
+          facts: facts,
+          keepMetadata: keepMetadata,
+          allowFormatFallback: allowFormatFallback,
+          keepOriginalTime: keepOriginalTime,
+          bitDepth: bitDepth,
+          maxWidth: maxWidth,
+          maxHeight: maxHeight,
+        ),
+      );
+    } on InsufficientMemory {
+      MediaDiagnostics.record(
+        MediaBackend.imageEncoder,
+        MediaOperation.encode,
+        MediaDiagnosticCode.insufficientMemory,
+      );
+      throw ImageEncodingFailure(target, trace.events);
+    }
+  });
 
+  static Future<EncodedImage> _admitted({
+    required MediaDiagnosticTrace trace,
+    required Uint8List source,
+    required DefaultFormat target,
+    required int quality,
+    required SourceFacts facts,
+    required bool keepMetadata,
+    required bool allowFormatFallback,
+    required bool keepOriginalTime,
+    required int bitDepth,
+    required int? maxWidth,
+    required int? maxHeight,
+  }) async {
     // PQ/HLG samples read as sRGB are a wrong image, so no engine receives the
     // original: only ImageIO's tone-mapped SDR rendition may continue (the
     // Android bridge has no verified tone mapper and declines).
@@ -249,7 +295,31 @@ abstract final class ImageEncoder {
       }
     }
     throw ImageEncodingFailure(target, trace.events);
-  });
+  }
+
+  /// Peak memory an encode of [facts]' image into [target] needs, for
+  /// [HeavyWork]: bytes per pixel above what the app held before, measured on
+  /// a 195 MP source on the Galaxy S25 Edge (2026-10-09, docs/18-PERFORMANCE.md:
+  /// HEIC 0.6, PNG 5.7, JPEG 6.8, AVIF 7.2, WebP 17 where it failed) and
+  /// rounded up, plus twice the source bytes (Dart's copy and the
+  /// platform's). HEIC goes in bands (RUN-01), the rest decode whole. Unknown
+  /// size: 0, so only the count limits it.
+  static int memoryEstimate(
+    SourceFacts facts,
+    DefaultFormat target,
+    int sourceBytes,
+  ) {
+    final w = facts.width, h = facts.height;
+    if (w == null || h == null) return 0;
+    final perPixel = switch (target) {
+      DefaultFormat.heic => 1,
+      DefaultFormat.jpeg => 9,
+      DefaultFormat.avif => 8,
+      DefaultFormat.png => 9,
+      DefaultFormat.webp || DefaultFormat.auto => 17,
+    };
+    return w * h * perPixel + 2 * sourceBytes;
+  }
 
   /// Ordered formats to attempt: requested first, then alpha-aware fallbacks.
   /// PNG is the final alpha-capable candidate; JPEG is opaque. An
@@ -336,8 +406,12 @@ abstract final class ImageEncoder {
         final keepsGainMap =
             facts.gainMap == true &&
             ImageProbe.sniff(source) == SniffedFormat.avif;
+        // The hardware encoder takes 8-bit YUV: not for a 10-bit choice.
         final hw =
-            hasAlpha == false && facts.directHdr == false && !keepsGainMap
+            hasAlpha == false &&
+                facts.directHdr == false &&
+                !keepsGainMap &&
+                bitDepth != 10
             ? await NativeAvifEncoder.encode(source: source, quality: quality)
             : null;
         if (hw != null && hw.isNotEmpty) {
@@ -368,6 +442,7 @@ abstract final class ImageEncoder {
           quality: quality,
           keepMetadata: keepMetadata,
           maxEdge: maxWidth ?? 0,
+          bitDepth: bitDepth,
         );
         if (dark != null) {
           return EncodedImage(
@@ -393,6 +468,7 @@ abstract final class ImageEncoder {
             quality: quality,
             keepMetadata: keepMetadata,
             maxEdge: maxWidth ?? 0,
+            bitDepth: bitDepth,
           );
           if (bridged != null) {
             return EncodedImage(
@@ -503,22 +579,23 @@ abstract final class ImageEncoder {
         }
       }
 
-      // Android HEIC for a giant source: bands and tiles (RUN-01), where
-      // HeifWriter cannot get a buffer the size of the image. The source's
-      // profile and, on request, its metadata carried by DarkLib. Smaller
-      // images take the plugin below: faster by 0.2 to 0.5 s at 12 MP (user
-      // decision 2026-10-02), though the tiles were a little more accurate.
+      // Android HEIC: bands and tiles (RUN-01), at every size since IMG-24.
+      // The plugin's HeifWriter took RGB_565 through a GL texture: banding,
+      // and a crash in the GPU driver at an odd width (user report
+      // 2026-10-09). The source's profile and, on request, its metadata
+      // carried by DarkLib. No alpha plane: a transparent source has no HEIC
+      // on Android (IMG-19).
       if (noCap &&
           format == DefaultFormat.heic &&
           NativeImageEncoder.androidHeic &&
-          facts.giant &&
-          hasAlpha == false &&
+          hasAlpha != true &&
           facts.directHdr != true) {
         backend = MediaBackend.androidHeic;
         final tiles = await NativeImageEncoder.encodeHeicTiles(
           source: source,
           quality: quality.clamp(1, 100),
           orientation: facts.orientation,
+          depth: await _androidHeicDepth(bitDepth, facts),
         );
         if (tiles != null) {
           return EncodedImage(
@@ -528,6 +605,28 @@ abstract final class ImageEncoder {
           );
         }
       }
+
+      // Android JPEG (IMG-24): 8-bit pixels from the platform decoder and
+      // libjpeg-turbo, the source's profile and metadata carried by DarkLib.
+      if (noCap && format == DefaultFormat.jpeg && NativeImageEncoder.android) {
+        backend = MediaBackend.androidJpeg;
+        final jpeg = await NativeImageEncoder.encodeJpeg(
+          source: source,
+          quality: quality,
+          toSdr: toSdr,
+        );
+        if (jpeg != null) {
+          return EncodedImage(
+            await _withMetadata(source, jpeg, keepMetadata, backend),
+            format,
+            backend: backend,
+          );
+        }
+      }
+
+      // Never flutter_image_compress on Android: it decodes into RGB_565
+      // (IMG-24). What the paths above could not encode fails here.
+      if (NativeImageEncoder.android) return null;
 
       // Prefer our own ImageIO encoder for HEIC/JPEG: it avoids the plugin's
       // "opaque image with AlphaLast" warning and carries real camera metadata
@@ -564,17 +663,6 @@ abstract final class ImageEncoder {
         minHeight: maxHeight ?? 1000000,
         keepExif: keepMetadata && _supportsKeepExif(format),
       );
-      // HeifWriter keeps the stored values but writes no profile or EXIF:
-      // carry them, or a P3 source reads as sRGB.
-      if (out.isNotEmpty &&
-          format == DefaultFormat.heic &&
-          NativeImageEncoder.androidHeic) {
-        return EncodedImage(
-          await _withMetadata(source, out, keepMetadata, backend),
-          format,
-          backend: backend,
-        );
-      }
       return _result(out, format, backend);
     } on DarkLibPreservationFailure {
       rethrow;
@@ -636,6 +724,23 @@ abstract final class ImageEncoder {
       MediaDiagnosticCode.preservationUnverified,
     );
     return out;
+  }
+
+  /// The HEIC depth on Android (IMG-23): the user's 8 or 10, or the
+  /// source's ("match": 10 for a deeper source). 10 needs HEVC Main10; a
+  /// device without it writes 8, recorded (the picker offers 10 only where
+  /// it exists, so this is a "match" of a deep source).
+  static Future<int> _androidHeicDepth(int bitDepth, SourceFacts facts) async {
+    final want = bitDepth == 8 || bitDepth == 10
+        ? bitDepth
+        : ((facts.bitDepth ?? 8) > 8 ? 10 : 8);
+    if (want == 8 || await NativeImageEncoder.heicTenBit()) return want;
+    MediaDiagnostics.record(
+      MediaBackend.androidHeic,
+      MediaOperation.encode,
+      MediaDiagnosticCode.depthReduced,
+    );
+    return 8;
   }
 
   /// The plugin can request JPEG EXIF copying. This is not a full metadata,

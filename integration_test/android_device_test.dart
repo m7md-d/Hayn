@@ -13,25 +13,33 @@ import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:image/image.dart' as img;
 import 'package:hayn/app/app.dart';
+import 'package:hayn/app/l10n/app_localizations.dart';
 import 'package:hayn/app/theme/app_theme.dart';
 import 'package:hayn/core/darklib/darklib.dart';
 import 'package:hayn/core/diagnostics/media_diagnostics.dart';
+import 'package:hayn/core/isolates/heavy_work.dart';
 import 'package:hayn/core/isolates/task_progress.dart';
+import 'package:hayn/core/isolates/task_runner.dart';
 import 'package:hayn/features/image_ops/data/gallery_saver.dart';
+import 'package:hayn/features/image_ops/data/image_compress_task.dart';
 import 'package:hayn/features/image_ops/data/image_crop_task.dart';
 import 'package:hayn/features/image_ops/data/image_encoder.dart';
 import 'package:hayn/features/image_ops/data/image_probe.dart';
 import 'package:hayn/features/image_ops/data/native_avif_encoder.dart';
 import 'package:hayn/features/image_ops/data/native_image_encoder.dart';
+import 'package:hayn/features/image_ops/data/original_rendition.dart';
 import 'package:hayn/features/image_ops/data/platform_pixels.dart';
 import 'package:hayn/features/image_ops/data/region_image.dart';
 import 'package:hayn/features/image_ops/data/source_facts.dart';
+import 'package:hayn/features/image_ops/presentation/compress_screen.dart';
 import 'package:hayn/features/image_ops/presentation/widgets/region_tiles.dart';
+import 'package:hayn/features/library/presentation/asset_detail_screen.dart';
 import 'package:hayn/features/library/presentation/full_res_image.dart';
 import 'package:hayn/features/library/presentation/library_screen.dart';
 import 'package:hayn/features/onboarding/providers/onboarding_provider.dart';
 import 'package:hayn/features/settings/presentation/settings_screen.dart';
 import 'package:hayn/features/settings/providers/preferences_providers.dart';
+import 'package:hayn/shared/widgets/buttons.dart';
 import 'package:hayn/shared/widgets/comparison_viewer.dart';
 import 'package:hayn/src/rust/api/metadata.dart' as dl;
 
@@ -244,9 +252,16 @@ void main() {
   // IMG-08 through the Android bridge: a P3 HEIC to WebP and PNG, with and
   // without metadata. The bridge keeps P3 and its profile; DarkLib carries the
   // source's. Before, the bridge turned pixels to sRGB while the source's P3
-  // profile was carried onto them, oversaturating the result.
+  // profile was carried onto them, oversaturating the result. JPEG and HEIC
+  // (IMG-24) keep the decoder's raw values and carry the profile that names
+  // them.
   for (final keepMetadata in [false, true]) {
-    for (final target in [DefaultFormat.webp, DefaultFormat.png]) {
+    for (final target in [
+      DefaultFormat.webp,
+      DefaultFormat.png,
+      DefaultFormat.jpeg,
+      DefaultFormat.heic,
+    ]) {
       final label = '${target.name}${keepMetadata ? ' with metadata' : ''}';
       testWidgets('P3 HEIC to $label keeps its colours', (_) async {
         final source = await _fixture('apple_heic_10bit_p3.heic');
@@ -296,11 +311,16 @@ void main() {
   }
 
   // IMG-08 on Android: without metadata, a P3 source must keep its colour
-  // meaning in each target, through whichever engine Android picks (JPEG goes
-  // through flutter_image_compress). Both sides are read by Android's
-  // colour-managed decoder into sRGB. The patches move 10 to 24 levels between
-  // P3 and sRGB (ImageCms), so a dropped profile shows; the control proves it.
-  for (final target in [DefaultFormat.jpeg, DefaultFormat.png]) {
+  // meaning in each target, through whichever engine Android picks (JPEG and
+  // HEIC from the platform decoder's raw values, IMG-24). Both sides are read
+  // by Android's colour-managed decoder into sRGB. The patches move 10 to 24
+  // levels between P3 and sRGB (ImageCms), so a dropped profile shows; the
+  // control proves it.
+  for (final target in [
+    DefaultFormat.jpeg,
+    DefaultFormat.png,
+    DefaultFormat.heic,
+  ]) {
     testWidgets('P3 to ${target.name} without metadata keeps its colours', (
       _,
     ) async {
@@ -634,17 +654,15 @@ void main() {
         keepMetadata: false,
       );
       expect(result.format, target);
+      // Never flutter_image_compress on Android (IMG-24).
       expect(result.backend, switch (target) {
         DefaultFormat.webp => MediaBackend.darklib,
         DefaultFormat.png => MediaBackend.androidDecoder,
-        _ => MediaBackend.imageCompress,
+        DefaultFormat.jpeg => MediaBackend.androidJpeg,
+        _ => MediaBackend.androidHeic,
       });
-      // The iOS-only ImageIO encoder is tried first for JPEG/HEIC; only that
-      // miss is accepted, so any engine error or fallback fails the test.
-      expect(result.diagnostics.map((d) => d.toString()), switch (target) {
-        DefaultFormat.png || DefaultFormat.webp => isEmpty,
-        _ => ['imageIO.encode.unavailable'],
-      });
+      // Any engine error or fallback fails the test.
+      expect(result.diagnostics, isEmpty);
       device['encode-${target.name}'] = result.backend?.name;
       await _artifact(
         '${target.name}-encoded.${result.extension}',
@@ -1073,6 +1091,247 @@ void main() {
     ctrl.dispose();
   });
 
+  // IMG-23: bit depth is the user's choice, 8 or 10, and "match" follows the
+  // source; AVIF stays 10-bit by default. The output must say the depth it
+  // was asked for, decode, and keep its colours.
+  testWidgets('AVIF at 8 and 10 bits, and the default', (_) async {
+    final source = _gradient(301, 97);
+    final facts = await SourceInspector.inspect(source);
+    for (final (chosen, want) in [(0, 10), (8, 8), (10, 10)]) {
+      final result = await ImageEncoder.encode(
+        source: source,
+        target: DefaultFormat.avif,
+        quality: 90,
+        facts: facts,
+        keepMetadata: false,
+        bitDepth: chosen,
+      );
+      expect((await DarkLibCore.inspect(result.bytes))!.bitDepth, want);
+      final error = _channelError(source, await _platformDecode(result.bytes));
+      device['avif-depth-$chosen'] = {
+        'bytes': result.bytes.length,
+        'meanError': error,
+      };
+      for (final e in error) {
+        expect(e, lessThan(2), reason: 'depth $chosen: $error');
+      }
+    }
+  });
+
+  testWidgets('HEIC at 10 bits where the encoder has Main10', (_) async {
+    final tenBit = await NativeImageEncoder.heicTenBit();
+    device['heicTenBit'] = tenBit;
+    if (!tenBit) {
+      // Then the picker offers no 10 for HEIC; "match" writes 8 (route test).
+      return;
+    }
+    final source = _gradient(1179, 97);
+    final result = await ImageEncoder.encode(
+      source: source,
+      target: DefaultFormat.heic,
+      quality: 100,
+      facts: await SourceInspector.inspect(source),
+      keepMetadata: false,
+      bitDepth: 10,
+    );
+    expect(result.backend, MediaBackend.androidHeic);
+    expect((await DarkLibCore.inspect(result.bytes))!.bitDepth, 10);
+    await _artifact('heic-10bit.heic', result.bytes);
+    // Through Android's display path, which decodes 10 bits and rounds to
+    // 8 (1.52 at most measured); the file itself, read at full precision by
+    // libheif, is held to 1.0 by check_heic_tiles.py (section 6).
+    final error = _channelError(source, await _platformDecode(result.bytes));
+    device['heic10-gradient'] = {
+      'bytes': result.bytes.length,
+      'meanError': error,
+    };
+    for (final e in error) {
+      expect(e, lessThan(2), reason: 'mean error per channel $error');
+    }
+    // P3 values kept raw and named by the carried profile, at 10 bits too.
+    final p3 = await _fixture('libheif_p3_icc.heic');
+    final p3Out = await ImageEncoder.encode(
+      source: p3,
+      target: DefaultFormat.heic,
+      quality: 95,
+      facts: await SourceInspector.inspect(p3),
+      keepMetadata: false,
+      bitDepth: 10,
+    );
+    await _artifact('heic-10bit-p3.heic', p3Out.bytes);
+    _expectP3Quadrants(await _platformDecode(p3Out.bytes));
+    // "Match" on Apple's 10-bit HEIC writes 10.
+    final deep = await _fixture('apple_heic_10bit_p3.heic');
+    final matched = await ImageEncoder.encode(
+      source: deep,
+      target: DefaultFormat.heic,
+      quality: 90,
+      facts: await SourceInspector.inspect(deep),
+      keepMetadata: false,
+    );
+    expect((await DarkLibCore.inspect(matched.bytes))!.bitDepth, 10);
+  });
+
+  // UI-10: where the library gives no thumbnail (iOS Photos and a 10-bit
+  // AVIF), screens show a rendition made from the original. Here: DarkLib's
+  // default 10-bit AVIF, as the display path shows it.
+  testWidgets('A rendition from the original stands in for a thumbnail', (
+    _,
+  ) async {
+    final source = _gradient(1179, 1251);
+    final avif = (await ImageEncoder.encode(
+      source: source,
+      target: DefaultFormat.avif,
+      quality: 90,
+      facts: await SourceInspector.inspect(source),
+      keepMetadata: false,
+    )).bytes;
+    final png = await OriginalRendition.png(avif, maxEdge: 300);
+    expect(png, isNotNull);
+    final shown = await _flutterDecode(png!);
+    // Sampled by 4: 1251 / 4 is still at least 300, 1251 / 8 is not.
+    final sample = OriginalRendition.sampleFor(1179, 1251, 300);
+    expect(sample, 4);
+    expect((shown.width, shown.height), (295, 313));
+    final whole = await _platformDecode(avif);
+    var total = 0;
+    for (var y = 0; y < shown.height; y += 25) {
+      for (var x = 0; x < shown.width; x += 25) {
+        final p = shown.pixel(x, y), q = whole.pixel(x * sample, y * sample);
+        for (var c = 0; c < 3; c++) {
+          total += (p[c] - q[c]).abs();
+        }
+      }
+    }
+    final samples =
+        ((shown.height + 24) ~/ 25) * ((shown.width + 24) ~/ 25) * 3;
+    expect(total / samples, lessThan(3));
+  });
+
+  // IMG-24: Android's JPEG and HEIC came from flutter_image_compress, which
+  // decodes into RGB_565 (5/6/5 bits) and hands a HEIC to HeifWriter as a GL
+  // texture: banding in every output, and a crash in the GPU driver when a
+  // 565 row is not a multiple of four bytes (an odd width). A smooth
+  // gradient 1179 px wide at quality 100 must come back within 1.5 levels.
+  for (final format in [DefaultFormat.jpeg, DefaultFormat.heic]) {
+    testWidgets('${format.name} keeps 8-bit values at an odd width', (_) async {
+      final source = _gradient(1179, 97);
+      final result = await ImageEncoder.encode(
+        source: source,
+        target: format,
+        quality: 100,
+        facts: await SourceInspector.inspect(source),
+        keepMetadata: false,
+      );
+      final error = _channelError(source, await _platformDecode(result.bytes));
+      device['precision-${format.name}'] = {
+        'backend': result.backend?.name,
+        'bytes': result.bytes.length,
+        'meanError': error,
+      };
+      expect(result.format, format);
+      for (final e in error) {
+        expect(e, lessThan(1.5), reason: 'mean error per channel $error');
+      }
+    });
+  }
+
+  // RUN-02: the gate reads the phone's memory. An estimate no phone holds is
+  // refused before its body runs; were memoryInfo silent, it would run.
+  testWidgets('The heavy-work gate knows the phone\'s memory', (_) async {
+    var ran = false;
+    await expectLater(
+      HeavyWork.instance.run(
+        estimateBytes: 1 << 45,
+        body: () async => ran = true,
+      ),
+      throwsA(isA<InsufficientMemory>()),
+    );
+    expect(ran, isFalse);
+    expect(
+      await HeavyWork.instance.run(estimateBytes: 1 << 20, body: () async => 1),
+      1,
+    );
+  });
+
+  // The real flow (user request 2026-10-09): an image in the gallery opened
+  // from the library, compressed with the defaults, saved. What crashed the
+  // app was an opaque PNG 1179 px wide that Quick Share had saved as .JPG
+  // (MediaStore: image/jpeg); this one is saved the same way. The tile is
+  // found by its asset id, so no other photo is ever opened.
+  testWidgets('Compress from the library: an odd-width PNG named .jpg', (
+    tester,
+  ) async {
+    expect(photos?.isAuth, isTrue, reason: 'Photo access was refused');
+    final source = _gradient(1179, 1251);
+    final asset = await GallerySaver.saveImage(
+      source,
+      filename: 'hayn-test-flow-odd-width.jpg',
+    );
+    expect(asset, isNotNull);
+    expect(asset!.mimeType, 'image/jpeg', reason: 'named as Quick Share did');
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          onboardingCompletedProvider.overrideWith(
+            () => OnboardingNotifier(initial: true),
+          ),
+        ],
+        child: const HaynApp(),
+      ),
+    );
+    final tile = find.byKey(ValueKey(asset.id));
+    await _pumpUntil(tester, () => tile.evaluate().isNotEmpty);
+    await tester.tap(tile);
+    await _pumpUntil(
+      tester,
+      () => find.byType(AssetDetailScreen).evaluate().isNotEmpty,
+    );
+    await tester.tap(find.byIcon(Icons.compress_rounded).first);
+    await _pumpUntil(
+      tester,
+      () => find.byType(CompressScreen).evaluate().isNotEmpty,
+    );
+    final screen = tester.element(find.byType(CompressScreen));
+    final l = AppLocalizations.of(screen);
+    final container = ProviderScope.containerOf(screen);
+    // The preview is the real encode: the pane stops saying "compressing".
+    await _pumpUntil(
+      tester,
+      () => find.text(l.compressComputing).evaluate().isEmpty,
+      timeout: const Duration(seconds: 60),
+    );
+    final button = find.widgetWithText(HaynPrimaryButton, l.compressTitle);
+    await tester.ensureVisible(button);
+    await tester.pump();
+    await tester.tap(button);
+    bool done() {
+      final tasks = container.read(taskRunnerProvider);
+      return tasks.isNotEmpty &&
+          tasks.last.status != TaskStatus.pending &&
+          tasks.last.status != TaskStatus.running;
+    }
+
+    await _pumpUntil(tester, done, timeout: const Duration(seconds: 60));
+    final state = container.read(taskRunnerProvider).last;
+    expect(state.status, TaskStatus.completed, reason: '${state.error}');
+    final task = state.task as ImageCompressTask;
+    final output = await (await AssetEntity.fromId(
+      task.outputAssetIds.single,
+    ))!.originBytes;
+    await _artifact('flow-odd-width-result', output!);
+    final shown = await _platformDecode(output);
+    device['flowOddWidth'] = {
+      'format': ImageProbe.sniff(output).name,
+      'bytes': output.length,
+      'meanError': _channelError(source, shown),
+    };
+    _expectSameImage(await _platformDecode(source), shown);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+  });
+
   testWidgets('Real app opens the library and settings', (tester) async {
     await tester.pumpWidget(
       ProviderScope(
@@ -1099,6 +1358,47 @@ List<String> _orientationNames() => [
   for (final ext in ['jpg', 'png', 'webp'])
     for (var o = 1; o <= 8; o++) '$ext-o$o.$ext',
 ];
+
+/// Pumps frames until [ready], failing after [timeout].
+Future<void> _pumpUntil(
+  WidgetTester tester,
+  bool Function() ready, {
+  Duration timeout = const Duration(seconds: 15),
+}) async {
+  final clock = Stopwatch()..start();
+  while (!ready()) {
+    expect(clock.elapsed, lessThan(timeout), reason: 'timed out');
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+}
+
+/// An opaque PNG of smooth gradients, [w]×[h]: banding shows in it.
+Uint8List _gradient(int w, int h) {
+  final image = img.Image(width: w, height: h, numChannels: 3);
+  for (final p in image) {
+    p
+      ..r = p.x * 255 ~/ (w - 1)
+      ..g = p.y * 255 ~/ (h - 1)
+      ..b = (p.x * 128 ~/ (w - 1)) + (p.y * 127 ~/ (h - 1));
+  }
+  return Uint8List.fromList(img.encodePng(image));
+}
+
+/// Mean absolute difference per channel (R, G, B) between the PNG [source]
+/// and [shown], rounded to hundredths.
+List<double> _channelError(Uint8List source, _Shown shown) {
+  final src = img.decodePng(source)!;
+  expect((shown.width, shown.height), (src.width, src.height));
+  final sum = [0, 0, 0];
+  for (final p in src) {
+    final q = shown.pixel(p.x, p.y);
+    sum[0] += (p.r.toInt() - q[0]).abs();
+    sum[1] += (p.g.toInt() - q[1]).abs();
+    sum[2] += (p.b.toInt() - q[2]).abs();
+  }
+  final n = src.width * src.height;
+  return [for (final v in sum) (v * 100 / n).round() / 100];
+}
 
 Uint8List _png({required bool alpha}) {
   final input = img.Image(width: 16, height: 12, numChannels: alpha ? 4 : 3);

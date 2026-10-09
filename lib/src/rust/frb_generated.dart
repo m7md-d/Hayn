@@ -150,6 +150,7 @@ abstract class DarkLibApi extends BaseApi {
     required int quality,
     required int maxEdge,
     required bool keepMetadata,
+    required int bitDepth,
   });
 
   Future<Uint8List> crateApiMetadataTransplantMetadata({
@@ -702,6 +703,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
     required int quality,
     required int maxEdge,
     required bool keepMetadata,
+    required int bitDepth,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -712,6 +714,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           sse_encode_u_32(quality, serializer);
           sse_encode_u_32(maxEdge, serializer);
           sse_encode_bool(keepMetadata, serializer);
+          sse_encode_u_32(bitDepth, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -724,7 +727,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           decodeErrorData: sse_decode_String,
         ),
         constMeta: kCrateApiCodecTranscodeConstMeta,
-        argValues: [bytes, format, quality, maxEdge, keepMetadata],
+        argValues: [bytes, format, quality, maxEdge, keepMetadata, bitDepth],
         apiImpl: this,
       ),
     );
@@ -732,7 +735,14 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
 
   TaskConstMeta get kCrateApiCodecTranscodeConstMeta => const TaskConstMeta(
     debugName: "transcode",
-    argNames: ["bytes", "format", "quality", "maxEdge", "keepMetadata"],
+    argNames: [
+      "bytes",
+      "format",
+      "quality",
+      "maxEdge",
+      "keepMetadata",
+      "bitDepth",
+    ],
   );
 
   @override
@@ -865,8 +875,8 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   Facts dco_decode_facts(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 6)
-      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
     return Facts(
       transfer: dco_decode_transfer(arr[0]),
       gainMap: dco_decode_presence(arr[1]),
@@ -874,6 +884,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
       width: dco_decode_u_32(arr[3]),
       height: dco_decode_u_32(arr[4]),
       orientation: dco_decode_u_8(arr[5]),
+      bitDepth: dco_decode_u_8(arr[6]),
     );
   }
 
@@ -1166,6 +1177,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
     var var_width = sse_decode_u_32(deserializer);
     var var_height = sse_decode_u_32(deserializer);
     var var_orientation = sse_decode_u_8(deserializer);
+    var var_bitDepth = sse_decode_u_8(deserializer);
     return Facts(
       transfer: var_transfer,
       gainMap: var_gainMap,
@@ -1173,6 +1185,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
       width: var_width,
       height: var_height,
       orientation: var_orientation,
+      bitDepth: var_bitDepth,
     );
   }
 
@@ -1486,6 +1499,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
     sse_encode_u_32(self.width, serializer);
     sse_encode_u_32(self.height, serializer);
     sse_encode_u_8(self.orientation, serializer);
+    sse_encode_u_8(self.bitDepth, serializer);
   }
 
   @protected

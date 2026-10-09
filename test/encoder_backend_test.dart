@@ -11,6 +11,7 @@ import 'package:hayn/features/settings/providers/preferences_providers.dart';
 
 class _Api extends Fake implements DarkLibApi {
   int calls = 0;
+  int? lastBitDepth;
   bool empty = false;
   bool reject = false;
   bool veto = false;
@@ -21,8 +22,10 @@ class _Api extends Fake implements DarkLibApi {
     required int quality,
     required int maxEdge,
     required bool keepMetadata,
+    required int bitDepth,
   }) async {
     calls++;
+    lastBitDepth = bitDepth;
     if (veto) {
       return Future<Transcoded>.error(
         'preservation_required:hdr_transfer_unsupported',
@@ -30,7 +33,13 @@ class _Api extends Fake implements DarkLibApi {
     }
     if (reject) throw StateError('secret filename');
     return Transcoded(
-      bytes: empty ? Uint8List(0) : encodedHeader(DefaultFormat.webp),
+      bytes: empty
+          ? Uint8List(0)
+          : encodedHeader(
+              format == DarkLibFormat.avif
+                  ? DefaultFormat.avif
+                  : DefaultFormat.webp,
+            ),
       hdr: HdrOutcome.none,
     );
   }
@@ -148,12 +157,38 @@ void main() {
       expect(result.backend, MediaBackend.androidAvif);
     },
   );
+  // IMG-23: AVIF stays 10-bit by default and the user picks 8 or 10. The
+  // choice reaches DarkLib; the hardware encoder takes 8-bit YUV, so a 10-bit
+  // choice goes to DarkLib even where the hardware is there.
+  test('the chosen AVIF depth reaches the engine that can honour it', () async {
+    messenger.setMockMethodCallHandler(avifChannel, (call) async {
+      if (call.method == 'isAvailable') return true;
+      return encodedHeader(DefaultFormat.avif);
+    });
+    expect(await NativeAvifEncoder.isAvailable(), isTrue);
+    Future<EncodedImage> avif(int bitDepth) => ImageEncoder.encode(
+      source: Uint8List(3),
+      target: DefaultFormat.avif,
+      quality: 80,
+      facts: const SourceFacts.sdr(alpha: false),
+      keepMetadata: false,
+      bitDepth: bitDepth,
+    );
+    for (final depth in [0, 8]) {
+      expect((await avif(depth)).backend, MediaBackend.androidAvif);
+    }
+    final ten = await avif(10);
+    expect(ten.backend, MediaBackend.darklib);
+    expect(api.lastBitDepth, 10);
+  });
+
   test(
     'Rust preservation veto is terminal even with permitted format recovery',
     () async {
       api.veto = true;
       var nativeCalls = 0;
-      messenger.setMockMethodCallHandler(imageChannel, (_) async {
+      messenger.setMockMethodCallHandler(imageChannel, (call) async {
+        if (call.method == 'memoryInfo') return null; // the gate's query
         nativeCalls++;
         return encodedHeader(DefaultFormat.jpeg);
       });

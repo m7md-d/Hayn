@@ -116,13 +116,15 @@ abstract final class DarkLibCore {
 
   /// Uses the existing Rust codecs. keepMetadata is a request, not proof of
   /// semantic preservation. maxEdge > 0 permits downscaling in that backend.
-  /// The result reports what happened to an HDR gain map.
+  /// The result reports what happened to an HDR gain map. [bitDepth] 8 or 10
+  /// is the user's choice for AVIF; 0 keeps DarkLib's default, 10.
   static Future<Transcoded?> transcode(
     Uint8List bytes, {
     required DarkLibFormat format,
     required int quality,
     bool keepMetadata = true,
     int maxEdge = 0,
+    int bitDepth = 0,
   }) => _call(
     MediaOperation.encode,
     () => rust_codec.transcode(
@@ -131,6 +133,7 @@ abstract final class DarkLibCore {
       quality: quality,
       maxEdge: maxEdge,
       keepMetadata: keepMetadata,
+      bitDepth: bitDepth,
     ),
     isEmpty: (t) => t.bytes.isEmpty,
   );

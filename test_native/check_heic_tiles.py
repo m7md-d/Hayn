@@ -10,10 +10,15 @@ read by PNG-3 precedence: cICP before iCCP.
    must be where the EXIF transform puts them.
 2. heic-tiles/p3.heic against heic-tiles/p3-source.jpg: the same colours
    after colour management.
-3. p3heic/*: the Android bridge's WebP and PNG from Apple's P3 HEIC, against
-   the source through libheif (IMG-18/21).
+3. p3heic/*: the Android outputs (WebP, PNG, JPEG, HEIC) from Apple's P3
+   HEIC, against the source through libheif (IMG-18/21/24).
 4. crop-p3/*: the crop task's outputs from P3 sources,
    against the colours LittleCMS gives the P3 quadrants.
+5. p3.{jpg,png,heic}: P3 patches converted without metadata (IMG-08/24),
+   against the colours LittleCMS gives the patches.
+6. heic-10bit*.heic: Android's 10-bit HEIC (IMG-23), read at full precision:
+   10 bits, the gradient within 1.0 per channel, the P3 quadrants after
+   colour management.
 
 Usage (Pillow + pillow-heif, as in ~/hayn-venv):
   ~/hayn-venv/bin/python test_native/check_heic_tiles.py \
@@ -137,6 +142,52 @@ for path in sorted(glob.glob(os.path.join(results, "crop-p3", "*"))):
         if not close(p, want, 6):
             failures.append(f"crop-p3/{os.path.basename(path)} quadrant {q}: {p}, want {want}")
     print(f"crop-p3/{os.path.basename(path)}: {Image.open(path).format}")
+
+# 5. P3 patches without metadata: the profile must still name the values.
+PATCHES = [(200, 100, 50), (60, 170, 90), (180, 60, 140), (230, 200, 60)]
+p3_to_srgb = ImageCms.buildTransform(
+    ImageCms.ImageCmsProfile(io.BytesIO(P3_ICC)), SRGB, "RGB", "RGB"
+)
+for ext in ("jpg", "png", "heic"):
+    path = os.path.join(results, f"p3.{ext}")
+    if not os.path.exists(path):
+        failures.append(f"p3.{ext}: missing")
+        continue
+    got = managed(path)
+    for i, rgb in enumerate(PATCHES):
+        want = ImageCms.applyTransform(Image.new("RGB", (1, 1), rgb), p3_to_srgb).getpixel((0, 0))
+        p = got.getpixel(((i % 2) * 32 + 16, (i // 2) * 32 + 16))
+        if not close(p, want, 6):
+            failures.append(f"p3.{ext} patch {i}: {p}, want {want}")
+    print(f"p3.{ext}: {Image.open(path).format}")
+
+# 6. 10-bit HEIC from Android (written when the encoder has Main10).
+ten = os.path.join(results, "heic-10bit.heic")
+if os.path.exists(ten):
+    h = pillow_heif.open_heif(ten, convert_hdr_to_8bit=False)
+    if h.info.get("bit_depth") != 10:
+        failures.append(f"heic-10bit.heic: {h.info.get('bit_depth')} bits")
+    w, hh = h.size
+    err = [0.0, 0.0, 0.0]
+    n = 0
+    for y in range(0, hh, 3):
+        for x in range(0, w, 3):
+            want = (x * 255 // (w - 1), y * 255 // (hh - 1), x * 128 // (w - 1) + y * 127 // (hh - 1))
+            got = struct.unpack_from("<3H", h.data, y * h.stride + x * 6)
+            for c in range(3):
+                err[c] += abs(got[c] / 65535 * 255 - want[c])
+            n += 1
+    err = [round(e / n, 2) for e in err]
+    print(f"heic-10bit.heic: {h.info.get('bit_depth')} bits, mean error {err}")
+    if max(err) > 1.0:
+        failures.append(f"heic-10bit.heic: mean error {err}")
+    got = managed(os.path.join(results, "heic-10bit-p3.heic"))
+    for q, want in enumerate(P3_SHOWN):
+        p = got.getpixel((16 + 32 * (q % 2), 12 + 24 * (q // 2)))
+        if not close(p, want, 6):
+            failures.append(f"heic-10bit-p3.heic quadrant {q}: {p}, want {want}")
+else:
+    print("heic-10bit.heic: none (no Main10 encoder on this phone)")
 
 for f in failures:
     print("FAIL", f)

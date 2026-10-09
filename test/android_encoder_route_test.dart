@@ -13,11 +13,12 @@ import 'package:hayn/src/rust/frb_generated.dart';
 
 import 'support/encoded_headers.dart';
 
-// RUN-01 step 5: on Android a giant image's HEIC comes from bands and tiles
-// (HeifWriter failed outright), smaller ones from the plugin's HeifWriter
-// (faster, user decision 2026-10-02). Either way DarkLib carries the source's
-// profile and on request its metadata (IMG-22): before, HeifWriter's output
-// was returned with neither.
+// Android's HEIC and JPEG never come from flutter_image_compress (IMG-24):
+// it decodes into RGB_565 (banding in every output) and hands HeifWriter a GL
+// texture that crashed the GPU driver at an odd width. HEIC comes from bands
+// and tiles at every size (RUN-01 step 5, once giant images only), JPEG from
+// the platform decoder's 8-bit pixels and Bitmap.compress. DarkLib carries
+// the source's profile and on request its metadata (IMG-22).
 
 class _Api extends Fake implements DarkLibApi {
   final metadataCalls = <String>[];
@@ -81,22 +82,35 @@ void main() {
   final source = encodedHeader(DefaultFormat.jpeg);
   late _Plugin plugin;
   late List<Map> tileCalls;
+  late List<Map> jpegCalls;
   late bool tilesFail;
+  late bool tenBit;
 
   setUp(() {
     NativeImageEncoder.onAndroid = true;
     api.metadataCalls.clear();
     tileCalls = [];
     tilesFail = false;
+    tenBit = true;
+    NativeImageEncoder.resetHeicTenBit();
     final old = FlutterImageCompressPlatform.instance;
     plugin = _Plugin();
     FlutterImageCompressPlatform.instance = plugin;
     addTearDown(() => FlutterImageCompressPlatform.instance = old);
+    jpegCalls = [];
     messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'heicTenBit') return tenBit;
+      final dir = await Directory.systemTemp.createTemp('hayn-route-test');
+      if (call.method == 'bakeUprightFile') {
+        jpegCalls.add(call.arguments as Map);
+        if (tilesFail) return null;
+        final file = File('${dir.path}/out.jpg');
+        await file.writeAsBytes(encodedHeader(DefaultFormat.jpeg));
+        return file.path;
+      }
       if (call.method != 'encodeHeicTiles') return null;
       tileCalls.add(call.arguments as Map);
       if (tilesFail) return null;
-      final dir = await Directory.systemTemp.createTemp('hayn-tiles-test');
       final file = File('${dir.path}/out.heic');
       await file.writeAsBytes(encodedHeader(DefaultFormat.heic));
       return {'path': file.path, 'codec': 'test.hevc', 'rateMode': 'qp'};
@@ -145,7 +159,7 @@ void main() {
     expect(api.metadataCalls, ['transplant']);
   });
 
-  test('a source up to 64 MP takes HeifWriter, with its profile', () async {
+  test('a 12 MP source takes the tiles too, with its profile', () async {
     for (final keepMetadata in [false, true]) {
       api.metadataCalls.clear();
       final r = await heic(
@@ -158,42 +172,120 @@ void main() {
         ),
         keepMetadata: keepMetadata,
       );
-      expect(r.backend, MediaBackend.imageCompress);
+      expect(r.backend, MediaBackend.androidHeic);
       expect(
         api.metadataCalls,
         keepMetadata ? ['transplant'] : ['transplant', 'strip'],
       );
     }
-    expect(tileCalls, isEmpty);
-    expect(plugin.calls, [CompressFormat.heic, CompressFormat.heic]);
+    expect(tileCalls, hasLength(2));
+    expect(plugin.calls, isEmpty);
   });
 
-  test('alpha, unknown alpha and iOS never reach the tiles', () async {
-    for (final alpha in [true, null]) {
-      try {
-        await heic(SourceFacts(alpha: alpha, directHdr: false, gainMap: false));
-      } on ImageEncodingFailure {
-        // HeifWriter keeps no transparency: refused, as before.
-      }
-    }
+  test('unknown alpha takes the tiles; alpha and iOS never do', () async {
+    await heic(
+      const SourceFacts(alpha: null, directHdr: false, gainMap: false),
+    );
+    expect(tileCalls, hasLength(1));
+    await expectLater(
+      heic(const SourceFacts(alpha: true, directHdr: false, gainMap: false)),
+      throwsA(isA<ImageEncodingFailure>()),
+    );
+    expect(tileCalls, hasLength(1));
     NativeImageEncoder.onAndroid = false;
     await heic(opaque);
-    expect(tileCalls, isEmpty);
+    expect(tileCalls, hasLength(1));
+    expect(plugin.calls, [CompressFormat.heic], reason: 'iOS fallback only');
   });
 
-  test(
-    'when the tiles fail, the plugin answers with metadata carried',
-    () async {
-      tilesFail = true;
-      final r = await heic(opaque);
-      expect(tileCalls, hasLength(1));
-      expect(r.backend, MediaBackend.imageCompress);
-      expect(plugin.calls, [CompressFormat.heic]);
-      expect(api.metadataCalls, ['transplant', 'strip']);
-      expect(
-        r.diagnostics.map((d) => d.toString()),
-        contains('androidHeic.encode.emptyOutput'),
+  test('when the tiles fail, it fails: the plugin is never asked', () async {
+    tilesFail = true;
+    final failure = await heic(
+      opaque,
+    ).then<Object?>((_) => null, onError: (Object e) => e);
+    expect(failure, isA<ImageEncodingFailure>());
+    expect(tileCalls, hasLength(1));
+    expect(plugin.calls, isEmpty);
+    expect(
+      (failure! as ImageEncodingFailure).diagnostics.map((d) => d.toString()),
+      contains('androidHeic.encode.emptyOutput'),
+    );
+  });
+
+  // IMG-23: the user's 8 or 10, or the source's depth ("match"); 10 needs
+  // Main10, and a device without it writes 8, recorded.
+  test('HEIC depth: the choice, else the source\'s', () async {
+    Future<int> depthFor(int bitDepth, int? sourceDepth) async {
+      tileCalls.clear();
+      await ImageEncoder.encode(
+        source: source,
+        target: DefaultFormat.heic,
+        quality: 85,
+        facts: SourceFacts(
+          alpha: false,
+          directHdr: false,
+          gainMap: false,
+          bitDepth: sourceDepth,
+        ),
+        keepMetadata: false,
+        bitDepth: bitDepth,
       );
-    },
+      return tileCalls.single['depth'] as int;
+    }
+
+    expect(await depthFor(10, 8), 10);
+    expect(await depthFor(8, 10), 8);
+    expect(await depthFor(0, 10), 10);
+    expect(await depthFor(0, 8), 8);
+    expect(await depthFor(0, null), 8);
+  });
+
+  test('HEIC depth: no Main10 writes 8, recorded', () async {
+    tenBit = false;
+    final r = await ImageEncoder.encode(
+      source: source,
+      target: DefaultFormat.heic,
+      quality: 85,
+      facts: const SourceFacts(
+        alpha: false,
+        directHdr: false,
+        gainMap: false,
+        bitDepth: 10,
+      ),
+      keepMetadata: false,
+    );
+    expect(tileCalls.single['depth'], 8);
+    expect(
+      r.diagnostics.map((d) => d.toString()),
+      contains('androidHeic.encode.depthReduced'),
+    );
+  });
+
+  Future<EncodedImage> jpeg({bool keepMetadata = false}) => ImageEncoder.encode(
+    source: source,
+    target: DefaultFormat.jpeg,
+    quality: 85,
+    facts: opaque,
+    keepMetadata: keepMetadata,
   );
+
+  test('JPEG: the decoder\'s raw values, then the profile carried', () async {
+    final r = await jpeg();
+    expect(r.backend, MediaBackend.androidJpeg);
+    expect(r.format, DefaultFormat.jpeg);
+    expect(jpegCalls.single['colours'], 'raw');
+    expect(jpegCalls.single['jpegQuality'], 85);
+    expect(plugin.calls, isEmpty);
+    expect(api.metadataCalls, ['transplant', 'strip']);
+    api.metadataCalls.clear();
+    await jpeg(keepMetadata: true);
+    expect(api.metadataCalls, ['transplant']);
+  });
+
+  test('JPEG: when the bridge fails, it fails without the plugin', () async {
+    tilesFail = true;
+    await expectLater(jpeg(), throwsA(isA<ImageEncodingFailure>()));
+    expect(jpegCalls, hasLength(1));
+    expect(plugin.calls, isEmpty);
+  });
 }

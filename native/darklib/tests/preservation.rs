@@ -37,7 +37,16 @@ fn mean_diff(a: &codec::Decoded, b: &codec::Decoded) -> f64 {
 fn pq_is_inspected_and_refused() {
     assert_eq!(isobmff::primary_nclx(PQ), Some(Some((9, 16))));
     assert_eq!(inspect(PQ).transfer, Transfer::Pq);
-    assert!(codec::transcode(PQ, Target::Avif { quality: 80 }, None, true).is_err());
+    assert!(codec::transcode(
+        PQ,
+        Target::Avif {
+            quality: 80,
+            depth: None
+        },
+        None,
+        true
+    )
+    .is_err());
     assert!(codec::transcode(PQ, Target::Png, None, false).is_err());
 }
 
@@ -60,7 +69,16 @@ fn target_without_gainmap_support_gets_the_sdr_base() {
 
 #[test]
 fn resize_gets_the_sdr_base() {
-    let out = codec::transcode(GAINMAP, Target::Avif { quality: 80 }, Some(64), true).unwrap();
+    let out = codec::transcode(
+        GAINMAP,
+        Target::Avif {
+            quality: 80,
+            depth: None,
+        },
+        Some(64),
+        true,
+    )
+    .unwrap();
     assert_eq!(out.hdr, HdrOutcome::GainMapDropped);
     assert!(!isobmff::has_gainmap(&out.bytes));
     let d = codec::decode(&out.bytes, None).unwrap();
@@ -75,8 +93,16 @@ fn avif_to_avif_keeps_the_gainmap() {
     std::fs::create_dir_all(&dir).unwrap();
     let src_tmap = isobmff::read_tmap(GAINMAP).unwrap();
     for keep_metadata in [true, false] {
-        let out =
-            codec::transcode(GAINMAP, Target::Avif { quality: 80 }, None, keep_metadata).unwrap();
+        let out = codec::transcode(
+            GAINMAP,
+            Target::Avif {
+                quality: 80,
+                depth: None,
+            },
+            None,
+            keep_metadata,
+        )
+        .unwrap();
         assert_eq!(
             out.hdr,
             HdrOutcome::GainMapKept,
@@ -102,7 +128,16 @@ fn avif_to_avif_keeps_the_gainmap() {
 /// ignore the whole tmap graph (IMG-10, 2026-09-29).
 #[test]
 fn altr_group_id_is_not_an_item_id() {
-    let out = codec::transcode(GAINMAP, Target::Avif { quality: 80 }, None, true).unwrap();
+    let out = codec::transcode(
+        GAINMAP,
+        Target::Avif {
+            quality: 80,
+            depth: None,
+        },
+        None,
+        true,
+    )
+    .unwrap();
     let b = &out.bytes;
     let at = b.windows(4).position(|w| w == b"altr").unwrap();
     let group_id = u32::from_be_bytes(b[at + 8..at + 12].try_into().unwrap());
@@ -123,7 +158,16 @@ fn pixi_matches_av1c_in_hdr_and_grid_writers() {
             })
             .collect()
     };
-    let out = codec::transcode(GAINMAP, Target::Avif { quality: 80 }, None, true).unwrap();
+    let out = codec::transcode(
+        GAINMAP,
+        Target::Avif {
+            quality: 80,
+            depth: None,
+        },
+        None,
+        true,
+    )
+    .unwrap();
     let base_av1c = isobmff::av1c_raw(&out.bytes).unwrap();
     let want = isobmff::pixi_for_av1c(&base_av1c).unwrap();
     assert_eq!(pixi_bodies(&out.bytes)[0], want, "base pixi");
@@ -133,7 +177,14 @@ fn pixi_matches_av1c_in_hdr_and_grid_writers() {
         height: 8,
         rgba: vec![120; 8 * 8 * 4],
     };
-    let one = codec::encode(&tile, Target::Avif { quality: 80 }).unwrap();
+    let one = codec::encode(
+        &tile,
+        Target::Avif {
+            quality: 80,
+            depth: None,
+        },
+    )
+    .unwrap();
     let av1c = isobmff::av1c_raw(&one).unwrap();
     let payload = isobmff::extract_primary_av1(&one).unwrap();
     let spec = isobmff::GridSpec {
@@ -158,7 +209,16 @@ fn unreadable_gainmap_graph_reports_keep_failure() {
     broken[at..at + 4].copy_from_slice(b"zzzz");
     assert!(isobmff::has_gainmap(&broken));
     assert!(isobmff::read_tmap(&broken).is_none());
-    let out = codec::transcode(&broken, Target::Avif { quality: 80 }, None, true).unwrap();
+    let out = codec::transcode(
+        &broken,
+        Target::Avif {
+            quality: 80,
+            depth: None,
+        },
+        None,
+        true,
+    )
+    .unwrap();
     assert_eq!(out.hdr, HdrOutcome::GainMapKeepFailed);
     assert!(!isobmff::has_gainmap(&out.bytes));
 }
@@ -177,7 +237,16 @@ fn exif_rotation_drops_the_map_instead_of_misaligning_it() {
     let mut source = GAINMAP.to_vec();
     source[entry..entry + 12].copy_from_slice(&[0x12, 1, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0]);
     assert_eq!(metadata::extract(&source).orientation, 6);
-    let out = codec::transcode(&source, Target::Avif { quality: 80 }, None, true).unwrap();
+    let out = codec::transcode(
+        &source,
+        Target::Avif {
+            quality: 80,
+            depth: None,
+        },
+        None,
+        true,
+    )
+    .unwrap();
     assert_eq!(out.hdr, HdrOutcome::GainMapDropped);
     let upright = codec::decode(&source, None).unwrap();
     let back = codec::decode(&out.bytes, None).unwrap();

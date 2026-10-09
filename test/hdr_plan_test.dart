@@ -40,6 +40,7 @@ class _Api extends Fake implements DarkLibApi {
     width: 0,
     height: 0,
     orientation: 0,
+    bitDepth: 0,
   );
 
   @override
@@ -49,6 +50,7 @@ class _Api extends Fake implements DarkLibApi {
     required int quality,
     required int maxEdge,
     required bool keepMetadata,
+    required int bitDepth,
   }) async {
     received.add(bytes);
     // Like the real engine: HEIC is not decoded in software.
@@ -165,6 +167,7 @@ void main() {
         width: 0,
         height: 0,
         orientation: 0,
+        bitDepth: 0,
       );
   });
 
@@ -293,6 +296,7 @@ void main() {
       width: 0,
       height: 0,
       orientation: 0,
+      bitDepth: 0,
     );
     final kept = await ImageEncoder.encode(
       source: _heic,
@@ -311,6 +315,7 @@ void main() {
       width: 0,
       height: 0,
       orientation: 0,
+      bitDepth: 0,
     );
     final private = await ImageEncoder.encode(
       source: _heic,
@@ -378,6 +383,7 @@ void main() {
         width: 0,
         height: 0,
         orientation: 0,
+        bitDepth: 0,
       );
       expect((await SourceInspector.inspect(_png)).directHdr, isTrue);
 
@@ -388,6 +394,7 @@ void main() {
         width: 0,
         height: 0,
         orientation: 0,
+        bitDepth: 0,
       );
       native({'hdrTransfer': true, 'hasGainMap': true});
       final f = await SourceInspector.inspect(_png);
@@ -406,6 +413,7 @@ void main() {
         width: 0,
         height: 0,
         orientation: 0,
+        bitDepth: 0,
       );
       final unknown = await SourceInspector.inspect(_png);
       expect((unknown.directHdr, unknown.gainMap), (null, null));
@@ -440,6 +448,7 @@ void main() {
           width: 0,
           height: 0,
           orientation: 0,
+          bitDepth: 0,
         );
         expect(await ImageProbe.hasAlpha(webp), want, reason: '$presence');
       }
@@ -456,6 +465,7 @@ void main() {
           width: 0,
           height: 0,
           orientation: 0,
+          bitDepth: 0,
         );
         messenger.setMockMethodCallHandler(
           imageChannel,
@@ -508,6 +518,7 @@ void main() {
           width: 0,
           height: 0,
           orientation: 0,
+          bitDepth: 0,
         );
         messenger.setMockMethodCallHandler(
           imageChannel,

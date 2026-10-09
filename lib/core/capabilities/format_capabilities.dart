@@ -19,6 +19,7 @@ class FormatCapabilities {
     required this.supportsAvifHardware,
     required this.supportsWebp,
     this.heicKeepsAlpha = false,
+    this.heicTenBit = false,
   });
 
   /// Apple-style HEIF/HEVC. Avoided on app stores when not licensed.
@@ -39,6 +40,15 @@ class FormatCapabilities {
   /// HeifWriter does not (IMG-19), so there a transparent image needs PNG.
   final bool heicKeepsAlpha;
 
+  /// The HEIC/HEIF encoder writes 10 bits per channel: ImageIO does; on
+  /// Android, an HEVC encoder with Main10 (Android 13+), probed once at
+  /// start ([androidHeicTenBit]). The bit-depth picker offers 10 for HEIC
+  /// only then (IMG-23).
+  final bool heicTenBit;
+
+  /// Android's probe, set at start (main.dart) before the first frame.
+  static bool androidHeicTenBit = false;
+
   /// Conservative defaults based on platform. Production replaces this with
   /// a real native probe.
   ///
@@ -58,6 +68,7 @@ class FormatCapabilities {
         supportsAvifHardware: false,
         supportsWebp: true,
         heicKeepsAlpha: true,
+        heicTenBit: true,
       );
     }
     if (Platform.isAndroid) {
@@ -65,11 +76,12 @@ class FormatCapabilities {
       // AVIF is left FALSE for the same reason as iOS: our encoder is software
       // libaom, not the SoC's AV1 block, so auto should prefer the fast
       // hardware HEIF path and treat AVIF as a deliberate, slower choice.
-      return const FormatCapabilities(
+      return FormatCapabilities(
         supportsHeic: false,
         supportsHeif: true,
         supportsAvifHardware: false,
         supportsWebp: true,
+        heicTenBit: androidHeicTenBit,
       );
     }
     return const FormatCapabilities(

@@ -157,6 +157,39 @@ pub fn primary_nclx(b: &[u8]) -> Option<Option<(u16, u16)>> {
     }
 }
 
+/// Bits per channel of the primary image: its `pixi`, else the coding
+/// configuration (`av1C` high_bitdepth/twelve_bit, `hvcC` bitDepthLumaMinus8)
+/// of the item or, for a grid, of its first tile. `None` when none says.
+pub fn primary_bit_depth(b: &[u8]) -> Option<u8> {
+    let primary = primary_item_id(b)?;
+    let depth_of = |id: u32| -> Option<u8> {
+        let props = item_properties(b, id)?;
+        let typ = |p: &Vec<u8>, t: &[u8; 4]| p.get(4..8) == Some(&t[..]);
+        // pixi: FullBox, num_channels, then bits per channel.
+        if let Some(p) = props.iter().find(|p| typ(p, b"pixi")) {
+            if *p.get(12)? > 0 {
+                return p.get(13).copied();
+            }
+        }
+        if let Some(p) = props.iter().find(|p| typ(p, b"av1C")) {
+            let flags = *p.get(8 + 2)?;
+            return Some(match (flags & 0x40 != 0, flags & 0x20 != 0) {
+                (true, true) => 12,
+                (true, false) => 10,
+                _ => 8,
+            });
+        }
+        let p = props.iter().find(|p| typ(p, b"hvcC"))?;
+        Some((p.get(8 + 17)? & 7) + 8)
+    };
+    depth_of(primary).or_else(|| {
+        (item_type(b, primary) == Some(*b"grid"))
+            .then(|| dimg_targets(b, primary)?.first().copied())
+            .flatten()
+            .and_then(depth_of)
+    })
+}
+
 /// The `meta` box's child boxes — the shared entry point for the item readers.
 fn meta_children(b: &[u8]) -> Option<Vec<Bx>> {
     let top = boxes_in(b, 0, b.len())?;
@@ -3032,7 +3065,10 @@ mod tests {
                     height: 16,
                     rgba: px,
                 },
-                Target::Avif { quality: 90 },
+                Target::Avif {
+                    quality: 90,
+                    depth: None,
+                },
             )
             .unwrap();
             let mut s = extract_av1c_config_obus(&avif).expect("tile av1C");

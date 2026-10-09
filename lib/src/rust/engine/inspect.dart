@@ -21,6 +21,12 @@ class Facts {
   /// apply), the EXIF tag otherwise. 0 when the file names none (upright).
   final int orientation;
 
+  /// Bits per channel as stored (8, 10, 12, 16), from the container: HEIF/
+  /// AVIF `pixi` or coding configuration, PNG `IHDR`, JPEG `SOF`; WebP is
+  /// 8. 0 when the header does not say. What "match the source" means for
+  /// the user's bit-depth choice (Hayn IMG-23).
+  final int bitDepth;
+
   const Facts({
     required this.transfer,
     required this.gainMap,
@@ -28,6 +34,7 @@ class Facts {
     required this.width,
     required this.height,
     required this.orientation,
+    required this.bitDepth,
   });
 
   @override
@@ -37,7 +44,8 @@ class Facts {
       alpha.hashCode ^
       width.hashCode ^
       height.hashCode ^
-      orientation.hashCode;
+      orientation.hashCode ^
+      bitDepth.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -49,7 +57,8 @@ class Facts {
           alpha == other.alpha &&
           width == other.width &&
           height == other.height &&
-          orientation == other.orientation;
+          orientation == other.orientation &&
+          bitDepth == other.bitDepth;
 }
 
 enum Presence { unknown, absent, present }

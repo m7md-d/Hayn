@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
@@ -10,10 +11,12 @@ import 'package:photo_manager/photo_manager.dart';
 import '../../../app/l10n/app_localizations.dart';
 import '../../../app/theme/app_theme_extension.dart';
 import '../../../app/theme/design_tokens.dart';
+import '../../../core/diagnostics/media_diagnostics.dart';
 import '../../../core/isolates/task_runner.dart';
 import '../../../shared/widgets/widgets.dart';
 import '../../image_ops/data/gallery_saver.dart';
 import '../../image_ops/data/metadata.dart';
+import '../../image_ops/data/original_rendition.dart';
 import '../../image_ops/data/output_name.dart';
 import '../../image_ops/data/platform_pixels.dart';
 import '../../image_ops/data/region_image.dart';
@@ -544,6 +547,10 @@ class _AssetPageState extends State<_AssetPage>
   RegionImage? _region; // the original read by tiles, opened on zoom
   Uint8List? _fullResBytes; // where it cannot be (see _loadFullRes)
   bool _loadingFull = false;
+  // Where the library gives no thumbnail (UI-10: iOS Photos makes none for a
+  // 10-bit AVIF), the original's own 1080-px rendition, from its tiles.
+  ui.Image? _baseImage;
+  bool _unshowable = false; // nothing could render it: say so, never spin
 
   /// Width / height of the photo as displayed. The page sizes one frame from
   /// it and every rendition (360 px, 1080 px, original) fills that frame, so
@@ -662,13 +669,58 @@ class _AssetPageState extends State<_AssetPage>
           widget.entry.id != id) {
         return;
       }
-      final data =
-          await _entity!.thumbnailDataWithSize(const ThumbnailSize.square(1080));
-      if (mounted && widget.entry.id == id) {
-        setState(() => _hiResBytes = data);
-        if (_aspect == null && data != null) _aspectFrom(data);
+      Uint8List? data;
+      try {
+        data = await _entity!
+            .thumbnailDataWithSize(const ThumbnailSize.square(1080));
+      } catch (_) {
+        data = null;
       }
+      if (!mounted || widget.entry.id != id) return;
+      if (data == null || data.isEmpty) {
+        if (widget.entry.isVideo) return; // the player shows a video
+        MediaDiagnostics.record(
+          MediaBackend.gallery,
+          MediaOperation.display,
+          MediaDiagnosticCode.unavailable,
+        );
+        await _renditionFromOriginal();
+        return;
+      }
+      setState(() => _hiResBytes = data);
+      if (_aspect == null) _aspectFrom(data);
     });
+  }
+
+  /// The 1080-px rendition from the original itself, where the library gives
+  /// none (UI-10): the whole image sampled from its region reader (AVIF
+  /// everywhere, the rest on Android), else the original decoded within
+  /// 4096 ([_loadFullRes]). With neither, a failure state.
+  Future<void> _renditionFromOriginal() async {
+    final id = widget.entry.id;
+    await _loadFullRes();
+    if (!mounted || widget.entry.id != id) return;
+    final region = _region;
+    if (region != null) {
+      final sample =
+          OriginalRendition.sampleFor(region.width, region.height, 1080);
+      final whole = Rect.fromLTWH(
+        0,
+        0,
+        region.width.toDouble(),
+        region.height.toDouble(),
+      );
+      final image = await region.tile(whole, sample);
+      if (!mounted || widget.entry.id != id) {
+        image?.dispose();
+        return;
+      }
+      if (image != null) {
+        setState(() => _baseImage = image);
+        return;
+      }
+    }
+    if (_fullResBytes == null) setState(() => _unshowable = true);
   }
 
   @override
@@ -687,6 +739,7 @@ class _AssetPageState extends State<_AssetPage>
     _txCtrl.removeListener(_syncZoomLock);
     _txCtrl.dispose();
     _region?.close();
+    _baseImage?.dispose();
     super.dispose();
   }
 
@@ -981,10 +1034,20 @@ class _AssetPageState extends State<_AssetPage>
   Widget build(BuildContext context) {
     final isVideo = widget.entry.isVideo;
     final bytesToShow = _hiResBytes ?? _lowResBytes;
+    final shown =
+        bytesToShow != null || _baseImage != null || _fullResBytes != null;
+
+    // Nothing could render it (UI-10): say so instead of spinning forever.
+    if (!shown && _unshowable) {
+      return GestureDetector(
+        onTap: widget.onTap,
+        child: const Center(child: _UnshowableBlock()),
+      );
+    }
 
     // Nothing to paint yet (no cached thumb and the entity is still
     // resolving), or a video whose entity hasn't loaded → show the loader.
-    if (bytesToShow == null || (isVideo && _entity == null)) {
+    if (!shown || (isVideo && _entity == null)) {
       return GestureDetector(
         onTap: widget.onTap,
         child: const Center(child: _LoadingBlock()),
@@ -1046,6 +1109,12 @@ class _AssetPageState extends State<_AssetPage>
                                 filterQuality: FilterQuality.high,
                               ),
                       ),
+                      if (_baseImage != null)
+                        RawImage(
+                          image: _baseImage,
+                          fit: BoxFit.contain,
+                          filterQuality: FilterQuality.high,
+                        ),
                       // The original's tiles in view, on top once zoomed in.
                       if (_region != null)
                         Positioned.fill(
@@ -1269,6 +1338,31 @@ class _InlineInfoSheet extends StatelessWidget {
               ),
             ),
           ),
+        ),
+      ],
+    );
+  }
+}
+
+class _UnshowableBlock extends StatelessWidget {
+  const _UnshowableBlock();
+  @override
+  Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(
+          Icons.broken_image_outlined,
+          size: 40,
+          color: Colors.white70,
+        ),
+        const SizedBox(height: AppSpacing.s3),
+        Text(
+          l.viewerUnshowable,
+          style: Theme.of(
+            context,
+          ).textTheme.bodyMedium?.copyWith(color: Colors.white70),
         ),
       ],
     );

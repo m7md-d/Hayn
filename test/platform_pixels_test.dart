@@ -42,6 +42,7 @@ class _Api extends Fake implements DarkLibApi {
         width: 0,
         height: 0,
         orientation: 0,
+        bitDepth: 0,
       );
 
   @override

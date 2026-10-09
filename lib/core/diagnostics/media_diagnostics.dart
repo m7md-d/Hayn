@@ -10,6 +10,7 @@ enum MediaBackend {
   androidAvif,
   androidDecoder,
   androidHeic,
+  androidJpeg,
   androidRegion,
   darklib,
   flutterAvif,
@@ -65,6 +66,8 @@ enum MediaDiagnosticCode {
   /// The source's header claims more pixels than the engine decodes; refused
   /// before any pixel buffer (RUN-01).
   tooLarge,
+  insufficientMemory,
+  depthReduced,
 }
 
 /// Codes only: never retain media, paths, asset IDs, metadata or raw exceptions.

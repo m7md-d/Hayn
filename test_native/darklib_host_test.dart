@@ -393,6 +393,25 @@ void main() {
     expect(await DarkLibCore.profileSpace(plain), isNull);
   });
 
+  // IMG-23: the user's bit depth crosses the real FFI, and inspect reports
+  // the depth a file holds (AVIF stays 10-bit by default).
+  test('the chosen AVIF depth is written and read back', () async {
+    final source = img.Image(width: 40, height: 30, numChannels: 3);
+    img.fill(source, color: img.ColorRgb8(200, 90, 40));
+    final png = Uint8List.fromList(img.encodePng(source));
+    expect((await DarkLibCore.inspect(png))!.bitDepth, 8);
+    for (final (chosen, want) in [(0, 10), (8, 8), (10, 10)]) {
+      final avif = (await DarkLibCore.transcode(
+        png,
+        format: DarkLibFormat.avif,
+        quality: 80,
+        keepMetadata: false,
+        bitDepth: chosen,
+      ))!.bytes;
+      expect((await DarkLibCore.inspect(avif))!.bitDepth, want);
+    }
+  });
+
   // PERF-03: an AVIF read by regions through the real FFI. One item: open
   // decodes it into raw files in the cache directory; a row comes back cut
   // into tiles at the source's colours; disposing the reader removes the

@@ -17,6 +17,7 @@ class SourceFacts {
     this.width,
     this.height,
     this.orientation = 0,
+    this.bitDepth,
   });
 
   /// Pixels this app produced itself in SDR (crop output, an SDR rendition).
@@ -24,7 +25,8 @@ class SourceFacts {
   const SourceFacts.sdr({required this.alpha, this.width, this.height})
     : directHdr = false,
       gainMap = false,
-      orientation = 0;
+      orientation = 0,
+      bitDepth = 8;
 
   /// Transparency present (true), confirmed absent (false) or unknown (null).
   final bool? alpha;
@@ -42,6 +44,10 @@ class SourceFacts {
   /// EXIF-style code (1–8) that turns the stored pixels upright, from
   /// `irot`/`imir` in HEIF/AVIF or the EXIF tag; 0 when the file names none.
   final int orientation;
+
+  /// Bits per channel as stored, from the container (IMG-23): what "match
+  /// the source" means for the user's depth choice. Null when unknown.
+  final int? bitDepth;
 
   bool get hasHdr => directHdr == true || gainMap == true;
 
@@ -62,6 +68,7 @@ abstract final class SourceInspector {
       width: (container?.width ?? 0) > 0 ? container!.width : null,
       height: (container?.height ?? 0) > 0 ? container!.height : null,
       orientation: container?.orientation ?? 0,
+      bitDepth: (container?.bitDepth ?? 0) > 0 ? container!.bitDepth : null,
       directHdr: _merge(switch (container?.transfer) {
         Transfer.pq || Transfer.hlg => true,
         Transfer.noHdrSignal => false,

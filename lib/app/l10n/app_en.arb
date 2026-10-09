@@ -323,6 +323,8 @@
   "compressPreviewLabel": "Preview",
   "compressOpenComparison": "Open comparison",
   "compressComputing": "Compressing…",
+  "compressPreviewFailed": "Couldn't compress this image",
+  "viewerUnshowable": "Couldn't show this image",
   "formatNoteNoAlpha": "Without transparency",
   "formatNoteNoHdr": "Without HDR",
   "formatNoteNoAlphaNoHdr": "Without transparency or HDR",

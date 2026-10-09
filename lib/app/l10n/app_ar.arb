@@ -323,6 +323,8 @@
   "compressPreviewLabel": "بعد الضغط",
   "compressOpenComparison": "افتح المقارنة",
   "compressComputing": "جارٍ الضغط…",
+  "compressPreviewFailed": "تعذّر ضغط هذه الصورة",
+  "viewerUnshowable": "تعذّر عرض هذه الصورة",
   "formatNoteNoAlpha": "بدون شفافية",
   "formatNoteNoHdr": "بدون HDR",
   "formatNoteNoAlphaNoHdr": "بدون شفافية أو HDR",

@@ -34,12 +34,49 @@ fn inject_isobmff(b: &[u8], meta: &Canonical) -> Vec<u8> {
     super::isobmff::inject(b, exif.as_deref(), xmp.as_deref(), meta.icc.as_deref())
 }
 
+/// Each kind `meta` carries replaces the target's own (a JPEG from Android's
+/// Bitmap.compress already names its bitmap's profile, Hayn IMG-24): two
+/// "chunk 1 of 1" profiles make readers drop both. A kind `meta` lacks stays,
+/// since the target's may be the only one naming its pixels. A leading JFIF
+/// segment stays first; every other segment and the scan stay as they were.
 fn inject_jpeg(jpeg: &[u8], meta: &Canonical) -> Vec<u8> {
     if jpeg.len() < 2 || jpeg[0] != 0xFF || jpeg[1] != 0xD8 {
         return jpeg.to_vec();
     }
+    let replaced = |marker: u8, payload: &[u8]| match marker {
+        0xE1 => {
+            (meta.exif.is_some() && payload.starts_with(b"Exif\0\0"))
+                || (meta.xmp.is_some() && payload.starts_with(XMP_SIG))
+        }
+        0xE2 => meta.icc.is_some() && payload.starts_with(b"ICC_PROFILE\0"),
+        _ => false,
+    };
+    // Header segments up to the scan; anything unparsed is copied as it is.
+    let mut kept: Vec<&[u8]> = Vec::new();
+    let mut i = 2;
+    while i + 4 <= jpeg.len() && jpeg[i] == 0xFF {
+        let marker = jpeg[i + 1];
+        if marker == 0xDA || marker == 0xD9 || marker == 0xFF {
+            break;
+        }
+        let n = u16::from_be_bytes([jpeg[i + 2], jpeg[i + 3]]) as usize;
+        if n < 2 || i + 2 + n > jpeg.len() {
+            break;
+        }
+        if !replaced(marker, &jpeg[i + 4..i + 2 + n]) {
+            kept.push(&jpeg[i..i + 2 + n]);
+        }
+        i += 2 + n;
+    }
+    let jfif = kept
+        .first()
+        .is_some_and(|s| s[1] == 0xE0 && s[4..].starts_with(b"JFIF\0"));
+
     let mut out = Vec::with_capacity(jpeg.len() + 1024);
     out.extend_from_slice(&[0xFF, 0xD8]);
+    if jfif {
+        out.extend_from_slice(kept[0]);
+    }
 
     if let Some(tiff) = &meta.exif {
         let mut payload = b"Exif\0\0".to_vec();
@@ -61,7 +98,10 @@ fn inject_jpeg(jpeg: &[u8], meta: &Canonical) -> Vec<u8> {
             app_segment(&mut out, 0xE2, &payload);
         }
     }
-    out.extend_from_slice(&jpeg[2..]); // the original image after SOI
+    for segment in &kept[jfif as usize..] {
+        out.extend_from_slice(segment);
+    }
+    out.extend_from_slice(&jpeg[i..]); // the scan and the rest, unchanged
     out
 }
 
@@ -76,6 +116,8 @@ fn app_segment(out: &mut Vec<u8>, marker: u8, payload: &[u8]) {
     out.extend_from_slice(payload);
 }
 
+/// As for JPEG, each kind `meta` carries replaces the target's own chunk (a
+/// PNG holds one `iCCP` at most); a kind it lacks stays.
 fn inject_png(png: &[u8], meta: &Canonical) -> Vec<u8> {
     const SIG: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
     // Insert right after IHDR (sig 8 + len 4 + "IHDR" 4 + data 13 + crc 4 = 33).
@@ -83,6 +125,26 @@ fn inject_png(png: &[u8], meta: &Canonical) -> Vec<u8> {
     if png.len() < ihdr_end || png[..8] != SIG || &png[12..16] != b"IHDR" {
         return png.to_vec();
     }
+    let replaced = |kind: &[u8], data: &[u8]| match kind {
+        b"iCCP" => meta.icc.is_some(),
+        b"eXIf" => meta.exif.is_some(),
+        b"iTXt" => meta.xmp.is_some() && data.starts_with(b"XML:com.adobe.xmp\0"),
+        _ => false,
+    };
+    // The chunks after IHDR, less the replaced ones; an unparsed tail stays.
+    let mut rest = Vec::with_capacity(png.len() - ihdr_end);
+    let mut i = ihdr_end;
+    while i + 12 <= png.len() {
+        let n = u32::from_be_bytes([png[i], png[i + 1], png[i + 2], png[i + 3]]) as usize;
+        let Some(end) = (i + 12).checked_add(n).filter(|&e| e <= png.len()) else {
+            break;
+        };
+        if !replaced(&png[i + 4..i + 8], &png[i + 8..i + 8 + n]) {
+            rest.extend_from_slice(&png[i..end]);
+        }
+        i = end;
+    }
+    rest.extend_from_slice(&png[i..]);
     let mut out = png[..ihdr_end].to_vec();
     if let Some(tiff) = &meta.exif {
         png_chunk(&mut out, b"eXIf", &exif::with_orientation_1(tiff));
@@ -100,7 +162,7 @@ fn inject_png(png: &[u8], meta: &Canonical) -> Vec<u8> {
     if let Some(icc) = &meta.icc {
         png_chunk(&mut out, b"iCCP", &build_iccp(icc)); // before PLTE/IDAT
     }
-    out.extend_from_slice(&png[ihdr_end..]);
+    out.extend_from_slice(&rest);
     out
 }
 
@@ -365,6 +427,113 @@ mod tests {
         assert!(back.exif.is_some());
         assert_eq!(back.orientation, 1, "orientation normalised (pixels baked)");
         assert!(contains(&out, b"<x:xmpmeta>hi</x:xmpmeta>"), "XMP carried");
+    }
+
+    /// `(marker, payload)` of each header segment of `jpeg` before SOS.
+    fn jpeg_segments(jpeg: &[u8]) -> Vec<(u8, Vec<u8>)> {
+        let mut out = Vec::new();
+        let mut i = 2;
+        while jpeg[i + 1] != 0xDA {
+            let n = u16::from_be_bytes([jpeg[i + 2], jpeg[i + 3]]) as usize;
+            out.push((jpeg[i + 1], jpeg[i + 4..i + 2 + n].to_vec()));
+            i += 2 + n;
+        }
+        out
+    }
+
+    fn icc_payload(profile: &[u8]) -> Vec<u8> {
+        let mut p = b"ICC_PROFILE\0\x01\x01".to_vec();
+        p.extend_from_slice(profile);
+        p
+    }
+
+    /// A target that came tagged: Android's Bitmap.compress writes the
+    /// bitmap's own profile (Hayn IMG-24). Injecting must replace it, as it
+    /// replaces EXIF and XMP, not add a second "chunk 1 of 1" that readers
+    /// reject; the JFIF segment stays first and the rest stays.
+    #[test]
+    fn jpeg_inject_replaces_the_targets_own_metadata() {
+        let mut target = vec![0xFF, 0xD8];
+        app_segment(&mut target, 0xE0, b"JFIF\0\x01\x01\0\0\x01\0\x01\0\0");
+        app_segment(&mut target, 0xE2, &icc_payload(b"old profile"));
+        let mut old_exif = b"Exif\0\0".to_vec();
+        old_exif.extend_from_slice(&tiff_orientation(3));
+        app_segment(&mut target, 0xE1, &old_exif);
+        let mut old_xmp = XMP_SIG.to_vec();
+        old_xmp.extend_from_slice(b"<old/>");
+        app_segment(&mut target, 0xE1, &old_xmp);
+        app_segment(&mut target, 0xE2, b"MPF\0kept");
+        app_segment(&mut target, 0xFE, b"comment kept");
+        target.extend_from_slice(&minimal_jpeg()[2..]);
+        let meta = Canonical {
+            exif: Some(tiff_orientation(6)),
+            xmp: Some(b"<new/>".to_vec()),
+            icc: Some(b"new profile".to_vec()),
+            ..Default::default()
+        };
+        let out = inject(&target, &meta);
+        let segments = jpeg_segments(&out);
+        assert!(segments[0].1.starts_with(b"JFIF\0"), "JFIF first");
+        let iccs: Vec<_> = segments
+            .iter()
+            .filter(|(m, p)| *m == 0xE2 && p.starts_with(b"ICC_PROFILE\0"))
+            .collect();
+        assert_eq!(iccs.len(), 1, "one profile");
+        assert_eq!(iccs[0].1, icc_payload(b"new profile"));
+        let exifs = segments
+            .iter()
+            .filter(|(m, p)| *m == 0xE1 && p.starts_with(b"Exif\0\0"))
+            .count();
+        assert_eq!(exifs, 1, "one EXIF");
+        assert_eq!(extract(&out).orientation, 1);
+        assert!(!contains(&out, b"<old/>") && contains(&out, b"<new/>"));
+        assert!(contains(&out, b"MPF\0kept") && contains(&out, b"comment kept"));
+        assert!(
+            out.ends_with(&minimal_jpeg()[2..]),
+            "entropy data untouched"
+        );
+    }
+
+    /// What the source does not carry, the target keeps: its own profile may
+    /// be the only one naming its pixels.
+    #[test]
+    fn jpeg_inject_keeps_what_the_source_lacks() {
+        let mut target = vec![0xFF, 0xD8];
+        app_segment(&mut target, 0xE2, &icc_payload(b"target profile"));
+        target.extend_from_slice(&minimal_jpeg()[2..]);
+        let meta = Canonical {
+            exif: Some(tiff_orientation(1)),
+            ..Default::default()
+        };
+        let out = inject(&target, &meta);
+        assert_eq!(extract(&out).icc.as_deref(), Some(&b"target profile"[..]));
+        assert!(extract(&out).exif.is_some());
+    }
+
+    #[test]
+    fn png_inject_replaces_the_targets_own_metadata() {
+        let mut png = vec![137, 80, 78, 71, 13, 10, 26, 10];
+        png_chunk(&mut png, b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]);
+        png_chunk(&mut png, b"iCCP", &build_iccp(b"old profile"));
+        png_chunk(&mut png, b"eXIf", &tiff_orientation(3));
+        png_chunk(&mut png, b"iTXt", b"XML:com.adobe.xmp\0\0\0\0\0<old/>");
+        png_chunk(&mut png, b"tEXt", b"Comment\0kept");
+        png_chunk(&mut png, b"IEND", &[]);
+        let meta = Canonical {
+            exif: Some(tiff_orientation(6)),
+            xmp: Some(b"<new/>".to_vec()),
+            icc: Some(b"new profile".to_vec()),
+            ..Default::default()
+        };
+        let out = inject(&png, &meta);
+        let count = |kind: &[u8]| out.windows(4).filter(|w| *w == kind).count();
+        assert_eq!((count(b"iCCP"), count(b"eXIf"), count(b"iTXt")), (1, 1, 1));
+        let back = extract(&out);
+        assert_eq!(back.icc.as_deref(), Some(&b"new profile"[..]));
+        assert_eq!(back.orientation, 1);
+        assert!(!contains(&out, b"<old/>") && contains(&out, b"<new/>"));
+        assert!(contains(&out, b"Comment\0kept"));
+        assert!(out.ends_with(&png[png.len() - 12..]), "IEND last");
     }
 
     #[test]

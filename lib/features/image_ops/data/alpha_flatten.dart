@@ -82,6 +82,8 @@ abstract final class AlphaFlatten {
       toSdr: toSdr,
     );
     if (baked != null) return baked;
+    // Not on Android: the plugin decodes an opaque image into RGB_565 there.
+    if (NativeImageEncoder.android) return null;
     try {
       final out = await fic.FlutterImageCompress.compressWithList(
         source,

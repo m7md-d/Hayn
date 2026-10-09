@@ -156,6 +156,13 @@ class HaynAdvancedSettingsCard extends ConsumerWidget {
     return effective == DefaultFormat.heic || effective == DefaultFormat.avif;
   }
 
+  /// 10 bits for AVIF always (DarkLib), for HEIC where the encoder writes
+  /// it (IMG-23).
+  bool _offersTenBit(FormatCapabilities caps) {
+    final effective = format == DefaultFormat.auto ? _auto(caps) : format;
+    return effective != DefaultFormat.heic || caps.heicTenBit;
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final hc = context.hc;
@@ -260,7 +267,8 @@ class HaynAdvancedSettingsCard extends ConsumerWidget {
               items: [
                 HaynSegmentItem(value: 0, label: l.compressBitDepthMatch),
                 HaynSegmentItem(value: 8, label: l.bitDepthBits(8)),
-                HaynSegmentItem(value: 10, label: l.bitDepthBits(10)),
+                if (_offersTenBit(caps))
+                  HaynSegmentItem(value: 10, label: l.bitDepthBits(10)),
               ],
             ),
             if (sourceBitDepth != null &&

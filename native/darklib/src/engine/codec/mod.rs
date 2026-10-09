@@ -35,8 +35,10 @@ pub enum Target {
     Png,
     /// WebP — lossy at the given quality (1..=100), or lossless.
     Webp { quality: u8, lossless: bool },
-    /// AVIF at the given quality (1..=100), software (rav1e).
-    Avif { quality: u8 },
+    /// AVIF at the given quality (1..=100), software (rav1e). `depth` is the
+    /// bit depth the user chose, 8 or 10; `None` keeps the encoder's default,
+    /// 10, which the user decided stays (Hayn IMG-23).
+    Avif { quality: u8, depth: Option<u8> },
 }
 
 /// Largest image DarkLib decodes: 256 MP, about 1 GiB of RGBA8, which every
@@ -217,7 +219,7 @@ const AVIF_GRID_TILE: u32 = 1024;
 /// Encode a decoded image to `target`.
 pub fn encode(img: &Decoded, target: Target) -> Result<Vec<u8>> {
     match target {
-        Target::Avif { quality } => {
+        Target::Avif { quality, depth } => {
             // Huge opaque images: encode as an ImageGrid, one tile at a time
             // (peak memory ≈ source + one tile). Images with transparency keep
             // the single-item path for now (a grid alpha plane is a later step);
@@ -226,11 +228,11 @@ pub fn encode(img: &Decoded, target: Target) -> Result<Vec<u8>> {
             if px > AVIF_GRID_THRESHOLD_PX
                 && img.rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 255)
             {
-                if let Ok(out) = encode_avif_grid(img, quality, AVIF_GRID_TILE) {
+                if let Ok(out) = encode_avif_grid(img, quality, depth, AVIF_GRID_TILE) {
                     return Ok(out);
                 }
             }
-            encode_avif_single(img, quality)
+            encode_avif_single(img, quality, depth)
         }
         Target::Webp { quality, lossless } => {
             // `encode`/`encode_lossless` of the webp crate unwrap libwebp's
@@ -281,11 +283,14 @@ pub fn encode(img: &Decoded, target: Target) -> Result<Vec<u8>> {
     }
 }
 
-/// Single-item AVIF encode via ravif (rav1e).
-fn encode_avif_single(img: &Decoded, quality: u8) -> Result<Vec<u8>> {
+/// Single-item AVIF encode via ravif (rav1e), at `depth` (8 or 10) or the
+/// encoder's default (10) when `None`.
+fn encode_avif_single(img: &Decoded, quality: u8, depth: Option<u8>) -> Result<Vec<u8>> {
     use rgb::FromSlice;
+    let depth = depth.map(|d| if d >= 10 { 10 } else { 8 });
     let res = ravif::Encoder::new()
         .with_quality(quality.clamp(1, 100) as f32)
+        .with_depth(depth)
         .with_speed(8)
         .encode_rgba(ravif::Img::new(
             img.rgba.as_rgba(),
@@ -300,7 +305,7 @@ fn encode_avif_single(img: &Decoded, quality: u8) -> Result<Vec<u8>> {
 /// tile is full-size, as the grid spec requires — the canvas crops them back),
 /// encode each block independently, and assemble an ImageGrid container. Peak
 /// memory ≈ the source buffer + one tile, at full output resolution.
-fn encode_avif_grid(img: &Decoded, quality: u8, tile: u32) -> Result<Vec<u8>> {
+fn encode_avif_grid(img: &Decoded, quality: u8, depth: Option<u8>, tile: u32) -> Result<Vec<u8>> {
     use crate::engine::metadata::isobmff;
     let bad = || DarkError::Malformed("avif grid encode failed");
     let (w, h) = (img.width as usize, img.height as usize);
@@ -333,6 +338,7 @@ fn encode_avif_grid(img: &Decoded, quality: u8, tile: u32) -> Result<Vec<u8>> {
                     rgba: block.clone(),
                 },
                 quality,
+                depth,
             )?;
             if av1c.is_none() {
                 av1c = isobmff::av1c_raw(&avif);
@@ -414,8 +420,8 @@ pub fn transcode(
             && matches!(meta.orientation, 0 | 1)
             && isobmff::read_orientation(bytes).is_none();
         hdr = HdrOutcome::GainMapDropped;
-        if let (true, Target::Avif { quality }) = (keepable, target) {
-            match transcode_hdr_avif(bytes, quality, &carried) {
+        if let (true, Target::Avif { quality, depth }) = (keepable, target) {
+            match transcode_hdr_avif(bytes, quality, depth, &carried) {
                 Some(out) => {
                     return Ok(Transcoded {
                         bytes: out,
@@ -442,12 +448,13 @@ pub fn transcode(
 fn transcode_hdr_avif(
     bytes: &[u8],
     quality: u8,
+    depth: Option<u8>,
     meta: &crate::engine::metadata::Canonical,
 ) -> Option<Vec<u8>> {
     use crate::engine::metadata::isobmff;
     let tmap = isobmff::read_tmap(bytes)?;
     let coded = |rgba_img: &Decoded| -> Option<isobmff::CodedItem> {
-        let avif = encode_avif_single(rgba_img, quality).ok()?;
+        let avif = encode_avif_single(rgba_img, quality, depth).ok()?;
         Some(isobmff::CodedItem {
             payload: isobmff::extract_primary_av1(&avif)?,
             av1c_box: isobmff::av1c_raw(&avif)?,
@@ -583,7 +590,14 @@ mod tests {
     fn encodes_valid_avif() {
         let png = solid_png(16, 16, [60, 120, 180, 255]);
         let d = decode(&png, None).unwrap();
-        let avif = encode(&d, Target::Avif { quality: 70 }).unwrap();
+        let avif = encode(
+            &d,
+            Target::Avif {
+                quality: 70,
+                depth: None,
+            },
+        )
+        .unwrap();
         assert_eq!(
             crate::engine::format::detect(&avif),
             crate::engine::format::ImageFormat::Avif
@@ -598,7 +612,14 @@ mod tests {
     fn avif_roundtrips_through_rav1d_decode() {
         let png = solid_png(32, 24, [180, 60, 90, 255]);
         let d = decode(&png, None).unwrap();
-        let avif = encode(&d, Target::Avif { quality: 90 }).unwrap();
+        let avif = encode(
+            &d,
+            Target::Avif {
+                quality: 90,
+                depth: None,
+            },
+        )
+        .unwrap();
         assert_eq!(
             crate::engine::format::detect(&avif),
             crate::engine::format::ImageFormat::Avif
@@ -646,7 +667,14 @@ mod tests {
             height: 16,
             rgba,
         };
-        let avif = encode(&d, Target::Avif { quality: 90 }).unwrap();
+        let avif = encode(
+            &d,
+            Target::Avif {
+                quality: 90,
+                depth: None,
+            },
+        )
+        .unwrap();
 
         let back = decode(&avif, None).unwrap();
         assert_eq!((back.width, back.height), (16, 16));
@@ -687,7 +715,7 @@ mod tests {
             rgba,
         };
 
-        let avif = encode_avif_grid(&img, 90, 16).expect("grid encode");
+        let avif = encode_avif_grid(&img, 90, None, 16).expect("grid encode");
         assert_eq!(
             crate::engine::format::detect(&avif),
             crate::engine::format::ImageFormat::Avif
@@ -712,6 +740,28 @@ mod tests {
     /// A synthetic HDR AVIF converted AVIF→AVIF keeps its gain map: the tmap
     /// metadata byte-identical, the gain-map image re-encoded at its own
     /// resolution, EXIF carried. A resize encodes the SDR base. Our own parser
+    /// The bit depth the user chose reaches the AV1 stream (`av1C`
+    /// high_bitdepth), single item and grid; no choice keeps the encoder's
+    /// default, 10 (Hayn IMG-23: the user keeps 10 and offers both).
+    #[test]
+    fn avif_depth_follows_the_choice() {
+        fn high_bitdepth(avif: &[u8]) -> bool {
+            let at = avif.windows(4).position(|w| w == b"av1C").unwrap();
+            avif[at + 6] & 0x40 != 0
+        }
+        let img = Decoded {
+            width: 24,
+            height: 16,
+            rgba: [90u8, 140, 200, 255].repeat(24 * 16),
+        };
+        for (depth, ten) in [(None, true), (Some(8), false), (Some(10), true)] {
+            let single = encode(&img, Target::Avif { quality: 80, depth }).unwrap();
+            assert_eq!(high_bitdepth(&single), ten, "single item, {depth:?}");
+            let grid = encode_avif_grid(&img, 80, depth, 16).unwrap();
+            assert_eq!(high_bitdepth(&grid), ten, "grid, {depth:?}");
+        }
+    }
+
     /// only; ImageIO checks the real fixture (tests/preservation.rs).
     #[test]
     fn hdr_avif_gainmap_survives_convert() {
@@ -728,6 +778,7 @@ mod tests {
                     rgba: px,
                 },
                 90,
+                None,
             )
             .unwrap();
             isobmff::CodedItem {
@@ -758,7 +809,16 @@ mod tests {
         assert_eq!((d.width, d.height), (32, 24));
         assert!(extract(&src).exif.is_some(), "EXIF item present");
 
-        let done = transcode(&src, Target::Avif { quality: 85 }, None, true).expect("convert");
+        let done = transcode(
+            &src,
+            Target::Avif {
+                quality: 85,
+                depth: None,
+            },
+            None,
+            true,
+        )
+        .expect("convert");
         assert_eq!(done.hdr, HdrOutcome::GainMapKept);
         let out = done.bytes;
         let t2 = isobmff::read_tmap(&out).expect("tmap in output");
@@ -779,7 +839,16 @@ mod tests {
             "gain map value ≈ grey, got {}",
             grgba[0]
         );
-        let small = transcode(&src, Target::Avif { quality: 85 }, Some(16), true).unwrap();
+        let small = transcode(
+            &src,
+            Target::Avif {
+                quality: 85,
+                depth: None,
+            },
+            Some(16),
+            true,
+        )
+        .unwrap();
         assert_eq!(small.hdr, HdrOutcome::GainMapDropped);
         assert_eq!(decode(&small.bytes, None).unwrap().width, 16);
     }
@@ -917,7 +986,14 @@ mod tests {
         use crate::engine::metadata::{extract, inject, Canonical};
         let png = solid_png(16, 16, [30, 60, 90, 255]);
         let d = decode(&png, None).unwrap();
-        let avif = encode(&d, Target::Avif { quality: 70 }).unwrap();
+        let avif = encode(
+            &d,
+            Target::Avif {
+                quality: 70,
+                depth: None,
+            },
+        )
+        .unwrap();
         assert_eq!(
             crate::engine::format::detect(&avif),
             crate::engine::format::ImageFormat::Avif
@@ -953,7 +1029,14 @@ mod tests {
         use crate::engine::metadata::{extract, inject, Canonical};
         let png = solid_png(16, 16, [70, 30, 120, 255]);
         let d = decode(&png, None).unwrap();
-        let avif = encode(&d, Target::Avif { quality: 70 }).unwrap();
+        let avif = encode(
+            &d,
+            Target::Avif {
+                quality: 70,
+                depth: None,
+            },
+        )
+        .unwrap();
         assert!(
             extract(&avif).icc.is_none(),
             "ravif emits nclx, no ICC profile"
