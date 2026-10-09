@@ -111,8 +111,9 @@ void main() {
         ).format.name,
     };
     expect(facts.giant, isTrue);
-    // The user's choice for giant images first (JPEG, HEIC: platform
-    // encoders); PNG last, since its plugin path kills the app (2026-10-02).
+    // The user's choice for giant images first (JPEG, by DarkLib's stream
+    // since RUN-01 step 6; HEIC); PNG last, since its plugin path killed the
+    // app (2026-10-02).
     for (final target in [
       DefaultFormat.jpeg,
       DefaultFormat.heic,
@@ -120,7 +121,8 @@ void main() {
       DefaultFormat.avif,
       DefaultFormat.png,
     ]) {
-      debugPrint('LARGE start ${target.name}');
+      final name = target.name;
+      debugPrint('LARGE start $name');
       final before = ProcessInfo.currentRss;
       var peak = before;
       final sampler = Timer.periodic(const Duration(milliseconds: 20), (_) {
@@ -155,8 +157,8 @@ void main() {
       }
       row['peakRssMb'] = _mb(peak);
       row['peakAboveBeforeMb'] = _mb(peak - before);
-      report[target.name] = row;
-      debugPrint('LARGE done ${target.name}: $row');
+      report[name] = row;
+      debugPrint('LARGE done $name: $row');
     }
   }, timeout: const Timeout(Duration(minutes: 60)));
 }

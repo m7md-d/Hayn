@@ -476,4 +476,37 @@ void main() {
       contains('darklib.display.exception'),
     );
   });
+
+  // RUN-01 step 6, through the real bridge: a JPEG re-encoded in bands keeps
+  // its stored orientation and size; a progressive one is a classified
+  // `unsupportedSource`, so the app takes the platform path instead.
+  test('a JPEG re-encodes in bands; a progressive one is declined', () async {
+    final turned = img.Image(width: 97, height: 61);
+    for (final p in turned) {
+      p
+        ..r = p.x * 2
+        ..g = p.y * 4
+        ..b = 128;
+    }
+    turned.exif.imageIfd.orientation = 6;
+    final jpeg = Uint8List.fromList(img.encodeJpg(turned, quality: 95));
+    final out = (await DarkLibCore.jpegReencode(jpeg, quality: 80))!;
+    expect(rust_meta.readMetadataSummary(bytes: out).orientation, 6);
+    final stored = (await DarkLibCore.inspect(out))!;
+    expect((stored.width, stored.height), (97, 61), reason: 'not turned');
+    // package:image turns it upright: the centre stays the centre.
+    final upright = img.decodeJpg(out)!;
+    expect((upright.width, upright.height), (61, 97));
+    expect(upright.getPixel(30, 48).g, closeTo(120, 6));
+
+    final progressive = File(
+      'native/darklib/tests/fixtures/progressive.jpg',
+    ).readAsBytesSync();
+    final before = MediaDiagnostics.recent.length;
+    expect(await DarkLibCore.jpegReencode(progressive, quality: 80), isNull);
+    expect(
+      MediaDiagnostics.recent.skip(before).map((d) => d.toString()),
+      contains('darklib.encode.unsupportedSource'),
+    );
+  });
 }

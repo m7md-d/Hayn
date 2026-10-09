@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -1332,6 +1333,316 @@ void main() {
     await tester.pumpAndSettle();
   });
 
+  // RUN-01 step 6: a JPEG source becomes JPEG through DarkLib's stream at
+  // every size (user decision 2026-10-09, after both paths ran on the same
+  // images). Each output is held against the platform encoder's for the same
+  // source and quality (`NativeImageEncoder.encodeJpeg`, which still makes
+  // JPEG from other sources): that one bakes the orientation into the
+  // pixels, the stream keeps the stored pixels and the tag. Shown upright,
+  // the two must be the same image at about the same size, and the stream
+  // must keep what the source carries (gain map, profile, orientation).
+  testWidgets('JPEG from a JPEG: the stream, against the platform encoder', (
+    _,
+  ) async {
+    final sources = <String, Uint8List>{
+      'quadrants-o6': _quadrants(1179, 1251, orientation: 6),
+      'gradient-odd': Uint8List.fromList(
+        img.encodeJpg(img.decodePng(_gradient(1179, 97))!, quality: 95),
+      ),
+      'transpose-o5': await _fixture('strip-sources/jpg-o5.jpg'),
+      'ultrahdr': await _fixture('seine_sdr_gainmap_srgb.jpg'),
+      'apple-gainmap': await _fixture('apple_gainmap_new.jpg'),
+    };
+    final rows = <String, Object?>{};
+    try {
+      for (final MapEntry(key: name, value: source) in sources.entries) {
+        final facts = await SourceInspector.inspect(source);
+        final shownSource = await _platformDecode(source);
+        final summary = dl.readMetadataSummary(bytes: source);
+        final gainMap = (await DarkLibCore.inspect(source))!.gainMap;
+        final perQuality = <String, Object?>{};
+        Uint8List? streamQ80;
+        for (final quality in [50, 80, 95]) {
+          var sw = Stopwatch()..start();
+          final stream = await ImageEncoder.encode(
+            source: source,
+            target: DefaultFormat.jpeg,
+            quality: quality,
+            facts: facts,
+            keepMetadata: true,
+          );
+          final streamMs = sw.elapsedMilliseconds;
+          sw = Stopwatch()..start();
+          final reference = await NativeImageEncoder.encodeJpeg(
+            source: source,
+            quality: quality,
+          );
+          final platformMs = sw.elapsedMilliseconds;
+          expect(stream.backend, MediaBackend.darklibJpeg, reason: name);
+          expect(reference, isNotNull, reason: name);
+          final platform = EncodedImage(
+            (await ImageEncoder.carryMetadata(
+              source,
+              reference!,
+              keepMetadata: true,
+            ))!,
+            DefaultFormat.jpeg,
+          );
+          final shownPlatform = await _platformDecode(platform.bytes);
+          final shownStream = await _platformDecode(stream.bytes);
+          final between = _meanDiff(shownPlatform, shownStream);
+          // The coded image alone: Android adds an sRGB profile to an
+          // untagged source (472 bytes), which the stream does not.
+          final ratio = _scanBytes(stream.bytes) / _scanBytes(platform.bytes);
+          final tags = [
+            for (final o in [platform, stream])
+              dl.readMetadataSummary(bytes: o.bytes),
+          ];
+          final maps = [
+            for (final o in [platform, stream])
+              (await DarkLibCore.inspect(o.bytes))!.gainMap.name,
+          ];
+          final row = {
+            'bytes': [platform.bytes.length, stream.bytes.length],
+            'scanBytes': [_scanBytes(platform.bytes), _scanBytes(stream.bytes)],
+            'scanStreamOverPlatform': (ratio * 1000).round() / 1000,
+            'ms': [platformMs, streamMs],
+            'meanDiffBetween': (between * 100).round() / 100,
+            'meanErrorFromSource': [
+              for (final s in [shownPlatform, shownStream])
+                (_meanDiff(shownSource, s) * 100).round() / 100,
+            ],
+            'orientation': [for (final t in tags) t.orientation],
+            'icc': [for (final t in tags) t.hasIcc],
+            'gainMap': maps,
+          };
+          perQuality['q$quality'] = row;
+          debugPrint('JPEGPATHS $name q$quality $row');
+          // Each no farther from the source than the other. A turned source
+          // subsamples its colour on another grid in each path (the platform
+          // turns first), so the two match closely only when upright.
+          final error = row['meanErrorFromSource']! as List<double>;
+          expect(
+            error[1],
+            lessThanOrEqualTo(error[0] + 0.5),
+            reason: '$name q$quality',
+          );
+          if (summary.orientation <= 1) {
+            expect(between, lessThan(1.0), reason: '$name q$quality');
+          }
+          if (_scanBytes(platform.bytes) > 4096) {
+            expect(
+              (ratio - 1).abs(),
+              lessThan(0.02),
+              reason: '$name q$quality',
+            );
+          }
+          expect(tags[1].orientation, summary.orientation, reason: name);
+          expect(tags[0].orientation, 1, reason: '$name: baked upright');
+          expect(tags[1].hasIcc, summary.hasIcc, reason: name);
+          expect(maps[1], gainMap.name, reason: '$name: the map is carried');
+          if (quality == 80) {
+            streamQ80 = stream.bytes;
+            await _artifact('jpeg-paths/$name-platform.jpg', platform.bytes);
+            await _artifact('jpeg-paths/$name-stream.jpg', stream.bytes);
+          }
+        }
+        // Without metadata: the stream's EXIF goes, its orientation stays.
+        final bare = await ImageEncoder.encode(
+          source: source,
+          target: DefaultFormat.jpeg,
+          quality: 80,
+          facts: facts,
+          keepMetadata: false,
+        );
+        final tag = dl.readMetadataSummary(bytes: bare.bytes);
+        expect(tag.orientation, summary.orientation, reason: name);
+        expect((tag.hasGps, tag.hasCamera, tag.hasDate), (false, false, false));
+        // Only the metadata differs: the same pixels.
+        expect(
+          _meanDiff(
+            await _platformDecode(streamQ80!),
+            await _platformDecode(bare.bytes),
+          ),
+          0,
+          reason: name,
+        );
+        rows[name] = perQuality;
+      }
+    } finally {
+      device['jpegPaths'] = rows;
+    }
+  });
+
+  // A JPEG the stream does not take (progressive: libjpeg would hold every
+  // coefficient) falls back to the platform path, with its reason recorded.
+  testWidgets('A progressive JPEG falls back to the platform encoder', (
+    _,
+  ) async {
+    final source = await _fixture('progressive.jpg');
+    final result = await ImageEncoder.encode(
+      source: source,
+      target: DefaultFormat.jpeg,
+      quality: 80,
+      facts: await SourceInspector.inspect(source),
+      keepMetadata: true,
+    );
+    expect(result.backend, MediaBackend.androidJpeg);
+    expect(
+      result.diagnostics.map((d) => d.toString()),
+      containsAll([
+        'darklib.encode.unsupportedSource',
+        'darklibJpeg.encode.formatFallback',
+      ]),
+    );
+    _expectSameImage(
+      await _platformDecode(source),
+      await _platformDecode(result.bytes),
+    );
+  });
+
+  // One phone, by the user's decision (2026-10-09): what another phone would
+  // show is simulated on this one. Google's software HEVC encoder (on every
+  // Android) stands in for another vendor's; forced rate modes for Android
+  // below 12, where the QP keys do not exist; a forced answer for an encoder
+  // without Main10; and a gate that reads less memory.
+  testWidgets('Simulated: another HEVC encoder and older rate modes', (
+    _,
+  ) async {
+    // The gradient shows the colours; the photo (a real one, 384×512) shows
+    // whether the quality the user picks still steers the size. VBR is an
+    // average bitrate: a photo this simple stops at the encoder's best
+    // quality whatever the budget, so its steering shows on a detailed
+    // texture instead.
+    final gradient = _gradient(1100, 700);
+    final realPhoto = await _fixture('apple_png_p3_icc.png');
+    final texture = _texture(1100, 700);
+    final rows = <String, Object?>{};
+    for (final (label, encoder, rateMode) in [
+      ('default', null, null),
+      ('software', 'c2.android.hevc.encoder', null),
+      ('software-cq', 'c2.android.hevc.encoder', 'cq'),
+      ('cq', null, 'cq'),
+      ('vbr', null, 'vbr'),
+    ]) {
+      final row = <String, Object?>{};
+      final photoSizes = <int>[];
+      for (final quality in [50, 80, 95]) {
+        Future<HeicTilesOutput> encode(Uint8List source) async {
+          final out = await NativeImageEncoder.encodeHeicTiles(
+            source: source,
+            quality: quality,
+            orientation: 1,
+            encoder: encoder,
+            rateMode: rateMode,
+          );
+          expect(out, isNotNull, reason: '$label q$quality');
+          if (encoder != null) expect(out!.codec, encoder);
+          if (rateMode != null) expect(out!.rateMode, rateMode);
+          return out!;
+        }
+
+        final sw = Stopwatch()..start();
+        final shown = await encode(gradient);
+        final ms = sw.elapsedMilliseconds;
+        final error = _channelError(
+          gradient,
+          await _platformDecode(shown.bytes),
+        );
+        final ofPhoto = await encode(rateMode == 'vbr' ? texture : realPhoto);
+        photoSizes.add(ofPhoto.bytes.length);
+        row['q$quality'] = {
+          'codec': shown.codec,
+          'rateMode': shown.rateMode,
+          'gradientBytes': shown.bytes.length,
+          'photoBytes': ofPhoto.bytes.length,
+          'ms': ms,
+          'meanError': error,
+        };
+        // A tiled HEIC of the gradient, shown right, whatever the encoder.
+        expect(error.reduce(math.max), lessThan(4), reason: '$label q$quality');
+      }
+      // The quality the user picks still steers the size.
+      expect(
+        photoSizes[0],
+        lessThan(photoSizes[2]),
+        reason: '$label: $photoSizes',
+      );
+      rows[label] = row;
+      debugPrint('SIMULATED heic $label $row');
+    }
+    device['simulatedHeic'] = rows;
+  });
+
+  testWidgets('Simulated: an encoder without Main10', (_) async {
+    final source = await _fixture('apple_heic_10bit_p3.heic');
+    final facts = await SourceInspector.inspect(source);
+    expect(facts.bitDepth, 10);
+    NativeImageEncoder.simulateHeicTenBit(false);
+    try {
+      for (final depth in [10, 0]) {
+        final result = await ImageEncoder.encode(
+          source: source,
+          target: DefaultFormat.heic,
+          quality: 90,
+          facts: facts,
+          keepMetadata: false,
+          bitDepth: depth,
+        );
+        expect((await DarkLibCore.inspect(result.bytes))!.bitDepth, 8);
+        expect(
+          result.diagnostics.map((d) => d.code),
+          contains(MediaDiagnosticCode.depthReduced),
+          reason: 'depth $depth',
+        );
+      }
+    } finally {
+      NativeImageEncoder.resetHeicTenBit();
+    }
+  });
+
+  testWidgets('Simulated: a phone with less memory', (_) async {
+    const mb = 1 << 20;
+    final picture = img.decodePng(_gradient(4032, 3024))!;
+    final jpeg = Uint8List.fromList(img.encodeJpg(picture, quality: 90));
+    final png = Uint8List.fromList(img.encodePng(picture, level: 1));
+    final saved = HeavyWork.instance;
+    // 100 MB above the reserve: the stream's 12 MP JPEG fits (about 80 MB),
+    // the platform's whole bitmap from the PNG (about 120 MB) does not.
+    HeavyWork.instance = HeavyWork(
+      memory: () async =>
+          const DeviceMemory(available: 200 * mb, reserve: 100 * mb),
+    );
+    try {
+      final fits = await ImageEncoder.encode(
+        source: jpeg,
+        target: DefaultFormat.jpeg,
+        quality: 80,
+        facts: await SourceInspector.inspect(jpeg),
+        keepMetadata: true,
+      );
+      expect(fits.backend, MediaBackend.darklibJpeg);
+      await expectLater(
+        ImageEncoder.encode(
+          source: png,
+          target: DefaultFormat.jpeg,
+          quality: 80,
+          facts: await SourceInspector.inspect(png),
+          keepMetadata: true,
+        ),
+        throwsA(
+          isA<ImageEncodingFailure>().having(
+            (e) => e.diagnostics.map((d) => d.code),
+            'codes',
+            contains(MediaDiagnosticCode.insufficientMemory),
+          ),
+        ),
+      );
+    } finally {
+      HeavyWork.instance = saved;
+    }
+  });
+
   testWidgets('Real app opens the library and settings', (tester) async {
     await tester.pumpWidget(
       ProviderScope(
@@ -1578,6 +1889,49 @@ Future<_Shown> _regionWhole(Uint8List bytes) async {
 }
 
 /// Same size and near-identical pixels (a lossy re-encode of one rendition).
+/// Bytes from the primary image's SOS to its EOI: its coded scan. Segments
+/// are walked by their lengths (an EXIF thumbnail has its own SOS), then
+/// stuffing keeps FF D9 out of the data, so the first one ends it.
+int _scanBytes(Uint8List jpeg) {
+  var i = 2;
+  while (jpeg[i + 1] != 0xDA) {
+    i += 2 + (jpeg[i + 2] << 8 | jpeg[i + 3]);
+  }
+  for (var j = i; j + 1 < jpeg.length; j++) {
+    if (jpeg[j] == 0xFF && jpeg[j + 1] == 0xD9) return j - i;
+  }
+  fail('no EOI');
+}
+
+/// A detailed opaque PNG, [w]×[h]: a gradient under fixed pseudo-random
+/// grain, harder to code than a phone photo of the same size.
+Uint8List _texture(int w, int h) {
+  final image = img.Image(width: w, height: h, numChannels: 3);
+  var seed = 12345;
+  int next() => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) >> 16;
+  for (final p in image) {
+    final base = p.x * 255 ~/ (w - 1);
+    p
+      ..r = (base + next() % 64 - 32).clamp(0, 255)
+      ..g = (p.y * 255 ~/ (h - 1) + next() % 64 - 32).clamp(0, 255)
+      ..b = (128 + next() % 64 - 32).clamp(0, 255);
+  }
+  return Uint8List.fromList(img.encodePng(image));
+}
+
+/// Mean absolute difference over every pixel and colour channel.
+double _meanDiff(_Shown a, _Shown b) {
+  expect((b.width, b.height), (a.width, a.height));
+  var total = 0;
+  for (var i = 0; i < a.rgba.length; i += 4) {
+    total +=
+        (a.rgba[i] - b.rgba[i]).abs() +
+        (a.rgba[i + 1] - b.rgba[i + 1]).abs() +
+        (a.rgba[i + 2] - b.rgba[i + 2]).abs();
+  }
+  return total / (a.width * a.height * 3);
+}
+
 void _expectSameImage(_Shown a, _Shown b) {
   expect((b.width, b.height), (a.width, a.height));
   var total = 0;

@@ -42,6 +42,14 @@ them. Two consequences:
 x86 builds stay without assembly (nasm's objects do not link into the shared
 library, and x86 is only hosts). `rav1e` (AVIF encode) is built without it.
 
+**libjpeg-turbo's code.** `mozjpeg-sys` (streaming JPEG, Hayn RUN-01 step 6)
+compiles its vendored C with `cc`, and on `aarch64` its NEON routines (C
+intrinsics and GNU assembly) with the same compiler: no nasm, no CMake. It is
+used in its libjpeg v6 profile only. x86 builds have no SIMD here either (the
+`nasm_simd` feature stays off), so host timings are not the phone's. It needs
+`cc` 1.2 or later, which moved `cc` in `Cargo.lock` from 1.0.83 to 1.6.0 for
+every C build (libwebp, rav1d's assembly).
+
 ## Cross-compiling for Android
 
 ```sh

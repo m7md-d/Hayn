@@ -13,6 +13,9 @@ enum MediaBackend {
   androidJpeg,
   androidRegion,
   darklib,
+
+  /// DarkLib's streaming JPEG re-encode of a JPEG source (RUN-01 step 6).
+  darklibJpeg,
   flutterAvif,
   imageCompress,
   gallery,
@@ -68,6 +71,10 @@ enum MediaDiagnosticCode {
   tooLarge,
   insufficientMemory,
   depthReduced,
+
+  /// A valid source the engine's path does not take (a progressive or CMYK
+  /// JPEG for the streaming re-encode): another path takes it.
+  unsupportedSource,
 }
 
 /// Codes only: never retain media, paths, asset IDs, metadata or raw exceptions.

@@ -2,7 +2,9 @@
 //!
 //! Decoders: `image` (PNG/JPEG), libwebp (WebP), rav1d (AVIF — colour, alpha,
 //! orientation, ImageGrid). Encoders: `image`, libwebp, rav1e/ravif (AVIF, with
-//! automatic ImageGrid tiling for huge opaque images). HEIC is never coded in
+//! automatic ImageGrid tiling for huge opaque images). JPEG → JPEG also goes
+//! row by row through libjpeg-turbo's code (`jpeg_stream`, Hayn RUN-01 step 6),
+//! with memory near the compressed size. HEIC is never coded in
 //! software (HEVC patents) — platform hardware owns it. `transcode` optionally
 //! carries EXIF/XMP/ICC and, for AVIF→AVIF, the ISO 21496-1 HDR gain map; it
 //! reports what happened to a gain map in [`HdrOutcome`].
@@ -17,6 +19,8 @@ use crate::engine::error::{DarkError, Result};
 
 mod avif_dav1d;
 pub mod heif_alpha;
+mod huffman;
+pub(crate) mod jpeg_stream;
 pub mod region;
 
 /// A decoded image as 8-bit RGBA.

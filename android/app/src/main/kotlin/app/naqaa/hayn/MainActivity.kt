@@ -100,11 +100,16 @@ class MainActivity : FlutterActivity() {
                         val quality = call.argument<Int>("quality") ?: 80
                         val orientation = call.argument<Int>("orientation") ?: 0
                         val depth = call.argument<Int>("depth") ?: 8
+                        // Device tests only: another encoder, another rate mode.
+                        val encoder = call.argument<String>("encoder")
+                        val rateMode = call.argument<String>("rateMode")
                         if (bytes == null) {
                             result.success(null)
                         } else {
                             decodeExecutor.execute {
-                                val out = HeicTiles.encodeToFile(bytes, quality, orientation, depth, cacheDir)
+                                val out = HeicTiles.encodeToFile(
+                                    bytes, quality, orientation, depth, cacheDir, encoder, rateMode,
+                                )
                                 mainHandler.post {
                                     result.success(
                                         out?.let {

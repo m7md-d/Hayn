@@ -247,7 +247,12 @@ fn png_facts(b: &[u8]) -> Facts {
 
 /// JPEG has no PQ/HLG convention; HDR arrives as a gain map located by MPF and
 /// described in XMP (`hdrgm`, Apple `HDRGainMap`) or an ISO 21496-1 APP2.
-/// MPF alone also serves stereo pairs and previews, so it stays Unknown.
+/// MPF alone also serves stereo pairs and previews, so it stays Unknown,
+/// unless an image it lists is Apple's gain map (its own XMP says so).
+/// The auxiliary type Apple's HDR gain map image carries in its XMP
+/// (`apdi:AuxiliaryImageType`), per Apple's "Applying Apple HDR effect".
+const APPLE_GAIN_MAP: &[u8] = b"urn:com:apple:photo:2020:aux:hdrgainmap";
+
 fn jpeg_facts(b: &[u8]) -> Facts {
     const XMP_SIG: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
     const ISO_SIG: &[u8] = b"urn:iso:std:iso:ts:21496:-1";
@@ -290,6 +295,20 @@ fn jpeg_facts(b: &[u8]) -> Facts {
             _ => {}
         }
         i = seg_end;
+    }
+    // Apple's map names itself in its own image's XMP, the image the MPF
+    // index points at after the primary (Hayn RUN-01 step 6).
+    if mpf && !marked {
+        marked = crate::engine::metadata::jpeg::mpf_secondaries(b)
+            .iter()
+            .any(|&(start, len)| {
+                let image = &b[start..start + len];
+                let head = image
+                    .windows(2)
+                    .position(|w| w == [0xFF, 0xDA])
+                    .unwrap_or(image.len());
+                contains(&image[..head], APPLE_GAIN_MAP)
+            });
     }
     let gain_map = if marked {
         Presence::Present
@@ -382,6 +401,21 @@ mod tests {
         let plain = inspect(&jpeg_with(&[(0xE0, b"JFIF\0")]));
         assert_eq!(plain.gain_map, Presence::Absent);
         assert_eq!(plain.transfer, Transfer::NoHdrSignal);
+    }
+
+    #[test]
+    fn apple_gain_map_found_through_mpf() {
+        // Both Apple samples: MPF in the primary, `apdi` XMP in the map.
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/");
+        for name in ["apple_gainmap_new.jpg", "apple_gainmap_old.jpg"] {
+            let b = std::fs::read(format!("{dir}{name}")).unwrap();
+            assert_eq!(inspect(&b).gain_map, Presence::Present, "{name}");
+            // The index pointing past the file: no image, so still Unknown.
+            let cut = &b[..b.len() / 2];
+            let mut short = cut.to_vec();
+            short.extend_from_slice(&[0xFF, 0xD9]);
+            assert_eq!(inspect(&short).gain_map, Presence::Unknown, "{name} cut");
+        }
     }
 
     #[test]

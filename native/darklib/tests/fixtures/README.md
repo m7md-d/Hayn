@@ -67,6 +67,10 @@
 | `pillow_webp_lossless_opaque.webp` | `VP8L`، بت ألفا 0 | IMG-16 |
 | `pillow_webp_lossless_alpha.webp` | `VP8L`، بت ألفا 1 | IMG-16 |
 
+## JPEG تدريجي من libjpeg-turbo عبر Pillow
+
+`progressive.jpg`: تدرج اصطناعي 48×32 بلا رخصة (الأحمر `x*5`، والأخضر `y*7`، والأزرق 128)، كتبه Pillow 12.3.0 بـlibjpeg-turbo بجودة 90 و`progressive=True` (SOF2، ‏4:2:0، 2026-10-09)، كاتب مستقل عن DarkLib. يستعمله اختبار الجسر الحقيقي لـRUN-01 (الخطوة 6): الترميز التدفقي يرفضه بسبب مصنّف، لأن فك JPEG تدريجي يحفظ معاملات الصورة كلها.
+
 P3 بـICC وحده بلا وسم لون آخر موجود في `apple_gainmap_*.jpg`؛ JPEG لا يحمل cICP.
 
 ## البصمات
@@ -99,6 +103,7 @@ P3 بـICC وحده بلا وسم لون آخر موجود في `apple_gainmap_*
 | `pillow_webp_lossless_opaque.webp` | 60 | `08deddec4ba383d688bcf571e20faada915e99f7e4b4bd1b4abd4281375b62f9` |
 | `pillow_webp_lossy_alpha.webp` | 314 | `d223a2fdcd9976431443eba88252fc5134e564262fff2b8872e9c4a5e2e809eb` |
 | `pillow_webp_lossy_opaque.webp` | 266 | `beafd7b54b8f03cf37dbc5b1800f2d2a9482a6df6041e8001a64d933bebf21c4` |
+| `progressive.jpg` | 672 | `add155dc2da8a63b503c0ade9db780ec89f0eea9b4f878adcc4eee8e38e61679` |
 
 ## الاستخدام الحالي
 

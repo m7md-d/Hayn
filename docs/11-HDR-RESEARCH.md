@@ -43,6 +43,16 @@ flowchart LR
 
 ملاحظة محلية مؤكدة: عينة `seine_sdr_gainmap_srgb.jpg` من corpus libavif كانت 142972 بايت، وبعد strip صارت 74701. مرجع الصورة الثانية في MPF لم يعد يشير إلى بداية JPEG، وبقي حجم الصورة الأولى القديم. هذا خلل في إعادة كتابة المرجع، لا اعتراض على فكرة الحفاظ على الخريطة. حفظ بايتات الخريطة وحدها لا يكفي.
 
+### خريطة Apple على Android وتحويلها (قياس 2026-10-09)
+
+- **معادلة Apple** ([توثيقها](https://developer.apple.com/documentation/appkit/applying-apple-hdr-effect-to-your-photos)): HDR = SDR × (1 + (headroom − 1) × G). و`G` قيمة الخريطة بعد عكس منحنى Rec.709، والقيمة headroom من `HDRGainMapHeadroom` في XMP الخريطة (الإصدار 2) أو من الوسمين 33 و48 في MakerNote.
+- **Android:** `ImageDecoder` على Galaxy S25 Edge (Android 16) يعطي لعينتي Apple `Gainmap` بأدنى 1، وأعلى = headroom (4.53 و8)، وgamma ‏1، وepsilon ‏0، وبكسلات الخريطة مطابقة للخام. أي معادلة ISO اللوغاريتمية على `G` بلا عكس Rec.709. وSkia (`SkGainmapInfo::Type::kApple`) يذكر أن خريطة Apple تُحوَّل إلى النوع الافتراضي.
+- **الفرق:** حتى +0.20 stop في الدرجات الوسطى (headroom ‏4.53، عند القيمة 77)، و+0.13 (headroom ‏8). فـAndroid وChrome يعرضان خريطة Apple أسطع قليلًا من مقصد Apple. ويطابقانه عند الطرفين.
+- **التحويل:**
+  - **إعادة التسمية كما يفعل `Bitmap.compress`:** تثبّت هذا الفرق لكل قارئ.
+  - **إعادة ترميز البكسلات** (`G' = log(1 + (H − 1)·G_lin) / log H`): خطؤها 0.004 stop بثمانية بتات. لكنها تُسقط HDR حيث لا تُقرأ إلا صيغة Apple (iOS 17 وما قبله)، وتضيف جيل ضغط.
+  - فلم يُحوَّل شيء، والملف يبقى بخريطة Apple الأصلية ([23 §3](23-LARGE-IMAGES.md)، IMG-25).
+
 ## ماذا أثبت الفحص في DarkLib؟
 
 | الملاحظة | الاستنتاج المحدود |

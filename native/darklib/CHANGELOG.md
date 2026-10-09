@@ -8,6 +8,23 @@ the engine API may change between minor versions.
 ## [Unreleased]
 
 ### Added
+- **Streaming JPEG re-encode** (Hayn RUN-01 step 6): `api::codec::jpeg_reencode`
+  over `engine::codec::jpeg_stream`. JPEG → JPEG a band of rows at a time with
+  libjpeg-turbo's code (new dependency `mozjpeg-sys` 2.2.3, v6 profile), then
+  a lossless, multi-threaded Huffman re-coding (`codec::huffman`) to the
+  tables libjpeg's `optimize_coding` builds, without its whole-image
+  coefficient buffer: a 200 MP photo in 0.8 s and +66 MB on a Galaxy S25 Edge.
+  Stored orientation and all metadata kept as they are; an MPF gain map is
+  carried with its index moved (`metadata::jpeg::relocate_mpf`).
+- **`DarkError::Unsupported(&str)`** (`unsupported:<why>`): a valid source a
+  path does not take, so the caller uses another.
+- **Apple's JPEG gain map recognised** (Hayn IMG-25): `inspect` follows the MPF
+  index to the images after the primary (`metadata::jpeg::mpf_secondaries`,
+  read only) and finds `urn:com:apple:photo:2020:aux:hdrgainmap` in their XMP;
+  it reported Unknown before.
+- **`tests/cpu_paths.rs`**: every rav1d CPU-feature mask (NEON, +dotprod,
+  +i8mm, all) decodes the AVIF samples to the same pixels, one process per
+  mask; run on an arm64 phone by Hayn's `tool/test_darklib_on_phone.sh`.
 - **AVIF bit depth by choice** (Hayn IMG-23): `Target::Avif { quality, depth }`
   and `api::codec::transcode(…, bit_depth)`. 8 or 10; anything else keeps
   rav1e's default, 10 (smaller and closer than 8 on a Galaxy S25 Edge test,

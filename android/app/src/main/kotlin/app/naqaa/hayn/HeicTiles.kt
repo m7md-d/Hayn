@@ -69,7 +69,20 @@ object HeicTiles {
     /// Encodes [src] to a HEIC file in [dir]. [orientation] is the EXIF code
     /// (1–8, 0 = none) that turns the decoded pixels upright; [depth] 10
     /// writes Main10 (see [tenBitAvailable]), anything else 8 bits.
-    fun encodeToFile(src: ByteArray, quality: Int, orientation: Int, depth: Int, dir: File): Result? {
+    ///
+    /// [encoder] and [rateMode] stand in for other phones in the device
+    /// tests (one phone, by the user's decision): a named HEVC encoder that
+    /// takes the tiles (Google's software one is on every Android), and the
+    /// rate mode Android below 12 gets ("cq" or "vbr"). Null in the app.
+    fun encodeToFile(
+        src: ByteArray,
+        quality: Int,
+        orientation: Int,
+        depth: Int,
+        dir: File,
+        encoder: String? = null,
+        rateMode: String? = null,
+    ): Result? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return null
         val tenBit = depth >= 10
         if (tenBit && Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return fail("10-bit needs Android 13")
@@ -93,9 +106,14 @@ object HeicTiles {
                 8 -> false to 270
                 else -> false to 0
             }
-            val name = encoderName(tenBit) ?: return fail("no HEVC encoder (10-bit $tenBit)")
+            // Below Android 12 there is no fixed QP: constant quality (CQ) is
+            // the mode that follows the content, so an encoder offering it
+            // comes first (a Qualcomm phone lists it as a sibling, `….cq`).
+            val preferCq = rateMode == "cq" ||
+                (rateMode == null && Build.VERSION.SDK_INT < Build.VERSION_CODES.S)
+            val name = encoderName(tenBit, encoder, preferCq) ?: return fail("no HEVC encoder (10-bit $tenBit)")
             file = File.createTempFile("hayn-heic-", ".heic", dir)
-            val mode = encode(name, bands, w, h, rows, cols, mirror, degrees, quality, tenBit, file)
+            val mode = encode(name, bands, w, h, rows, cols, mirror, degrees, quality, tenBit, file, rateMode)
                 ?: throw IllegalStateException("encode")
             Result(file.absolutePath, name, mode)
         } catch (e: Throwable) {
@@ -190,8 +208,9 @@ object HeicTiles {
         }
 
     /// A hardware HEVC encoder taking 512×512 tiles in [colorFormatFor], with
-    /// Main10 for [tenBit]; else any such encoder.
-    private fun encoderName(tenBit: Boolean): String? {
+    /// Main10 for [tenBit]; else any such encoder. [named], when given, only
+    /// if it is one of them. [preferCq]: one with constant quality first.
+    private fun encoderName(tenBit: Boolean, named: String? = null, preferCq: Boolean = false): String? {
         val candidates = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.filter { info ->
             info.isEncoder && info.supportedTypes.any { it.equals(HEVC, ignoreCase = true) } &&
                 runCatching {
@@ -203,12 +222,18 @@ object HeicTiles {
                         })
                 }.getOrDefault(false)
         }
+        if (named != null) return candidates.firstOrNull { it.name == named }?.name
+        fun cq(info: MediaCodecInfo) = runCatching {
+            info.getCapabilitiesForType(HEVC).encoderCapabilities
+                .isBitrateModeSupported(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CQ)
+        }.getOrDefault(false)
+        val ordered = if (preferCq) candidates.sortedByDescending { cq(it) } else candidates
         val hardware = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            candidates.firstOrNull { it.isHardwareAccelerated }
+            ordered.firstOrNull { it.isHardwareAccelerated }
         } else {
             null
         }
-        return (hardware ?: candidates.firstOrNull())?.name
+        return (hardware ?: ordered.firstOrNull())?.name
     }
 
     /// Quality (0–100) to the tiles' QP, through points measured against
@@ -224,6 +249,23 @@ object HeicTiles {
         return loQp + ((hiQp - loQp) * (q - lo) + (hi - lo) / 2) / (hi - lo)
     }
 
+    /// Quality to bits per tile pixel for VBR (an encoder with neither fixed
+    /// QP nor CQ, below Android 12): what the fixed QP of [qpFor] spends on
+    /// a 12 MP photo, measured on the S25 Edge by forcing VBR (2026-10-09,
+    /// docs/23 §2). VBR is an average, so content simpler than that photo
+    /// stops at the encoder's best quality whatever the budget.
+    private val VBR_POINTS = listOf(
+        0 to 0.39, 50 to 1.50, 70 to 1.61, 80 to 1.73, 90 to 2.22, 95 to 2.92, 100 to 3.86,
+    )
+
+    internal fun vbrBitsPerPixel(quality: Int): Double {
+        val q = quality.coerceIn(0, 100)
+        val (hi, hiBits) = VBR_POINTS.first { it.first >= q }
+        val (lo, loBits) = VBR_POINTS.last { it.first <= q }
+        if (hi == lo) return hiBits
+        return loBits + (hiBits - loBits) * (q - lo) / (hi - lo)
+    }
+
     /// The rate mode used ("qp", "cq" or "vbr"); null on failure.
     private fun encode(
         name: String,
@@ -237,6 +279,7 @@ object HeicTiles {
         quality: Int,
         tenBit: Boolean,
         out: File,
+        forcedMode: String? = null,
     ): String? {
         val codec = MediaCodec.createByCodecName(name)
         var muxer: MediaMuxer? = null
@@ -246,7 +289,7 @@ object HeicTiles {
             val video = codec.codecInfo.getCapabilitiesForType(HEVC).videoCapabilities
             // A fixed QP per tile follows the content, as constant quality
             // does; this encoder (c2.qti.hevc.encoder) offers no CQ mode.
-            val mode = when {
+            val mode = forcedMode ?: when {
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> "qp"
                 caps.isBitrateModeSupported(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CQ) -> "cq"
                 else -> "vbr"
@@ -291,8 +334,9 @@ object HeicTiles {
                             MediaFormat.KEY_BITRATE_MODE,
                             MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR,
                         )
-                        // Not measured: bits per pixel per tile, 0.5 to 4.
-                        val bpp = 0.5 + quality.coerceIn(0, 100) / 100.0 * 3.5
+                        // Each tile is one frame at 30 fps, so this budgets
+                        // vbrBitsPerPixel per tile pixel.
+                        val bpp = vbrBitsPerPixel(quality)
                         setInteger(MediaFormat.KEY_BIT_RATE, (TILE * TILE * 30 * bpp).toInt())
                     }
                 }

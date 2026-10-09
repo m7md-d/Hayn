@@ -289,7 +289,7 @@ impl ToSrgb {
     /// Converts the RGB of straight RGBA `px` in place; alpha is kept.
     pub fn apply(&self, px: &mut [u8]) {
         let top = (ENCODE_STEPS - 1) as f32;
-        for p in px.chunks_exact_mut(4) {
+        for p in px.as_chunks_mut::<4>().0 {
             let rgb = [
                 self.linear[p[0] as usize],
                 self.linear[p[1] as usize],

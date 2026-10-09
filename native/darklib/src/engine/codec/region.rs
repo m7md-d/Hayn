@@ -205,7 +205,7 @@ impl AvifRegion {
         let mut plane = Vec::with_capacity(w as usize * h as usize);
         let (aw, ah) =
             avif_dav1d::decode_item_rows(&self.bytes, id, decoder_threads(), &mut |_, band| {
-                plane.extend(band.chunks_exact(4).map(|p| p[0]));
+                plane.extend(band.as_chunks::<4>().0.iter().map(|p| p[0]));
                 Ok(())
             })?;
         if (aw, ah) != (w, h) {
@@ -401,7 +401,7 @@ impl AvifRegion {
                 let mut a = Vec::with_capacity(px.len() / 4);
                 let (aw, ah) =
                     avif_dav1d::decode_item_rows(&self.bytes, ids[i], threads, &mut |_, band| {
-                        a.extend(band.chunks_exact(4).map(|p| p[0]));
+                        a.extend(band.as_chunks::<4>().0.iter().map(|p| p[0]));
                         Ok(())
                     })?;
                 if (aw, ah) != (w, h) {
@@ -419,7 +419,7 @@ impl AvifRegion {
                     if sy >= self.stored_h as usize {
                         break;
                     }
-                    for (dx, p) in row.chunks_exact_mut(4).enumerate() {
+                    for (dx, p) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                         let sx = x as usize + dx;
                         if sx < cw {
                             p[3] = plane[sy * cw + sx];
@@ -542,14 +542,14 @@ impl Accumulator {
 
 /// Alpha bytes `a`, one per pixel, into the alpha of straight RGBA `px`.
 fn merge_alpha(px: &mut [u8], a: &[u8]) {
-    for (p, &a) in px.chunks_exact_mut(4).zip(a) {
+    for (p, &a) in px.as_chunks_mut::<4>().0.iter_mut().zip(a) {
         p[3] = a;
     }
 }
 
 /// Straight RGBA to premultiplied, in place.
 fn premultiply(px: &mut [u8]) {
-    for p in px.chunks_exact_mut(4) {
+    for p in px.as_chunks_mut::<4>().0 {
         let a = p[3] as u32;
         if a != 255 {
             for v in &mut p[..3] {

@@ -18,10 +18,25 @@ import 'support/encoded_headers.dart';
 // texture that crashed the GPU driver at an odd width. HEIC comes from bands
 // and tiles at every size (RUN-01 step 5, once giant images only), JPEG from
 // the platform decoder's 8-bit pixels and Bitmap.compress. DarkLib carries
-// the source's profile and on request its metadata (IMG-22).
+// the source's profile and on request its metadata (IMG-22). A JPEG source
+// goes to DarkLib's streaming re-encode instead, at every size (RUN-01 step
+// 6, user decision 2026-10-09); the platform path takes the rest, and what
+// the stream declines.
 
 class _Api extends Fake implements DarkLibApi {
   final metadataCalls = <String>[];
+  final reencodeQualities = <int>[];
+  String? reencodeError;
+
+  @override
+  Future<Uint8List> crateApiCodecJpegReencode({
+    required List<int> bytes,
+    required int quality,
+  }) async {
+    reencodeQualities.add(quality);
+    if (reencodeError case final e?) throw e;
+    return encodedHeader(DefaultFormat.jpeg);
+  }
 
   /// The plugin's HEIC (HeifWriter) never keeps transparency.
   @override
@@ -89,6 +104,8 @@ void main() {
   setUp(() {
     NativeImageEncoder.onAndroid = true;
     api.metadataCalls.clear();
+    api.reencodeQualities.clear();
+    api.reencodeError = null;
     tileCalls = [];
     tilesFail = false;
     tenBit = true;
@@ -261,31 +278,121 @@ void main() {
     );
   });
 
-  Future<EncodedImage> jpeg({bool keepMetadata = false}) => ImageEncoder.encode(
-    source: source,
+  const phone = SourceFacts(
+    alpha: false,
+    directHdr: false,
+    gainMap: false,
+    width: 4032,
+    height: 3024,
+  );
+
+  // Any source but a JPEG takes the platform path: a PNG here.
+  final png = Uint8List.fromList([0x89, 0x50, 0x4E, 0x47, 13, 10, 26, 10]);
+
+  Future<EncodedImage> jpeg({
+    bool keepMetadata = false,
+    SourceFacts facts = phone,
+    Uint8List? from,
+  }) => ImageEncoder.encode(
+    source: from ?? source,
     target: DefaultFormat.jpeg,
     quality: 85,
-    facts: opaque,
+    facts: facts,
     keepMetadata: keepMetadata,
   );
 
-  test('JPEG: the decoder\'s raw values, then the profile carried', () async {
-    final r = await jpeg();
-    expect(r.backend, MediaBackend.androidJpeg);
-    expect(r.format, DefaultFormat.jpeg);
-    expect(jpegCalls.single['colours'], 'raw');
-    expect(jpegCalls.single['jpegQuality'], 85);
-    expect(plugin.calls, isEmpty);
-    expect(api.metadataCalls, ['transplant', 'strip']);
-    api.metadataCalls.clear();
-    await jpeg(keepMetadata: true);
-    expect(api.metadataCalls, ['transplant']);
-  });
+  test(
+    'JPEG from a PNG: the decoder\'s raw values, the profile carried',
+    () async {
+      final r = await jpeg(from: png);
+      expect(r.backend, MediaBackend.androidJpeg);
+      expect(r.format, DefaultFormat.jpeg);
+      expect(jpegCalls.single['colours'], 'raw');
+      expect(jpegCalls.single['jpegQuality'], 85);
+      expect(plugin.calls, isEmpty);
+      expect(api.reencodeQualities, isEmpty);
+      expect(api.metadataCalls, ['transplant', 'strip']);
+      api.metadataCalls.clear();
+      await jpeg(from: png, keepMetadata: true);
+      expect(api.metadataCalls, ['transplant']);
+    },
+  );
 
   test('JPEG: when the bridge fails, it fails without the plugin', () async {
     tilesFail = true;
-    await expectLater(jpeg(), throwsA(isA<ImageEncodingFailure>()));
+    await expectLater(jpeg(from: png), throwsA(isA<ImageEncodingFailure>()));
     expect(jpegCalls, hasLength(1));
     expect(plugin.calls, isEmpty);
+  });
+
+  test('a JPEG source streams at every size, metadata as it is', () async {
+    for (final facts in [phone, opaque]) {
+      final r = await jpeg(facts: facts, keepMetadata: true);
+      expect(r.backend, MediaBackend.darklibJpeg);
+      expect(r.format, DefaultFormat.jpeg);
+    }
+    expect(api.reencodeQualities, [85, 85]);
+    expect(jpegCalls, isEmpty, reason: 'no whole bitmap');
+    // DarkLib carried the source's segments itself, orientation included.
+    expect(api.metadataCalls, isEmpty);
+  });
+
+  test('a JPEG source without metadata: stripped, orientation kept', () async {
+    await jpeg();
+    expect(api.metadataCalls, ['strip'], reason: 'strip keeps the tag');
+  });
+
+  test('the stream declines: the platform path, admitted again', () async {
+    api.reencodeError = 'unsupported:jpeg_progressive';
+    final r = await jpeg(facts: opaque);
+    expect(r.backend, MediaBackend.androidJpeg);
+    expect(jpegCalls, hasLength(1));
+    expect(
+      r.diagnostics.map((d) => d.toString()),
+      containsAll([
+        'darklib.encode.unsupportedSource',
+        'darklibJpeg.encode.formatFallback',
+      ]),
+    );
+  });
+
+  test('only an original JPEG streams, on Android', () {
+    expect(
+      ImageEncoder.jpegRoute(png, DefaultFormat.jpeg, opaque),
+      JpegRoute.platform,
+    );
+    expect(
+      ImageEncoder.jpegRoute(source, DefaultFormat.heic, opaque),
+      JpegRoute.platform,
+    );
+    const hdr = SourceFacts(alpha: false, directHdr: true, gainMap: false);
+    expect(
+      ImageEncoder.jpegRoute(source, DefaultFormat.jpeg, hdr),
+      JpegRoute.platform,
+      reason: 'an HDR source arrives as its SDR rendition',
+    );
+    NativeImageEncoder.onAndroid = false;
+    expect(
+      ImageEncoder.jpegRoute(source, DefaultFormat.jpeg, opaque),
+      JpegRoute.platform,
+      reason: 'iOS keeps ImageIO until M-08 decides',
+    );
+  });
+
+  test('the gate expects the stream\'s memory, not a whole bitmap', () {
+    const mb = 1 << 20;
+    final whole = ImageEncoder.memoryEstimate(
+      opaque,
+      DefaultFormat.jpeg,
+      34 * mb,
+    );
+    final stream = ImageEncoder.memoryEstimate(
+      opaque,
+      DefaultFormat.jpeg,
+      34 * mb,
+      jpegRoute: JpegRoute.stream,
+    );
+    expect(whole ~/ mb, greaterThan(1700));
+    expect(stream ~/ mb, inInclusiveRange(250, 400));
   });
 }

@@ -69,7 +69,7 @@ fn assemble(region: &AvifRegion, s: u32, tile: u32) -> (u32, u32, Vec<u8>) {
 }
 
 fn premultiplied(mut px: Vec<u8>) -> Vec<u8> {
-    for p in px.chunks_exact_mut(4) {
+    for p in px.as_chunks_mut::<4>().0 {
         let a = p[3] as u32;
         for v in &mut p[..3] {
             *v = ((*v as u32 * a + 127) / 255) as u8;

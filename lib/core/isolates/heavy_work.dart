@@ -79,7 +79,14 @@ class HeavyWork {
   HeavyWork({Future<DeviceMemory?> Function()? memory, this.maxConcurrent = 2})
     : _memory = memory ?? _platformMemory;
 
-  static final instance = HeavyWork();
+  /// The gate every encode goes through.
+  static HeavyWork get instance => _instance;
+  static HeavyWork _instance = HeavyWork();
+
+  /// A phone with less memory, for the device tests (one phone, by the
+  /// user's decision): a gate that reads [DeviceMemory] from elsewhere.
+  @visibleForTesting
+  static set instance(HeavyWork gate) => _instance = gate;
 
   final Future<DeviceMemory?> Function() _memory;
   final int maxConcurrent;

@@ -56,7 +56,47 @@ class EncodedImage {
   };
 }
 
+/// How an Android JPEG is made (RUN-01 step 6). One path for a JPEG source,
+/// by the user's decision (2026-10-09) after both ran on the same images:
+/// the stream was faster and lighter at every size, at the same size and
+/// pixels. The platform path makes JPEG from any other source, and takes a
+/// JPEG source the stream declines.
+enum JpegRoute {
+  /// The platform decoder's whole bitmap, then `Bitmap.compress` (IMG-24).
+  platform,
+
+  /// DarkLib re-encodes a JPEG source a band of rows at a time: the same
+  /// libjpeg-turbo settings and tables, memory near the compressed size.
+  stream,
+}
+
+/// The streaming path declined the source (progressive, CMYK, damaged…):
+/// the encode is admitted again with the platform path's estimate.
+class _StreamDeclined implements Exception {
+  const _StreamDeclined();
+}
+
 abstract final class ImageEncoder {
+  /// The stream for an original JPEG on Android, at any size; the platform
+  /// for the rest (no HDR rendition, no alpha: those are not the original).
+  static JpegRoute jpegRoute(
+    Uint8List source,
+    DefaultFormat target,
+    SourceFacts facts,
+  ) {
+    final stream =
+        target == DefaultFormat.jpeg &&
+        NativeImageEncoder.android &&
+        isJpeg(source) &&
+        facts.directHdr != true &&
+        facts.alpha != true;
+    return stream ? JpegRoute.stream : JpegRoute.platform;
+  }
+
+  /// JPEG's SOI and the first marker's prefix.
+  static bool isJpeg(Uint8List b) =>
+      b.length > 3 && b[0] == 0xFF && b[1] == 0xD8 && b[2] == 0xFF;
+
   /// Encode [source] to [target] at [quality] (0–100). On encoder failure walks
   /// [fallbackChain]. Returns the bytes + the format actually produced. Throws
   /// if all permitted encoders fail. Format changes require explicit permission;
@@ -89,24 +129,37 @@ abstract final class ImageEncoder {
       );
       throw ImageEncodingFailure(target, trace.events);
     }
+    Future<EncodedImage> admitted(JpegRoute route) => HeavyWork.instance.run(
+      estimateBytes: memoryEstimate(
+        facts,
+        target,
+        source.length,
+        jpegRoute: route,
+      ),
+      ticket: ticket,
+      body: () => _admitted(
+        trace: trace,
+        source: source,
+        target: target,
+        quality: quality,
+        facts: facts,
+        keepMetadata: keepMetadata,
+        allowFormatFallback: allowFormatFallback,
+        keepOriginalTime: keepOriginalTime,
+        bitDepth: bitDepth,
+        maxWidth: maxWidth,
+        maxHeight: maxHeight,
+        jpegRoute: route,
+      ),
+    );
     try {
-      return await HeavyWork.instance.run(
-        estimateBytes: memoryEstimate(facts, target, source.length),
-        ticket: ticket,
-        body: () => _admitted(
-          trace: trace,
-          source: source,
-          target: target,
-          quality: quality,
-          facts: facts,
-          keepMetadata: keepMetadata,
-          allowFormatFallback: allowFormatFallback,
-          keepOriginalTime: keepOriginalTime,
-          bitDepth: bitDepth,
-          maxWidth: maxWidth,
-          maxHeight: maxHeight,
-        ),
-      );
+      final route = jpegRoute(source, target, facts);
+      try {
+        return await admitted(route);
+      } on _StreamDeclined {
+        // Recorded where it declined; the platform path's estimate applies.
+        return await admitted(JpegRoute.platform);
+      }
     } on InsufficientMemory {
       MediaDiagnostics.record(
         MediaBackend.imageEncoder,
@@ -129,6 +182,7 @@ abstract final class ImageEncoder {
     required int bitDepth,
     required int? maxWidth,
     required int? maxHeight,
+    required JpegRoute jpegRoute,
   }) async {
     // PQ/HLG samples read as sRGB are a wrong image, so no engine receives the
     // original: only ImageIO's tone-mapped SDR rendition may continue (the
@@ -233,6 +287,7 @@ abstract final class ImageEncoder {
           bitDepth: bitDepth,
           maxWidth: maxWidth,
           maxHeight: maxHeight,
+          jpegRoute: fmt == target ? jpegRoute : JpegRoute.platform,
         );
       } on DarkLibPreservationFailure {
         // Retrying another codec must not turn a preservation veto into success.
@@ -302,15 +357,22 @@ abstract final class ImageEncoder {
   /// a 195 MP source on the Galaxy S25 Edge (2026-10-09, docs/18-PERFORMANCE.md:
   /// HEIC 0.6, PNG 5.7, JPEG 6.8, AVIF 7.2, WebP 17 where it failed) and
   /// rounded up, plus twice the source bytes (Dart's copy and the
-  /// platform's). HEIC goes in bands (RUN-01), the rest decode whole. Unknown
-  /// size: 0, so only the count limits it.
+  /// platform's). HEIC goes in bands (RUN-01), the rest decode whole. The
+  /// streaming JPEG path holds DarkLib's copy of the source and two codings of
+  /// the output (standard tables, then optimal), each under half a byte per
+  /// pixel at quality 95 (+293 MB for a detailed 200 MP image, 110 MB source,
+  /// docs/23-LARGE-IMAGES.md). Unknown size: 0, so only the count limits it.
   static int memoryEstimate(
     SourceFacts facts,
     DefaultFormat target,
-    int sourceBytes,
-  ) {
+    int sourceBytes, {
+    JpegRoute jpegRoute = JpegRoute.platform,
+  }) {
     final w = facts.width, h = facts.height;
     if (w == null || h == null) return 0;
+    if (target == DefaultFormat.jpeg && jpegRoute == JpegRoute.stream) {
+      return 2 * sourceBytes + w * h + (64 << 20);
+    }
     final perPixel = switch (target) {
       DefaultFormat.heic => 1,
       DefaultFormat.jpeg => 9,
@@ -391,6 +453,7 @@ abstract final class ImageEncoder {
     int bitDepth = 0,
     int? maxWidth,
     int? maxHeight,
+    JpegRoute jpegRoute = JpegRoute.platform,
   }) async {
     final hasAlpha = facts.alpha;
     // An SDR rendition of any HDR source; below iOS 17 a gain map's SDR base.
@@ -606,8 +669,37 @@ abstract final class ImageEncoder {
         }
       }
 
-      // Android JPEG (IMG-24): 8-bit pixels from the platform decoder and
-      // libjpeg-turbo, the source's profile and metadata carried by DarkLib.
+      // Android JPEG from a JPEG, streaming (RUN-01 step 6): DarkLib
+      // re-encodes it in bands with the stored orientation and the metadata
+      // as it is (the EXIF orientation with it); a strip when the user asked.
+      // Declined, the encode is admitted again for the platform path.
+      if (noCap &&
+          format == DefaultFormat.jpeg &&
+          jpegRoute == JpegRoute.stream) {
+        backend = MediaBackend.darklibJpeg;
+        var out = isJpeg(source)
+            ? await DarkLibCore.jpegReencode(
+                source,
+                quality: quality.clamp(1, 100),
+              )
+            : null;
+        if (out != null && !keepMetadata) {
+          out = await DarkLibCore.stripMetadata(out);
+        }
+        if (out == null) {
+          MediaDiagnostics.record(
+            backend,
+            MediaOperation.encode,
+            MediaDiagnosticCode.formatFallback,
+          );
+          throw const _StreamDeclined();
+        }
+        return EncodedImage(out, format, backend: backend);
+      }
+
+      // Android JPEG from any other source, or a JPEG the stream declined
+      // (IMG-24): 8-bit pixels from the platform decoder and libjpeg-turbo,
+      // the source's profile and metadata carried by DarkLib.
       if (noCap && format == DefaultFormat.jpeg && NativeImageEncoder.android) {
         backend = MediaBackend.androidJpeg;
         final jpeg = await NativeImageEncoder.encodeJpeg(
@@ -665,6 +757,8 @@ abstract final class ImageEncoder {
       );
       return _result(out, format, backend);
     } on DarkLibPreservationFailure {
+      rethrow;
+    } on _StreamDeclined {
       rethrow;
     } catch (_) {
       MediaDiagnostics.record(

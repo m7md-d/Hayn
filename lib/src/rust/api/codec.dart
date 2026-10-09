@@ -37,6 +37,22 @@ Future<Transcoded> transcode({
   bitDepth: bitDepth,
 );
 
+/// A JPEG re-encoded at `quality` (1..=100) a band of rows at a time, with
+/// memory near its compressed size whatever its pixel count (Hayn RUN-01 step
+/// 6). libjpeg-turbo's settings with optimal Huffman tables, as Android's
+/// `Bitmap.compress` writes; pixels in their stored orientation, every
+/// metadata segment carried as it is (the EXIF orientation included) and an
+/// MPF gain map kept. Throws `unsupported:<why>` for a progressive, CMYK,
+/// 12-bit or arithmetic-coded JPEG (another path takes those), `too_large`
+/// past the decode budget, and a plain message for damaged data.
+Future<Uint8List> jpegReencode({
+  required List<int> bytes,
+  required int quality,
+}) => DarkLib.instance.api.crateApiCodecJpegReencode(
+  bytes: bytes,
+  quality: quality,
+);
+
 /// The alpha plane of a HEIF image's primary item as an Annex-B HEVC stream,
 /// one frame per tile, for an HEVC decoder outside DarkLib; `None` when the
 /// image has no alpha. Throws on HEIF whose alpha it cannot lay out (Hayn

@@ -194,6 +194,29 @@ let out = codec::transcode(src, codec::Target::Webp { quality: 80, lossless: fal
 assert_eq!(out.hdr, codec::HdrOutcome::None); // an SDR source
 ```
 
+### Streaming JPEG re-encode (`engine::codec::jpeg_stream`, crate-private)
+
+`reencode(src, quality)`: JPEG → JPEG a band of rows at a time (Hayn RUN-01
+step 6), so memory follows the compressed size, not the pixels (+66 MB for a
+200 MP photo on a Galaxy S25 Edge, against +1.7 GB decoded whole). Decode and
+encode are libjpeg-turbo's code (`mozjpeg-sys` in its v6 profile,
+`JCP_FASTEST`): Android's `Bitmap.compress` settings, 4:2:0, baseline tables.
+The scan is first coded with the standard Huffman tables, one restart interval
+per MCU row, then `codec::huffman` re-codes it under optimal tables built by
+libjpeg's own algorithm, two passes over the entropy-coded data spread over up
+to eight threads. Without restarts the scan is byte for byte what libjpeg's
+`optimize_coding` writes (a unit test checks it); with them the pixels are the
+same and the file a few bytes per MCU row larger.
+
+Pixels keep the stored orientation, so the EXIF (Orientation included), XMP,
+ICC, IPTC and comments are copied as they are; APP0/APP14 are the encoder's.
+An MPF gain map stays valid (same geometry): the images after the primary are
+appended and the index moved (`metadata::jpeg::relocate_mpf`). Progressive,
+multi-scan, CMYK, 12-bit and arithmetic-coded sources are
+`DarkError::Unsupported`; any libjpeg warning (corrupt or truncated data) is an
+error, not grey rows. libjpeg's fatal errors unwind (`C-unwind`) to a
+`catch_unwind` around the session; guards free its state.
+
 ### Inspect (`engine::inspect`)
 
 ```rust
@@ -204,6 +227,9 @@ pub struct Facts { pub transfer: Transfer, pub gain_map: Presence, pub alpha: Pr
                    pub bit_depth: u8 }
 pub fn inspect(bytes: &[u8]) -> Facts;
 ```
+JPEG `gain_map`: `hdrgm` or ISO 21496-1 in the primary's segments, or
+Apple's map, whose own XMP (`apdi:AuxiliaryImageType`) the MPF index leads to
+(Hayn IMG-25); MPF alone stays Unknown.
 `bit_depth`: bits per channel as stored — HEIF/AVIF `pixi`, else `av1C`
 (high_bitdepth/twelve_bit) or `hvcC` (bitDepthLumaMinus8) of the primary or
 of a grid's first tile; PNG `IHDR`; JPEG the `SOF` precision; WebP 8; 0 when
@@ -326,6 +352,14 @@ depth; anything else keeps the default, 10. The result carries the bytes and the
 `HdrOutcome`. It throws on a container the codec layer can't decode yet (notably
 **HEIC** — decode it on the platform side and feed pixels in), and throws
 `preservation_required:hdr_transfer_unsupported` for PQ/HLG.
+
+```rust
+fn jpeg_reencode(bytes: Vec<u8>, quality: u32) -> Result<Vec<u8>, String>
+```
+The streaming re-encode above (quality 1..=100). Throws `unsupported:<why>`
+(`jpeg_progressive`, `jpeg_multi_scan`, `jpeg_components`, `jpeg_precision`,
+`jpeg_coding`) for a source another path should take, `too_large` past the
+decode budget, and a plain message for damaged data.
 
 ### `api::inspect`
 

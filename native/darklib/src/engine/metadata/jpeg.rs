@@ -124,6 +124,48 @@ fn strip_bytes(b: &[u8], policy: StripPolicy) -> Option<Vec<u8>> {
 /// moved back. The primary (offset 0) shrinks by `removed`; every other image
 /// must still start with SOI and carry no EXIF/IPTC, or the strip is refused.
 fn patch_mpf(out: &mut [u8], tiff: usize, shift: usize, removed: usize) -> Option<()> {
+    rewrite_mpf(
+        out,
+        tiff,
+        |size| size.checked_sub(removed),
+        |offset| (offset + shift).checked_sub(removed),
+        true,
+    )
+}
+
+/// The MPF index of an image re-encoded in place (Hayn RUN-01 step 6): its
+/// TIFF header was at `old_tiff` and is now at `new_tiff`, the primary ended
+/// at `old_end` and now ends at `new_end`, and the other images follow it as
+/// they did. Each must still start with SOI.
+pub(crate) fn relocate_mpf(
+    out: &mut [u8],
+    new_tiff: usize,
+    old_tiff: usize,
+    old_end: usize,
+    new_end: usize,
+) -> Option<()> {
+    rewrite_mpf(
+        out,
+        new_tiff,
+        |_| Some(new_end),
+        |offset| {
+            let after = old_tiff.checked_add(offset)?.checked_sub(old_end)?;
+            new_end.checked_add(after)?.checked_sub(new_tiff)
+        },
+        false,
+    )
+}
+
+/// Rewrites each MP Entry: the primary's size through `size`, every other
+/// image's offset through `offset`. A moved image must start with SOI, and
+/// with `no_private` carry no EXIF/IPTC.
+fn rewrite_mpf(
+    out: &mut [u8],
+    tiff: usize,
+    size: impl Fn(usize) -> Option<usize>,
+    offset: impl Fn(usize) -> Option<usize>,
+    no_private: bool,
+) -> Option<()> {
     let le = match out.get(tiff..tiff + 4)? {
         b"II*\0" => true,
         b"MM\0*" => false,
@@ -161,13 +203,15 @@ fn patch_mpf(out: &mut [u8], tiff: usize, shift: usize, removed: usize) -> Optio
     let (at, n) = entries?;
     for j in 0..n {
         let e = at + 16 * j;
-        let (size, offset) = (rd32(out, e + 4)? as usize, rd32(out, e + 8)? as usize);
-        let (field, value) = if offset == 0 {
-            (e + 4, size.checked_sub(removed)?)
+        let (old_size, old_offset) = (rd32(out, e + 4)? as usize, rd32(out, e + 8)? as usize);
+        let (field, value) = if old_offset == 0 {
+            (e + 4, size(old_size)?)
         } else {
-            let moved = (offset + shift).checked_sub(removed)?;
+            let moved = offset(old_offset)?;
             let start = tiff.checked_add(moved)?;
-            if out.get(start..start + 2)? != [0xFF, 0xD8] || carries_private(out.get(start..)?)? {
+            if out.get(start..start + 2)? != [0xFF, 0xD8]
+                || (no_private && carries_private(out.get(start..)?)?)
+            {
                 return None;
             }
             (e + 8, moved)
@@ -181,6 +225,73 @@ fn patch_mpf(out: &mut [u8], tiff: usize, shift: usize, removed: usize) -> Optio
         out.get_mut(field..field + 4)?.copy_from_slice(&bytes);
     }
     Some(())
+}
+
+/// The images an MPF index lists after the primary, as (start, length) in
+/// `b`: read only, by the CIPA DC-007 layout. Empty without an index, and
+/// entries that do not start with SOI inside `b` are left out.
+pub(crate) fn mpf_secondaries(b: &[u8]) -> Vec<(usize, usize)> {
+    mpf_entries(b).unwrap_or_default()
+}
+
+fn mpf_entries(b: &[u8]) -> Option<Vec<(usize, usize)>> {
+    let mut i = 2usize;
+    let tiff = loop {
+        if *b.get(i)? != 0xFF {
+            return None;
+        }
+        let marker = *b.get(i + 1)?;
+        if marker == 0xDA || marker == 0xD9 {
+            return None;
+        }
+        let len = u16::from_be_bytes([*b.get(i + 2)?, *b.get(i + 3)?]) as usize;
+        if marker == 0xE2 && b.get(i + 4..i + 8)? == b"MPF\0" {
+            break i + 8;
+        }
+        i += 2 + len;
+    };
+    let le = match b.get(tiff..tiff + 4)? {
+        b"II*\0" => true,
+        b"MM\0*" => false,
+        _ => return None,
+    };
+    let rd16 = |at: usize| -> Option<usize> {
+        let v: [u8; 2] = b.get(at..at + 2)?.try_into().ok()?;
+        Some(if le {
+            u16::from_le_bytes(v)
+        } else {
+            u16::from_be_bytes(v)
+        } as usize)
+    };
+    let rd32 = |at: usize| -> Option<usize> {
+        let v: [u8; 4] = b.get(at..at + 4)?.try_into().ok()?;
+        Some(if le {
+            u32::from_le_bytes(v)
+        } else {
+            u32::from_be_bytes(v)
+        } as usize)
+    };
+    let ifd = tiff.checked_add(rd32(tiff + 4)?)?;
+    let mut out = Vec::new();
+    for k in 0..rd16(ifd)?.min(64) {
+        let e = ifd + 2 + 12 * k;
+        if rd16(e)? != 0xB002 {
+            continue;
+        }
+        let at = tiff.checked_add(rd32(e + 8)?)?;
+        for j in 0..(rd32(e + 4)? / 16).min(64) {
+            let (size, offset) = (rd32(at + 16 * j + 4)?, rd32(at + 16 * j + 8)?);
+            if offset == 0 {
+                continue; // the primary
+            }
+            let start = tiff.checked_add(offset)?;
+            if b.get(start..start + 2) == Some(&[0xFF, 0xD8]) && start.checked_add(size)? <= b.len()
+            {
+                out.push((start, size));
+            }
+        }
+    }
+    Some(out)
 }
 
 /// Whether the JPEG at the start of `b` carries EXIF (APP1) or IPTC (APP13)

@@ -79,6 +79,14 @@ abstract final class DarkLibCore {
         );
         throw const DarkLibPreservationFailure();
       }
+      if (error.startsWith('unsupported:')) {
+        MediaDiagnostics.record(
+          MediaBackend.darklib,
+          operation,
+          MediaDiagnosticCode.unsupportedSource,
+        );
+        return null;
+      }
       if (error == 'too_large') {
         MediaDiagnostics.record(
           MediaBackend.darklib,
@@ -136,6 +144,20 @@ abstract final class DarkLibCore {
       bitDepth: bitDepth,
     ),
     isEmpty: (t) => t.bytes.isEmpty,
+  );
+
+  /// The JPEG [bytes] re-encoded at [quality] a band of rows at a time
+  /// (RUN-01 step 6): libjpeg-turbo's settings with optimal Huffman tables,
+  /// the stored orientation and every metadata segment kept as they are, a
+  /// gain map included. Null for a source this path does not take
+  /// (`unsupportedSource`: progressive, CMYK…), past the budget, or damaged.
+  static Future<Uint8List?> jpegReencode(
+    Uint8List bytes, {
+    required int quality,
+  }) => _call(
+    MediaOperation.encode,
+    () => rust_codec.jpegReencode(bytes: bytes, quality: quality),
+    isEmpty: (b) => b.isEmpty,
   );
 
   /// Opaque, upright PNG of [bytes] over white (JPEG of a transparent source).

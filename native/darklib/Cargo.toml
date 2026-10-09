@@ -41,6 +41,15 @@ rav1d = { version = "1.1.0", default-features = false, features = [
     "bitdepth_8",
     "bitdepth_16",
 ] }
+# Streaming JPEG decode and encode, row by row (Hayn RUN-01 step 6, user
+# decision 2026-10-09): libjpeg-turbo's code in its v6 profile (JCP_FASTEST),
+# so the output is Android's Bitmap.compress output. NEON on arm64 is built by
+# `cc` (no nasm); x86 hosts and the emulator go without SIMD, as for rav1d.
+# `unwinding` turns libjpeg's fatal errors into unwinds we catch.
+mozjpeg-sys = { version = "2.2.3", default-features = false, features = [
+    "unwinding",
+    "with_simd",
+] }
 
 # dav1d's arm64 assembly (PERF-05): about twice the AV1 decode speed on the
 # phones, built by `cc` (no nasm). The dotprod/i8mm routines run only where

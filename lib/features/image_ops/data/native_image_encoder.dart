@@ -95,6 +95,8 @@ abstract final class NativeImageEncoder {
     required int quality,
     required int orientation,
     int depth = 8,
+    @visibleForTesting String? encoder,
+    @visibleForTesting String? rateMode,
   }) async {
     try {
       final res = await channel
@@ -103,6 +105,10 @@ abstract final class NativeImageEncoder {
             'quality': quality,
             'orientation': orientation,
             'depth': depth,
+            // The device tests' other phones: another HEVC encoder, the rate
+            // mode below Android 12.
+            'encoder': ?encoder,
+            'rateMode': ?rateMode,
           });
       final bytes = await _readTemp(res?['path'] as String?);
       if (bytes == null || bytes.isEmpty) {
@@ -200,6 +206,12 @@ abstract final class NativeImageEncoder {
 
   @visibleForTesting
   static void resetHeicTenBit() => _heicTenBit = null;
+
+  /// A phone whose HEVC encoder has no Main10, for the device tests (one
+  /// phone, by the user's decision): [heicTenBit] answers [available].
+  @visibleForTesting
+  static void simulateHeicTenBit(bool available) =>
+      _heicTenBit = Future.value(available);
 
   /// Running on Android (flipped by tests through [onAndroid]).
   static bool get android => onAndroid;

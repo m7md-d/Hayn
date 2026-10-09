@@ -24,7 +24,9 @@ WebP, JPEG, PNG); patent-encumbered formats are never software-encoded.
   **self-validates**: it re-parses its own output and byte-compares every kept
   item; on any mismatch it returns the input *untouched*. It corrupts nothing.
 - **Royalty-free by construction.** AV1/AVIF (decode via `rav1d`, encode via
-  `rav1e`), WebP (`libwebp`), JPEG, PNG. No x264/x265, no software HEVC.
+  `rav1e`), WebP (`libwebp`), JPEG (`image`; libjpeg-turbo's code via
+  `mozjpeg-sys` for the streaming JPEG→JPEG re-encode, whose memory follows the
+  compressed size), PNG. No x264/x265, no software HEVC.
 - **Never downscale the saved output.** Downscaling is opt-in for *previews*
   only; full-resolution work is the rule. Huge images encode as a tiled AVIF
   ImageGrid (and tiled images decode), so even 200 MP stays full-resolution with

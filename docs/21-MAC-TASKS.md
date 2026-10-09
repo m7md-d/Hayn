@@ -70,9 +70,9 @@
 
 ## المفتوحة
 
-### M-08 · عمق البت باختيار المستخدم، والعرض بلا صورة مصغّرة، وبوابة العمل الثقيل
+### M-08 · عمق البت باختيار المستخدم، والعرض بلا صورة مصغّرة، وبوابة العمل الثقيل، وبناء JPEG التدفقي
 - **الحالة:** مفتوحة
-- **طلبها:** وكيل لينكس، 2026-10-09 (وسّعت في اليوم نفسه بعد نتيجة M-07)
+- **طلبها:** وكيل لينكس، 2026-10-09 (وسّعت في اليوم نفسه بعد نتيجة M-07، ثم بـRUN-01 الخطوة 6)
 - **ما تغيّر:**
   - **قرار المستخدم في IMG-23:** AVIF يبقى 10 بت افتراضيًا. المستخدم يختار 8 أو 10، والتطبيق يعالج ما لا يعطيه Photos صورة مصغّرة. فلم يُطبق `with_depth(Some(8))` للكل.
   - **DarkLib وFFI:** `transcode(…, bit_depth)` (8 أو 10، وما سواهما الافتراضي 10)، و`Facts.bit_depth` في `inspect` (عمق المصدر من الحاوية). فأعيد توليد الروابط. و`metadata::inject` في JPEG وPNG صار يستبدل ما في الهدف بدل أن يضيف فوقه (IMG-24).
@@ -82,17 +82,18 @@
     - **RUN-02:** كل ترميز يمر بـ`HeavyWork` في `ImageEncoder.encode`: عملان على الأكثر معًا، وكل عمل يُقبل إن وسعه تقدير ذاكرته، وما لا يسعه مع لا شيء يعمل يُرفض بـ`insufficientMemory` قبل أي محرك. والمعاينة تنسحب إن جاءت أحدث منها قبل أن تبدأ، وتعرض «تعذّر ضغط هذه الصورة» حين تفشل.
     - **العمق:** `FormatCapabilities.heicTenBit` صحيح على iOS (ImageIO). فالمنتقي يعرض 10 لـHEIC هناك، **ولم يُتحقق أن ImageIO يكتب 10 حين يُطلب لمصدر بعمق 8.**
   - **Android وحده (لا أثر على iOS):** JPEG وHEIC بلا `flutter_image_compress` (IMG-24)، وHEIC بعمق 10.
+  - **JPEG التدفقي (RUN-01 الخطوة 6، بقرار المستخدم):** اعتمادية جديدة في DarkLib، `mozjpeg-sys` 2.2.3 (شفرة libjpeg-turbo بلغة C، يبنيها `cc`، ومعها NEON على aarch64 بلا nasm)، و`cc` في القفل صار 1.6.0 لكل بناء C. ودالة FFI جديدة `jpeg_reencode`، فأعيد توليد الروابط. **المسار يُختار على Android وحده**، وiOS يبقى على ImageIO حتى تقرر أرقام F4 الكبير. فالمطلوب من الماك أن تُبنى المكتبة وتُختبر هناك، لا سلوك جديد في التطبيق.
 - **البنود:** IMG-23، UI-10، RUN-02، RUN-01 (الخطوة 6)، IMG-24.
 - **يلزم:** توصيل الآيفون للخطوات 3 إلى 6.
 - **الخطوات:**
-  1. F1 (Swift وFFI تغيّرتا)، وF6 (**15**، فيها «the chosen AVIF depth is written and read back»).
-  2. `cargo test --locked` في `native/darklib` (**143**، فيها `tests/bit_depth.rs` و`avif_depth_follows_the_choice` وثلاثة في `inject.rs`). وF2 وF3.
+  1. F1 (Swift وFFI تغيّرتا، وDarkLib صارت تبني C من mozjpeg-sys لـ`aarch64-apple-ios` ولمحاكيه)، وF6 (**16**، فيها «the chosen AVIF depth is written and read back» و«a JPEG re-encodes in bands; a progressive one is declined»).
+  2. `cargo test --locked` في `native/darklib` (**154**، ومنها `tests/cpu_paths.rs`: أقنعة المعالج لـrav1d على Apple silicon، فيها `tests/bit_depth.rs` و`avif_depth_follows_the_choice` وثلاثة في `inject.rs`، وتسعة في `codec::jpeg_stream`، ومنها تطابق بيانات المسح مع `optimize_coding` في libjpeg بايتًا ببايت). على Apple silicon يُبنى NEON، فسجّل زمن `cargo test --locked --release jpeg_stream` إن تيسر. وF2 وF3.
   3. **`integration_test/ios_region_test.dart` على الآيفون بملفات DarkLib نفسها** (بعمق 10)، بدل نسختي 8 بت. المتوقع: «Photos: thumbnails and originals» يبقى فاشلًا لـAVIF بعمق 10 (قيد Photos، لا خلل)، **والعارض وشاشة الضغط يعرضانه ويكبّرانه بلا استثناء**. وعدّل الاختبار ليفرق بين الاثنين.
   4. **العمق على الآيفون:** في شاشة الضغط لصورة JPEG: AVIF بـ«8 بت» يخرج بعمق 8 ويظهر في Photos بصورة مصغّرة. وHEIC بـ«10 بت» يخرج بعمق 10 (اقرأه بـ`inspect` أو ImageIO). فإن لم يكتب ImageIO 10، فسجّل ذلك، ولينكس يضع `heicTenBit` على الحقيقة.
   5. F4: لا تجاوز، ولا استثناء من صور AVIF بعمق 10 في أعلى المكتبة. وهذه بالضبط حالة فشل F4 في M-07.
   6. `HAYN_PERF_LARGE=1 tool/test_performance.sh <الجهاز>`: صورة 200 ميقابكسل تنجح كما في M-05، ولا `insufficientMemory`. فإن ظهر، فسجّل ما تعيده `os_proc_available_memory()` قبل الترميز.
-- **النجاح:** بناء نظيف، وF6 ‏15، وRust ‏143، والمحاكي 11، والخطوات 3 إلى 6 كما وُصفت.
-- **يُعاد إلى لينكس:** حجم البناء، ونتيجة كل خطوة، وعمق HEIC الذي كتبه ImageIO، وقيمة `os_proc_available_memory()` إن ظهرت.
+- **النجاح:** بناء نظيف، وF6 ‏16، وRust ‏154، والمحاكي 11، والخطوات 3 إلى 6 كما وُصفت.
+- **يُعاد إلى لينكس:** حجم البناء (وفرقه عن M-07: mozjpeg-sys يزيد نحو 450KB على arm64 في Android)، ونتيجة كل خطوة، وعمق HEIC الذي كتبه ImageIO، وقيمة `os_proc_available_memory()` إن ظهرت، وزمن JPEG ‏200 ميقابكسل بـImageIO وذروته في الخطوة 6، ليقرر المستخدم هل يأخذ iOS المسار التدفقي.
 
 ## المنفذة
 

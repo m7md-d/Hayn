@@ -15,6 +15,9 @@ pub enum DarkError {
     /// Decoding would need more pixels than the decode budget; refused before
     /// any pixel buffer is allocated.
     TooLarge,
+    /// A valid image this path does not take (a progressive or CMYK JPEG for
+    /// the streaming re-encode): the caller uses another path.
+    Unsupported(&'static str),
 }
 
 impl fmt::Display for DarkError {
@@ -24,6 +27,7 @@ impl fmt::Display for DarkError {
             DarkError::UnsupportedFormat => write!(f, "unsupported image format"),
             DarkError::Malformed(why) => write!(f, "malformed image: {why}"),
             DarkError::TooLarge => write!(f, "too_large"),
+            DarkError::Unsupported(why) => write!(f, "unsupported:{why}"),
         }
     }
 }
