@@ -8,6 +8,8 @@ import 'package:hayn/features/image_ops/data/image_probe.dart';
 import 'package:hayn/features/image_ops/data/native_image_encoder.dart';
 import 'package:hayn/features/image_ops/data/source_facts.dart';
 import 'package:hayn/features/settings/providers/preferences_providers.dart';
+import 'package:hayn/src/rust/api/metadata.dart';
+import 'package:hayn/src/rust/engine/metadata.dart';
 import 'package:hayn/src/rust/frb_generated.dart';
 import 'package:image/image.dart' as img;
 
@@ -115,14 +117,15 @@ class _Api extends Fake implements DarkLibApi {
 
   /// Metadata steps seen, in order ('transplant' / 'strip').
   final metadataCalls = <String>[];
+  List<MetaKind> dropped = const [];
 
   @override
-  Future<Uint8List> crateApiMetadataTransplantMetadata({
+  Future<Transplanted> crateApiMetadataTransplantMetadata({
     required List<int> source,
     required List<int> target,
   }) async {
     metadataCalls.add('transplant');
-    return Uint8List.fromList(target);
+    return Transplanted(bytes: Uint8List.fromList(target), dropped: dropped);
   }
 
   @override

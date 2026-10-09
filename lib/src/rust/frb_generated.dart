@@ -15,6 +15,7 @@ import 'engine/codec.dart';
 import 'engine/codec/heif_alpha.dart';
 import 'engine/format.dart';
 import 'engine/inspect.dart';
+import 'engine/metadata.dart';
 import 'engine/verify.dart';
 import 'frb_generated.dart';
 import 'frb_generated.io.dart'
@@ -158,7 +159,7 @@ abstract class DarkLibApi extends BaseApi {
     required int bitDepth,
   });
 
-  Future<Uint8List> crateApiMetadataTransplantMetadata({
+  Future<Transplanted> crateApiMetadataTransplantMetadata({
     required List<int> source,
     required List<int> target,
   });
@@ -785,7 +786,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   );
 
   @override
-  Future<Uint8List> crateApiMetadataTransplantMetadata({
+  Future<Transplanted> crateApiMetadataTransplantMetadata({
     required List<int> source,
     required List<int> target,
   }) {
@@ -803,7 +804,7 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
           );
         },
         codec: SseCodec(
-          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeSuccessData: sse_decode_transplanted,
           decodeErrorData: null,
         ),
         constMeta: kCrateApiMetadataTransplantMetadataConstMeta,
@@ -963,6 +964,12 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   }
 
   @protected
+  List<MetaKind> dco_decode_list_meta_kind(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_meta_kind).toList();
+  }
+
+  @protected
   Float32List dco_decode_list_prim_f_32_strict(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as Float32List;
@@ -996,6 +1003,12 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   List<RegionTile> dco_decode_list_region_tile(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_region_tile).toList();
+  }
+
+  @protected
+  MetaKind dco_decode_meta_kind(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return MetaKind.values[raw as int];
   }
 
   @protected
@@ -1075,6 +1088,18 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   Transfer dco_decode_transfer(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return Transfer.values[raw as int];
+  }
+
+  @protected
+  Transplanted dco_decode_transplanted(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return Transplanted(
+      bytes: dco_decode_list_prim_u_8_strict(arr[0]),
+      dropped: dco_decode_list_meta_kind(arr[1]),
+    );
   }
 
   @protected
@@ -1270,6 +1295,18 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   }
 
   @protected
+  List<MetaKind> sse_decode_list_meta_kind(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <MetaKind>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_meta_kind(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   Float32List sse_decode_list_prim_f_32_strict(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var len_ = sse_decode_i_32(deserializer);
@@ -1314,6 +1351,13 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
       ans_.add(sse_decode_region_tile(deserializer));
     }
     return ans_;
+  }
+
+  @protected
+  MetaKind sse_decode_meta_kind(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return MetaKind.values[inner];
   }
 
   @protected
@@ -1402,6 +1446,14 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
     return Transfer.values[inner];
+  }
+
+  @protected
+  Transplanted sse_decode_transplanted(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_bytes = sse_decode_list_prim_u_8_strict(deserializer);
+    var var_dropped = sse_decode_list_meta_kind(deserializer);
+    return Transplanted(bytes: var_bytes, dropped: var_dropped);
   }
 
   @protected
@@ -1572,6 +1624,18 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   }
 
   @protected
+  void sse_encode_list_meta_kind(
+    List<MetaKind> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_meta_kind(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_prim_f_32_strict(
     Float32List self,
     SseSerializer serializer,
@@ -1635,6 +1699,12 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
     for (final item in self) {
       sse_encode_region_tile(item, serializer);
     }
+  }
+
+  @protected
+  void sse_encode_meta_kind(MetaKind self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected
@@ -1711,6 +1781,13 @@ class DarkLibApiImpl extends DarkLibApiImplPlatform implements DarkLibApi {
   void sse_encode_transfer(Transfer self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_transplanted(Transplanted self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_list_prim_u_8_strict(self.bytes, serializer);
+    sse_encode_list_meta_kind(self.dropped, serializer);
   }
 
   @protected

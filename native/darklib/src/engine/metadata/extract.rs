@@ -46,7 +46,7 @@ fn jpeg(b: &[u8]) -> Canonical {
     if b.len() < 4 || b[0] != 0xFF || b[1] != 0xD8 {
         return c;
     }
-    let mut icc: Vec<u8> = Vec::new();
+    let mut icc: Vec<(u8, u8, &[u8])> = Vec::new();
     let mut i = 2usize;
     while i + 4 <= b.len() {
         if b[i] != 0xFF {
@@ -78,9 +78,9 @@ fn jpeg(b: &[u8]) -> Canonical {
                 }
             }
             0xE2 => {
-                // ICC_PROFILE\0 + seq(1) + count(1) + chunk; concatenate chunks.
+                // ICC_PROFILE\0 + seq(1) + count(1) + chunk.
                 if payload.len() > 14 && payload.starts_with(b"ICC_PROFILE\0".as_slice()) {
-                    icc.extend_from_slice(&payload[14..]);
+                    icc.push((payload[12], payload[13], &payload[14..]));
                 }
             }
             0xED => {
@@ -90,10 +90,28 @@ fn jpeg(b: &[u8]) -> Canonical {
         }
         i = seg_end;
     }
-    if !icc.is_empty() {
-        c.icc = Some(icc);
-    }
+    c.icc = icc_profile(icc);
     c
+}
+
+/// The profile from its APP2 chunks, joined by their numbers (Hayn RV-04):
+/// every chunk of the same count, numbered 1 to count, each once. Anything
+/// else is no profile, rather than one read in the wrong order or with a gap.
+fn icc_profile(mut chunks: Vec<(u8, u8, &[u8])>) -> Option<Vec<u8>> {
+    let count = chunks.first()?.1;
+    chunks.sort_by_key(|&(seq, _, _)| seq);
+    let numbered = chunks.len() == count as usize
+        && chunks
+            .iter()
+            .enumerate()
+            .all(|(k, &(seq, n, _))| n == count && seq as usize == k + 1);
+    numbered.then(|| {
+        chunks
+            .iter()
+            .flat_map(|&(_, _, data)| data)
+            .copied()
+            .collect()
+    })
 }
 
 fn png(b: &[u8]) -> Canonical {
@@ -271,5 +289,36 @@ mod tests {
         // No embedded profile, but the nclx code points yield a synthesised ICC.
         let icc = extract(&file).icc.expect("nclx → synthesised ICC");
         assert_eq!(&icc[36..40], b"acsp", "a valid ICC profile");
+    }
+
+    fn jpeg_with_icc_chunks(chunks: &[(u8, u8, &[u8])]) -> Vec<u8> {
+        let mut j = vec![0xFF, 0xD8];
+        for &(seq, count, data) in chunks {
+            let mut p = b"ICC_PROFILE\0".to_vec();
+            p.extend_from_slice(&[seq, count]);
+            p.extend_from_slice(data);
+            seg(&mut j, 0xE2, &p);
+        }
+        j.extend_from_slice(&[0xFF, 0xDA, 0x00, 0x02, 0xAA, 0xFF, 0xD9]);
+        j
+    }
+
+    /// ICC chunks are joined by their numbers, not as they come; a gap, a
+    /// repeat or a disagreeing count is no profile (Hayn RV-04).
+    #[test]
+    fn jpeg_icc_chunks_join_by_number() {
+        let out_of_order = jpeg_with_icc_chunks(&[(2, 2, b"-two"), (1, 2, b"one")]);
+        assert_eq!(
+            extract(&out_of_order).icc.as_deref(),
+            Some(b"one-two".as_slice())
+        );
+        for bad in [
+            jpeg_with_icc_chunks(&[(1, 3, b"a"), (3, 3, b"c")]),
+            jpeg_with_icc_chunks(&[(1, 2, b"a"), (1, 2, b"a")]),
+            jpeg_with_icc_chunks(&[(1, 2, b"a"), (2, 3, b"b")]),
+            jpeg_with_icc_chunks(&[(0, 1, b"a")]),
+        ] {
+            assert_eq!(extract(&bad).icc, None);
+        }
     }
 }

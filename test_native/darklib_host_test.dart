@@ -509,4 +509,69 @@ void main() {
       contains('darklib.encode.unsupportedSource'),
     );
   });
+
+  // RV-04: a profile past one JPEG segment used to be skipped while the
+  // target's own was removed: a JPEG naming no profile, reported as carried.
+  test(
+    'a large profile crosses in numbered chunks; what cannot is recorded',
+    () async {
+      final profile = Uint8List.fromList(
+        List.generate(150000, (k) => k * 7 % 251),
+      );
+      final plain = Uint8List.fromList(
+        img.encodeJpg(img.Image(width: 8, height: 8), quality: 90),
+      );
+      // The source: the profile in two chunks, as a camera writes it.
+      final source = BytesBuilder()..add(plain.sublist(0, 2));
+      for (var k = 0; k < 3; k++) {
+        final chunk = profile.sublist(k * 50000, (k + 1) * 50000);
+        final payload = [...'ICC_PROFILE'.codeUnits, 0, k + 1, 3, ...chunk];
+        final n = payload.length + 2;
+        source.add([0xFF, 0xE2, n >> 8, n & 0xFF, ...payload]);
+      }
+      source.add(plain.sublist(2));
+      final out = (await DarkLibCore.transplantMetadata(
+        source: source.toBytes(),
+        target: plain,
+      ))!;
+      const dump = String.fromEnvironment('HAYN_DUMP_DIR');
+      if (dump.isNotEmpty) File('$dump/icc150k.jpg').writeAsBytesSync(out);
+      // Numbered 1..n of n, and joined they are the profile.
+      final joined = BytesBuilder();
+      var i = 2, count = 0, seq = 0;
+      while (out[i] == 0xFF && out[i + 1] != 0xDA) {
+        final n = out[i + 2] << 8 | out[i + 3];
+        final p = out.sublist(i + 4, i + 2 + n);
+        if (out[i + 1] == 0xE2 &&
+            String.fromCharCodes(p.take(11)) == 'ICC_PROFILE') {
+          expect(p[12], ++seq);
+          count = p[13];
+          joined.add(p.sublist(14));
+        }
+        i += 2 + n;
+      }
+      expect((seq, count), (3, 3));
+      expect(joined.toBytes(), profile);
+
+      // A PNG has no place for IPTC: the rest crosses, the drop is recorded.
+      final withIptc = BytesBuilder()
+        ..add(plain.sublist(0, 2))
+        ..add([0xFF, 0xED, 0, 2 + 14, ...'Photoshop 3.0'.codeUnits, 0])
+        ..add(plain.sublist(2));
+      final before = MediaDiagnostics.recent.length;
+      final png = Uint8List.fromList(
+        img.encodePng(img.Image(width: 8, height: 8)),
+      );
+      expect(
+        await DarkLibCore.transplantMetadata(
+          source: withIptc.toBytes(),
+          target: png,
+        ),
+        isNotNull,
+      );
+      expect(MediaDiagnostics.recent.skip(before).map((d) => d.toString()), [
+        'darklib.transplant.metadataDropped',
+      ]);
+    },
+  );
 }

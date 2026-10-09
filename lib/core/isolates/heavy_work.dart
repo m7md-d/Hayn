@@ -4,24 +4,31 @@ import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
-// One gate for every full-size image job (RUN-02): the compress, crop and
-// strip tasks and the compress screen's preview all encode through
-// ImageEncoder, which runs here. Before, each started at once: two tasks, or a
+// One gate for every full-size image job (RUN-02): the compress and crop
+// tasks and the compress screen's preview, through ImageEncoder; the crop
+// holds one admission for its decode and transform too (RV-02). The strip
+// task does not decode and stays outside. Before, each started at once: two tasks, or a
 // task and a preview the slider kept restarting, decoded full images side by
 // side with no ceiling.
 //
 // A job states its peak memory estimate. Jobs start in arrival order while
 // fewer than [HeavyWork.maxConcurrent] run and the estimate fits the memory
-// the platform reports available, less a reserve. A job that does not fit
-// waits for running ones to end; one that does not fit with nothing running
-// is refused ([InsufficientMemory], RUN-01 step 6) instead of the system
-// killing the app midway. Android reports `MemoryInfo.availMem` and its
+// the platform reports available, less a reserve and less the estimates of
+// the jobs running (RV-03): a job admitted a moment ago has not allocated its
+// peak yet, so the platform's figure alone would admit a second one into the
+// same room. Memory a running job already holds counts twice then, which
+// only makes the next one wait. A job that does not fit waits for running
+// ones to end; one that does not fit with nothing running is refused
+// ([InsufficientMemory], RUN-01 step 6) instead of the system killing the app
+// midway. A running job whose path changes to a costlier one (a format
+// fallback) asks to [HeavyWork.grow] first. Android reports `MemoryInfo.availMem` and its
 // threshold, iOS `os_proc_available_memory()` (M-08); where nothing is
 // reported (the iOS simulator), only the count applies.
 //
 // Cancellation points: a waiting job can be withdrawn ([HeavyWorkTicket], a
-// newer preview); a started one runs to its end, since the native encoders
-// (DarkLib, MediaCodec, ImageIO) take no cancel. Callers drop its result.
+// newer preview, a cancelled task); a started one runs to its end, since the
+// native encoders (DarkLib, MediaCodec, ImageIO) take no cancel. Callers drop
+// its result.
 
 /// Memory the platform reports, in bytes.
 class DeviceMemory {
@@ -70,7 +77,7 @@ class InsufficientMemory implements Exception {
 
 class _Job {
   _Job(this.estimate, this.ticket);
-  final int estimate;
+  int estimate;
   final HeavyWorkTicket ticket;
   final admitted = Completer<void>();
 }
@@ -133,7 +140,7 @@ class HeavyWork {
         } catch (_) {
           memory = null; // unknown: the count alone applies
         }
-        final room = memory == null ? null : memory.available - memory.reserve;
+        final room = memory == null ? null : _room(memory, except: null);
         // Withdrawn while the memory was read.
         if (_waiting.isEmpty || !identical(_waiting.first, job)) continue;
         if (room != null && job.estimate > room) {
@@ -150,6 +157,37 @@ class HeavyWork {
     } finally {
       _admitting = false;
     }
+  }
+
+  /// Raises the estimate of the running job [ticket] holds to [estimateBytes]
+  /// when that fits now beside the others; false, unchanged, when it does
+  /// not. Never waits: a job waiting for room while holding its own could
+  /// wait on another doing the same. Unknown memory: true.
+  Future<bool> grow(HeavyWorkTicket ticket, int estimateBytes) async {
+    final job = _running.where((j) => identical(j.ticket, ticket)).firstOrNull;
+    if (job == null) return false;
+    if (estimateBytes <= job.estimate) return true;
+    DeviceMemory? memory;
+    try {
+      memory = await _memory();
+    } catch (_) {
+      memory = null;
+    }
+    if (memory != null && estimateBytes > _room(memory, except: job)) {
+      return false;
+    }
+    job.estimate = estimateBytes;
+    return true;
+  }
+
+  /// What a job may use: the platform's figure less its reserve and less
+  /// what the running jobs other than [except] are expected to take.
+  int _room(DeviceMemory memory, {required _Job? except}) {
+    var reserved = 0;
+    for (final j in _running) {
+      if (!identical(j, except)) reserved += j.estimate;
+    }
+    return memory.available - memory.reserve - reserved;
   }
 
   @visibleForTesting

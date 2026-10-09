@@ -16,6 +16,20 @@ import '../../../core/diagnostics/media_diagnostics.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 
 abstract final class GallerySaver {
+  /// The source's location to stamp, or null when it has none. photo_manager
+  /// reports none as (0, 0) on iOS (`PHAsset.location` nil) and null on
+  /// Android 10+, and stamps a location only from both values. A zero on one
+  /// axis is a real place, the equator or Greenwich (RV-06).
+  static ({double latitude, double longitude})? location(
+    double? latitude,
+    double? longitude,
+  ) {
+    if (latitude == null || longitude == null) return null;
+    if (latitude == 0 && longitude == 0) return null;
+    if (!(latitude.abs() <= 90 && longitude.abs() <= 180)) return null; // NaN
+    return (latitude: latitude, longitude: longitude);
+  }
+
   /// Returns the new asset, or null if the platform refused the write (e.g.
   /// permission). Never throws.
   static Future<AssetEntity?> saveImage(
@@ -25,15 +39,15 @@ abstract final class GallerySaver {
     double? latitude,
     double? longitude,
   }) async {
+    final at = location(latitude, longitude);
     try {
       return await PhotoManager.editor.saveImage(
         bytes,
         filename: filename,
         title: filename,
         creationDate: creationDate,
-        // Only pass a real fix — 0/null means "unknown", don't stamp (0,0).
-        latitude: (latitude != null && latitude != 0) ? latitude : null,
-        longitude: (longitude != null && longitude != 0) ? longitude : null,
+        latitude: at?.latitude,
+        longitude: at?.longitude,
       );
     } catch (_) {
       MediaDiagnostics.record(
@@ -54,13 +68,14 @@ abstract final class GallerySaver {
     double? latitude,
     double? longitude,
   }) async {
+    final at = location(latitude, longitude);
     try {
       return await PhotoManager.editor.saveVideo(
         file,
         title: filename,
         creationDate: creationDate,
-        latitude: (latitude != null && latitude != 0) ? latitude : null,
-        longitude: (longitude != null && longitude != 0) ? longitude : null,
+        latitude: at?.latitude,
+        longitude: at?.longitude,
       );
     } catch (_) {
       MediaDiagnostics.record(

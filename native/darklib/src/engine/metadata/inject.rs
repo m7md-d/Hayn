@@ -5,50 +5,132 @@
 //! Orientation in the carried EXIF is normalised to 1: the pixels are baked
 //! upright on decode, so a non-1 tag would double-rotate (single source of
 //! truth — CLAUDE.md / docs/10-DARKLIB.md §5). JPEG, PNG, WebP and AVIF/HEIF are
-//! all covered. Best-effort: a format without an injector returns the encoded
-//! bytes unchanged.
+//! all covered. What a target cannot take (a JPEG segment past 64 KB, IPTC
+//! where the container has no place for it, a layout outside the supported
+//! ones) is reported by [`inject_reporting`], never dropped unsaid (Hayn RV-04).
 
-use super::{exif, Canonical};
+use super::{exif, Canonical, MetaKind};
 use crate::engine::format::{detect, ImageFormat};
 
 const XMP_SIG: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
 
-/// Embed `meta` into `encoded` (same container).
+/// Embed `meta` into `encoded` (same container); what does not fit is left
+/// out (see [`inject_reporting`]).
 pub fn inject(encoded: &[u8], meta: &Canonical) -> Vec<u8> {
+    inject_reporting(encoded, meta).bytes
+}
+
+/// What [`inject_reporting`] made: the target with `meta` in it, and the kinds
+/// `meta` held that it could not carry. The target's own metadata of such a
+/// kind stays.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Injected {
+    pub bytes: Vec<u8>,
+    pub dropped: Vec<MetaKind>,
+}
+
+/// Embed `meta` into `encoded` (same container), reporting what it could not.
+pub fn inject_reporting(encoded: &[u8], meta: &Canonical) -> Injected {
+    // The kinds the target's container has a place for, written whole.
+    let whole = |out: Option<Vec<u8>>| match out {
+        Some(bytes) => Injected {
+            bytes,
+            dropped: meta.iptc.iter().map(|_| MetaKind::Iptc).collect(),
+        },
+        None => Injected {
+            bytes: encoded.to_vec(),
+            dropped: present(meta),
+        },
+    };
     match detect(encoded) {
         ImageFormat::Jpeg => inject_jpeg(encoded, meta),
-        ImageFormat::Png => inject_png(encoded, meta),
-        ImageFormat::Webp => inject_webp(encoded, meta),
-        ImageFormat::Avif | ImageFormat::Heic => inject_isobmff(encoded, meta),
-        _ => encoded.to_vec(),
+        ImageFormat::Png => whole(inject_png(encoded, meta)),
+        ImageFormat::Webp => whole(inject_webp(encoded, meta)),
+        ImageFormat::Avif | ImageFormat::Heic => whole(inject_isobmff(encoded, meta)),
+        _ => whole(None),
     }
+}
+
+/// The kinds `meta` holds.
+fn present(meta: &Canonical) -> Vec<MetaKind> {
+    [
+        (meta.exif.is_some(), MetaKind::Exif),
+        (meta.xmp.is_some(), MetaKind::Xmp),
+        (meta.icc.is_some(), MetaKind::Icc),
+        (meta.iptc.is_some(), MetaKind::Iptc),
+    ]
+    .into_iter()
+    .filter_map(|(has, kind)| has.then_some(kind))
+    .collect()
 }
 
 /// AVIF / HEIF (ISOBMFF) add-item inject. Normalises the EXIF orientation and the
 /// XMP packet here, then hands the clean blobs to the container surgery (which
 /// rebuilds `meta` + `mdat` with fresh offsets and self-validates). ICC is added
 /// as a `colr`/`prof` property — `Canonical.icc` is already the raw profile.
-fn inject_isobmff(b: &[u8], meta: &Canonical) -> Vec<u8> {
+fn inject_isobmff(b: &[u8], meta: &Canonical) -> Option<Vec<u8>> {
     let exif = meta.exif.as_ref().map(|t| exif::with_orientation_1(t));
     let xmp = meta.xmp.as_ref().map(|x| xmp_packet(x).to_vec());
-    super::isobmff::inject(b, exif.as_deref(), xmp.as_deref(), meta.icc.as_deref())
+    super::isobmff::try_inject(b, exif.as_deref(), xmp.as_deref(), meta.icc.as_deref())
 }
+
+/// An APPn payload's limit: the segment length (u16) counts itself.
+const APP_MAX: usize = 0xFFFF - 2;
+/// An ICC chunk's limit: `ICC_PROFILE\0`, its number and the count go first.
+const ICC_CHUNK: usize = APP_MAX - 14;
 
 /// Each kind `meta` carries replaces the target's own (a JPEG from Android's
 /// Bitmap.compress already names its bitmap's profile, Hayn IMG-24): two
-/// "chunk 1 of 1" profiles make readers drop both. A kind `meta` lacks stays,
-/// since the target's may be the only one naming its pixels. A leading JFIF
-/// segment stays first; every other segment and the scan stay as they were.
-fn inject_jpeg(jpeg: &[u8], meta: &Canonical) -> Vec<u8> {
+/// "chunk 1 of 1" profiles make readers drop both. A kind `meta` lacks, or
+/// one too large for a segment (EXIF, XMP or IPTC past 64 KB; Extended XMP
+/// is not written), stays, since the target's may be the only one naming its
+/// pixels; the latter is reported. The ICC profile goes in as many chunks as
+/// it needs. A leading JFIF segment stays first; every other segment and the
+/// scan stay as they were.
+fn inject_jpeg(jpeg: &[u8], meta: &Canonical) -> Injected {
     if jpeg.len() < 2 || jpeg[0] != 0xFF || jpeg[1] != 0xD8 {
-        return jpeg.to_vec();
+        return Injected {
+            bytes: jpeg.to_vec(),
+            dropped: present(meta),
+        };
+    }
+    let exif = meta.exif.as_ref().map(|tiff| {
+        let mut payload = b"Exif\0\0".to_vec();
+        payload.extend_from_slice(&exif::with_orientation_1(tiff));
+        payload
+    });
+    let xmp = meta.xmp.as_ref().map(|x| {
+        let mut payload = XMP_SIG.to_vec();
+        payload.extend_from_slice(x);
+        payload
+    });
+    let icc = meta.icc.as_ref().and_then(|p| {
+        let n = p.len().div_ceil(ICC_CHUNK);
+        (n <= 255).then(|| p.chunks(ICC_CHUNK))
+    });
+    fn fits(p: &Option<Vec<u8>>) -> Option<&Vec<u8>> {
+        p.as_ref().filter(|p| p.len() <= APP_MAX)
+    }
+    let (exif_in, xmp_in) = (fits(&exif), fits(&xmp));
+    let iptc_in = meta.iptc.as_ref().filter(|p| p.len() <= APP_MAX);
+    let mut dropped = Vec::new();
+    for (had, written, kind) in [
+        (exif.is_some(), exif_in.is_some(), MetaKind::Exif),
+        (xmp.is_some(), xmp_in.is_some(), MetaKind::Xmp),
+        (meta.icc.is_some(), icc.is_some(), MetaKind::Icc),
+        (meta.iptc.is_some(), iptc_in.is_some(), MetaKind::Iptc),
+    ] {
+        if had && !written {
+            dropped.push(kind);
+        }
     }
     let replaced = |marker: u8, payload: &[u8]| match marker {
         0xE1 => {
-            (meta.exif.is_some() && payload.starts_with(b"Exif\0\0"))
-                || (meta.xmp.is_some() && payload.starts_with(XMP_SIG))
+            (exif_in.is_some() && payload.starts_with(b"Exif\0\0"))
+                || (xmp_in.is_some() && payload.starts_with(XMP_SIG))
         }
-        0xE2 => meta.icc.is_some() && payload.starts_with(b"ICC_PROFILE\0"),
+        0xE2 => icc.is_some() && payload.starts_with(b"ICC_PROFILE\0"),
+        0xED => iptc_in.is_some() && payload.starts_with(PHOTOSHOP_SIG),
         _ => false,
     };
     // Header segments up to the scan; anything unparsed is copied as it is.
@@ -78,38 +160,39 @@ fn inject_jpeg(jpeg: &[u8], meta: &Canonical) -> Vec<u8> {
         out.extend_from_slice(kept[0]);
     }
 
-    if let Some(tiff) = &meta.exif {
-        let mut payload = b"Exif\0\0".to_vec();
-        payload.extend_from_slice(&exif::with_orientation_1(tiff));
-        app_segment(&mut out, 0xE1, &payload);
+    for payload in [exif_in, xmp_in].into_iter().flatten() {
+        app_segment(&mut out, 0xE1, payload);
     }
-    if let Some(xmp) = &meta.xmp {
-        let mut payload = XMP_SIG.to_vec();
-        payload.extend_from_slice(xmp);
-        app_segment(&mut out, 0xE1, &payload);
-    }
-    if let Some(icc) = &meta.icc {
-        // Single-chunk ICC (profiles up to ~64 KB; larger would need splitting).
-        if icc.len() <= 65515 {
+    if let Some(chunks) = icc {
+        let count = chunks.len() as u8;
+        for (seq, chunk) in chunks.enumerate() {
             let mut payload = b"ICC_PROFILE\0".to_vec();
-            payload.push(1); // chunk seq
-            payload.push(1); // chunk count
-            payload.extend_from_slice(icc);
+            payload.push(seq as u8 + 1);
+            payload.push(count);
+            payload.extend_from_slice(chunk);
             app_segment(&mut out, 0xE2, &payload);
         }
+    }
+    if let Some(iptc) = iptc_in {
+        app_segment(&mut out, 0xED, iptc);
     }
     for segment in &kept[jfif as usize..] {
         out.extend_from_slice(segment);
     }
     out.extend_from_slice(&jpeg[i..]); // the scan and the rest, unchanged
-    out
+    Injected {
+        bytes: out,
+        dropped,
+    }
 }
 
-/// Append an `FFxx` APPn segment (skips it if the payload exceeds the u16 limit).
+/// An APP13 payload of Photoshop's image resources, where JPEG keeps IPTC.
+const PHOTOSHOP_SIG: &[u8] = b"Photoshop 3.0\0";
+
+/// Append an `FFxx` APPn segment; the caller keeps `payload` within
+/// [`APP_MAX`].
 fn app_segment(out: &mut Vec<u8>, marker: u8, payload: &[u8]) {
-    if payload.len() + 2 > 0xFFFF {
-        return;
-    }
+    debug_assert!(payload.len() <= APP_MAX);
     out.push(0xFF);
     out.push(marker);
     out.extend_from_slice(&((payload.len() + 2) as u16).to_be_bytes());
@@ -118,12 +201,12 @@ fn app_segment(out: &mut Vec<u8>, marker: u8, payload: &[u8]) {
 
 /// As for JPEG, each kind `meta` carries replaces the target's own chunk (a
 /// PNG holds one `iCCP` at most); a kind it lacks stays.
-fn inject_png(png: &[u8], meta: &Canonical) -> Vec<u8> {
+fn inject_png(png: &[u8], meta: &Canonical) -> Option<Vec<u8>> {
     const SIG: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
     // Insert right after IHDR (sig 8 + len 4 + "IHDR" 4 + data 13 + crc 4 = 33).
     let ihdr_end = 33usize;
     if png.len() < ihdr_end || png[..8] != SIG || &png[12..16] != b"IHDR" {
-        return png.to_vec();
+        return None;
     }
     let replaced = |kind: &[u8], data: &[u8]| match kind {
         b"iCCP" => meta.icc.is_some(),
@@ -163,7 +246,7 @@ fn inject_png(png: &[u8], meta: &Canonical) -> Vec<u8> {
         png_chunk(&mut out, b"iCCP", &build_iccp(icc)); // before PLTE/IDAT
     }
     out.extend_from_slice(&rest);
-    out
+    Some(out)
 }
 
 /// Build a PNG `iCCP` chunk body from a raw ICC profile: a short profile name, a
@@ -217,11 +300,11 @@ const VP8X_EXIF: u8 = 0x08;
 const VP8X_XMP: u8 = 0x04;
 const VP8X_ANIM: u8 = 0x02;
 
-fn inject_webp(webp: &[u8], meta: &Canonical) -> Vec<u8> {
+fn inject_webp(webp: &[u8], meta: &Canonical) -> Option<Vec<u8>> {
     if meta.exif.is_none() && meta.xmp.is_none() && meta.icc.is_none() {
-        return webp.to_vec();
+        return Some(webp.to_vec());
     }
-    mux_webp(webp, meta).unwrap_or_else(|| webp.to_vec())
+    mux_webp(webp, meta)
 }
 
 fn mux_webp(b: &[u8], meta: &Canonical) -> Option<Vec<u8>> {
@@ -701,5 +784,77 @@ mod tests {
             "raw ICC in WebP ICCP"
         );
         assert_eq!(extract(&webp_out).icc.as_deref(), Some(raw_icc.as_slice()));
+    }
+
+    /// A profile past one segment (some printer and camera profiles carry
+    /// LUTs of hundreds of KB). It used to be skipped while the target's own
+    /// was removed, so the output named no profile at all (Hayn RV-04).
+    #[test]
+    fn jpeg_inject_splits_a_large_profile_in_numbered_chunks() {
+        let profile: Vec<u8> = (0..150_000u32).map(|k| (k * 7 % 251) as u8).collect();
+        let mut target = vec![0xFF, 0xD8];
+        app_segment(&mut target, 0xE2, &icc_payload(b"old profile"));
+        target.extend_from_slice(&minimal_jpeg()[2..]);
+        let meta = Canonical {
+            icc: Some(profile.clone()),
+            ..Default::default()
+        };
+        let out = inject_reporting(&target, &meta);
+        assert!(out.dropped.is_empty());
+        let chunks: Vec<_> = jpeg_segments(&out.bytes)
+            .into_iter()
+            .filter(|(m, p)| *m == 0xE2 && p.starts_with(b"ICC_PROFILE\0"))
+            .map(|(_, p)| p)
+            .collect();
+        assert_eq!(chunks.len(), 3, "150 KB in chunks of 64 KB");
+        for (k, c) in chunks.iter().enumerate() {
+            assert_eq!((c[12], c[13]), (k as u8 + 1, 3), "numbered 1..=3 of 3");
+        }
+        assert_eq!(extract(&out.bytes).icc, Some(profile));
+    }
+
+    /// A kind too large for a JPEG segment is reported, and the target's own
+    /// of that kind stays; IPTC goes into APP13 as it came.
+    #[test]
+    fn jpeg_inject_reports_what_does_not_fit() {
+        let mut target = vec![0xFF, 0xD8];
+        let mut own = b"Exif\0\0".to_vec();
+        own.extend_from_slice(&tiff_orientation(1));
+        app_segment(&mut target, 0xE1, &own);
+        target.extend_from_slice(&minimal_jpeg()[2..]);
+        let mut huge = tiff_orientation(6);
+        huge.resize(70_000, 0);
+        let iptc = b"Photoshop 3.0\08BIM\x04\x04\0\0\0\0\0\x05\x1c\x02\x05\0\0".to_vec();
+        let meta = Canonical {
+            exif: Some(huge),
+            iptc: Some(iptc.clone()),
+            ..Default::default()
+        };
+        let out = inject_reporting(&target, &meta);
+        assert_eq!(out.dropped, vec![MetaKind::Exif]);
+        assert!(contains(&out.bytes, &own), "the target's EXIF stays");
+        let back = extract(&out.bytes);
+        assert_eq!(back.iptc, Some(iptc), "IPTC carried");
+    }
+
+    /// Where the container has no place for IPTC, or the layout is not one
+    /// inject knows, the report says so.
+    #[test]
+    fn inject_reports_what_the_container_cannot_take() {
+        let mut png = png_sig_ihdr();
+        super::png_chunk(&mut png, b"IEND", &[]);
+        let meta = Canonical {
+            xmp: Some(b"<x/>".to_vec()),
+            iptc: Some(b"Photoshop 3.0\0".to_vec()),
+            ..Default::default()
+        };
+        let out = inject_reporting(&png, &meta);
+        assert_eq!(out.dropped, vec![MetaKind::Iptc]);
+        assert!(contains(&out.bytes, b"<x/>"), "XMP carried");
+
+        let unknown = b"not an image at all".to_vec();
+        let out = inject_reporting(&unknown, &meta);
+        assert_eq!(out.bytes, unknown);
+        assert_eq!(out.dropped, vec![MetaKind::Xmp, MetaKind::Iptc]);
     }
 }

@@ -12,7 +12,6 @@ import '../../../app/theme/design_tokens.dart';
 import '../../../app/theme/motion.dart';
 import '../../../core/capabilities/format_capabilities.dart';
 import '../../../core/diagnostics/media_diagnostics.dart';
-import '../../../core/isolates/heavy_work.dart';
 import '../../../core/isolates/task_runner.dart';
 import '../../../data/index/index_providers.dart';
 import '../../../shared/widgets/widgets.dart';
@@ -29,6 +28,7 @@ import '../data/region_image.dart';
 import '../data/source_facts.dart';
 import '../domain/image_format_policy.dart';
 import '../../library/presentation/full_res_image.dart';
+import 'preview_encodes.dart';
 import 'widgets/compress_estimate_card.dart';
 import 'widgets/region_tiles.dart';
 
@@ -88,6 +88,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   // truth. Skipped for multi-select (that would mean loading every original —
   // which is exactly what the index-based estimate avoids).
   Uint8List? _originBytes;
+  String? _originId; // the image [_originBytes] belongs to
   Uint8List? _originShown; // what the "before" pane draws (IMG-13 on Android)
   int _beforeSize = 0;
   SourceFacts? _facts; // alpha + HDR of the ORIGINAL, read once per image
@@ -95,18 +96,16 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   NativeImageInfo? _info; // real bit depth / alpha / HDR of the source
   int _bitDepth = 0; // target: 0 = match source (preserves HDR), 8 = SDR
   EncodedImage? _encoded;
-  // Settings signature the live `_encoded` was produced with. The save reuses
-  // those bytes only when this still matches the current settings, so it can
-  // never write a stale encode (e.g. after the user nudged a slider).
-  String? _encodedSig;
   double _encodeMs = 0; // active image's real encode time (anchors the ETA)
   bool _encoding = false;
   bool _encodeFailed = false; // the last preview encode failed (no result)
-  int _encodeSeq = 0;
   Timer? _debounce;
-  // The preview waits in the heavy-work gate like a task (RUN-02); a newer
-  // one withdraws it if it has not started.
-  HeavyWorkTicket? _encodeTicket;
+  // Each encode keeps the request it started with; a change makes it stale
+  // at once, and the save reuses a result only under its own request (RV-01).
+  // It waits in the heavy-work gate like a task (RUN-02).
+  final _previews = PreviewEncodes();
+  int _loadGen = 0; // the newest _loadActive; an older one publishes nothing
+  int _estimateGen = 0; // likewise for _runEstimate
 
   // The compare panes show both images bounded from afar and read them by
   // tiles when zoomed (PERF-03), so neither is ever decoded whole. A region
@@ -139,7 +138,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   @override
   void dispose() {
     _debounce?.cancel();
-    _encodeTicket?.withdraw();
+    _previews.invalidate();
     _estimateDebounce?.cancel();
     _compareCtrl.dispose();
     _beforeRegion?.close();
@@ -161,6 +160,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   /// a batch estimate — so we never encode the whole selection (that OOM'd).
   Future<void> _loadActive() async {
     if (_ids.isEmpty) return;
+    final gen = ++_loadGen;
     final id = _ids[_activeAssetIndex];
     final entity = await AssetEntityCache.load(id);
     if (entity == null || !mounted) return;
@@ -193,14 +193,16 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
             origin,
             maxEdge: region != null ? _compareBaseEdge : _comparePreviewEdge,
           );
-    // Another image became active meanwhile: its own load fills the panes.
-    if (!mounted || _ids[_activeAssetIndex] != id) {
+    // Another load started meanwhile (another image, or A→B→A): it fills
+    // the panes.
+    if (!mounted || gen != _loadGen) {
       await region?.close();
       return;
     }
     setState(() {
       _previewBytes = thumb;
       _originBytes = origin;
+      _originId = id;
       _originShown = shown;
       _beforeRegion?.close();
       _beforeRegion = region;
@@ -216,24 +218,24 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
   /// single and multi (multi uses it as the preview + the estimate anchor).
   void _scheduleEncode() {
     if (_originBytes == null) return;
+    // What is in flight was asked for other settings.
+    _previews.invalidate();
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 350), _runEncode);
   }
 
   Future<void> _runEncode() async {
     final src = _originBytes;
-    if (src == null) return;
+    final request = _request(_originId);
+    if (src == null || request == null) return;
     final caps = ref.read(formatCapabilitiesProvider);
     final target = ImageFormatPolicy.resolve(
-      choice: _format,
+      choice: request.format,
       hasAlpha: _hasAlpha,
       caps: caps,
       giant: _facts?.giant ?? false,
     );
-    final q = _quality.round();
-    final seq = ++_encodeSeq;
-    _encodeTicket?.withdraw();
-    final ticket = _encodeTicket = HeavyWorkTicket();
+    final job = _previews.begin(request);
     setState(() {
       _encoding = true;
       _encodeFailed = false;
@@ -244,24 +246,24 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
       final result = await ImageEncoder.encode(
         source: src,
         target: target.format,
-        allowFormatFallback: _format == DefaultFormat.auto,
-        quality: q,
+        allowFormatFallback: request.format == DefaultFormat.auto,
+        quality: request.quality,
         facts:
             _facts ??
             const SourceFacts(alpha: null, directHdr: null, gainMap: null),
-        keepMetadata: _keepMetadata,
-        keepOriginalTime: _keepOriginalTime,
-        bitDepth: _bitDepth,
-        ticket: ticket,
+        keepMetadata: request.keepMetadata,
+        keepOriginalTime: request.keepOriginalTime,
+        bitDepth: request.bitDepth,
+        ticket: job.ticket,
       );
       sw.stop();
-      if (!mounted || seq != _encodeSeq) return;
+      if (!mounted || !_previews.isCurrent(job)) return;
       final region = await RegionImage.open(result.bytes);
       final shown = await PlatformPixels.forDisplay(
         result.bytes,
         maxEdge: region != null ? _compareBaseEdge : _comparePreviewEdge,
       );
-      if (!mounted || seq != _encodeSeq) {
+      if (!mounted || !_previews.complete(job, result)) {
         await region?.close();
         return;
       }
@@ -272,14 +274,14 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
         _afterRegion = region;
         _encodeMs = sw.elapsedMicroseconds / 1000.0;
         _encoding = false;
-        _encodedSig = _sig(q, _isSingle ? _bitDepth : 0);
       });
       if (!_isSingle) {
         _runEstimate(); // refine the batch estimate with the anchor
       }
     } catch (_) {
-      if (!mounted || seq != _encodeSeq) return;
+      if (!mounted || !_previews.isCurrent(job)) return;
       // No result for these settings: never show the previous ones' instead.
+      _previews.clear();
       setState(() {
         _encoding = false;
         _encodeFailed = true;
@@ -302,6 +304,7 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
 
   Future<void> _runEstimate() async {
     if (_isSingle) return;
+    final gen = ++_estimateGen;
     final ctrl = CompressEstimateController(ref);
     final q = _quality.round();
     // Anchor on the active image once its real encode is in.
@@ -314,7 +317,8 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
       anchorRealBytes: anchored ? _encoded!.bytes.length : null,
       anchorMs: anchored ? _encodeMs : null,
     );
-    if (!mounted) return;
+    // A newer estimate (other settings) runs or ran: this one is stale.
+    if (!mounted || gen != _estimateGen) return;
     setState(
       () => _estimate = EstimateResult(
         size: res.size,
@@ -446,11 +450,9 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
       return _tiledPane(_bounded(origin, _compareBaseEdge), region);
     }
     if (origin != null) return _bounded(origin, _comparePreviewEdge);
-    return Image.memory(
-      _previewBytes!,
-      fit: BoxFit.contain,
-      gaplessPlayback: true,
-    );
+    final thumb = _previewBytes;
+    if (thumb == null) return const SizedBox.shrink();
+    return Image.memory(thumb, fit: BoxFit.contain, gaplessPlayback: true);
   }
 
   /// Light note on a format: only what the active image has and that choice
@@ -486,10 +488,22 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
 
   void _switchActive(int newIndex) {
     if (newIndex == _activeAssetIndex) return;
+    // The previous image's encode, pending or done, is not this one's; nor
+    // are its bytes and facts, which a settings change would encode.
+    _debounce?.cancel();
+    _previews.invalidate();
+    _previews.clear();
     setState(() {
       _activeAssetIndex = newIndex;
       _previewBytes = null;
-      _encoded = null; // the old encode belonged to the previous image
+      _originBytes = null;
+      _originId = null;
+      _originShown = null;
+      _facts = null;
+      _info = null;
+      _encoding = false;
+      _encodeFailed = false;
+      _encoded = null;
       _encodedShown = null;
       _beforeRegion?.close();
       _beforeRegion = null;
@@ -501,25 +515,42 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
     _loadActive();
   }
 
-  /// Signature of the settings an encode was produced with — used to decide
-  /// whether the cached preview encode is still valid to reuse on save.
-  String _sig(int q, int bitDepth) =>
-      '${_ids[_activeAssetIndex]}|${_format.name}|$q|$_keepMetadata|$_keepOriginalTime|$bitDepth';
+  /// The current settings for image [id]; null without one. The depth is
+  /// the user's within what the resolved format offers (IMG-23).
+  PreviewRequest? _request(String? id) {
+    if (id == null) return null;
+    final caps = ref.read(formatCapabilitiesProvider);
+    final resolved = ImageFormatPolicy.resolve(
+      choice: _format,
+      hasAlpha: _hasAlpha,
+      caps: caps,
+      giant: _facts?.giant ?? false,
+    ).format;
+    return PreviewRequest(
+      assetId: id,
+      format: _format,
+      quality: _quality.round(),
+      keepMetadata: _keepMetadata,
+      keepOriginalTime: _keepOriginalTime,
+      bitDepth: _isSingle
+          ? ImageFormatPolicy.depthFor(_bitDepth, resolved, caps)
+          : 0,
+    );
+  }
 
   void _apply() {
     HapticFeedback.lightImpact();
     final l = AppLocalizations.of(context);
     final q = _quality.round();
-    final bitDepth = _isSingle ? _bitDepth : 0;
-    // Hand the engine the active image's already-finished encode when it still
-    // matches the current settings exactly — the task writes those bytes as-is
-    // (metadata + time + format already baked in) instead of encoding it again.
-    // For a single image that means the save is instant; for a batch it spares
-    // the previewed image a second pass. A pending/changed encode → null, so we
-    // never save stale bytes.
-    final canReuse =
-        !_encoding && _encoded != null && _encodedSig == _sig(q, bitDepth);
-    final activeId = _ids[_activeAssetIndex];
+    final request = _request(_ids[_activeAssetIndex])!;
+    // Hand the engine the active image's already-finished encode when it was
+    // made for this image and exactly these settings — the task writes those
+    // bytes as-is (metadata + time + format already baked in) instead of
+    // encoding it again. For a single image that means the save is instant;
+    // for a batch it spares the previewed image a second pass. A result made
+    // for anything else (RV-01) → null, so we never save stale bytes.
+    final activeId = request.assetId;
+    final reuse = _previews.reusable(request);
     // Enqueue the real engine — it encodes each id + saves a new gallery asset,
     // surfacing in the floating Tasks badge with progress/cancel.
     unawaited(
@@ -532,9 +563,9 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
               quality: q,
               keepMetadata: _keepMetadata,
               keepOriginalTime: _keepOriginalTime,
-              bitDepth: bitDepth,
-              precomputedId: canReuse ? activeId : null,
-              precomputed: canReuse ? _encoded : null,
+              bitDepth: request.bitDepth,
+              precomputedId: reuse == null ? null : activeId,
+              precomputed: reuse,
             ),
           ),
     );
@@ -593,7 +624,9 @@ class _CompressScreenState extends ConsumerState<CompressScreen> {
             ),
             child: AspectRatio(
               aspectRatio: 4 / 3,
-              child: _previewBytes == null
+              // The panes come from the original; the library may give no
+              // thumbnail (UI-10: iOS Photos makes none for a 10-bit AVIF).
+              child: (_originShown ?? _previewBytes) == null
                   ? Container(
                       decoration: BoxDecoration(
                         color: hc.surfaceSunken,

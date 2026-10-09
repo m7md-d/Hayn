@@ -66,6 +66,22 @@ abstract final class ImageFormatPolicy {
     };
   }
 
+  /// Whether [format] (resolved) is offered at 10 bits: AVIF always
+  /// (DarkLib), HEIC where its encoder writes it (IMG-23).
+  static bool offersTenBit(DefaultFormat format, FormatCapabilities caps) =>
+      format != DefaultFormat.heic || caps.heicTenBit;
+
+  /// The depth an encode into [format] (resolved) takes for the user's
+  /// [chosen] one (0 = match, 8, 10): the choice, within what the format
+  /// offers. A 10 picked for AVIF is 8 for a HEIC that has no 10, and 10
+  /// again back on AVIF; the encoder holds an output to the depth it is
+  /// given, so it must never be given one it cannot write.
+  static int depthFor(
+    int chosen,
+    DefaultFormat format,
+    FormatCapabilities caps,
+  ) => chosen == 10 && !offersTenBit(format, caps) ? 8 : chosen;
+
   /// Resolve the concrete target format for an encode.
   ///
   /// * [choice] == auto → the efficiency tree, branched on [hasAlpha]:

@@ -245,11 +245,22 @@ abstract final class DarkLibCore {
   static Future<Uint8List?> transplantMetadata({
     required Uint8List source,
     required Uint8List target,
-  }) => _call(
-    MediaOperation.transplant,
-    () => rust.transplantMetadata(source: source, target: target),
-    isEmpty: (b) => b.isEmpty,
-  );
+  }) async {
+    final out = await _call(
+      MediaOperation.transplant,
+      () => rust.transplantMetadata(source: source, target: target),
+      isEmpty: (t) => t.bytes.isEmpty,
+    );
+    // What the target's container could not take, one record a kind (RV-04).
+    for (final _ in out?.dropped ?? const []) {
+      MediaDiagnostics.record(
+        MediaBackend.darklib,
+        MediaOperation.transplant,
+        MediaDiagnosticCode.metadataDropped,
+      );
+    }
+    return out?.bytes;
+  }
 }
 
 /// Terminal veto from the current String-error FFI. No source data is retained.

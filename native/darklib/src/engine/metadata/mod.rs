@@ -16,7 +16,7 @@ pub mod webp;
 mod xmp;
 
 pub use extract::extract;
-pub use inject::inject;
+pub use inject::{inject, inject_reporting, Injected};
 
 use crate::engine::error::{DarkError, Result};
 use crate::engine::format::{detect, ImageFormat};
@@ -32,6 +32,15 @@ pub struct Canonical {
     pub icc: Option<Vec<u8>>,
     pub iptc: Option<Vec<u8>>,
     pub orientation: u16,
+}
+
+/// A kind of metadata [`Canonical`] carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MetaKind {
+    Exif,
+    Xmp,
+    Icc,
+    Iptc,
 }
 
 /// What to do with the ICC colour profile when stripping. Removing it blind

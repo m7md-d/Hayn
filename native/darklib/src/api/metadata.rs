@@ -91,14 +91,24 @@ pub struct MetadataSummary {
     pub tag_count: u32,
 }
 
-/// Copy `source`'s metadata (EXIF/XMP/ICC, kept verbatim) into the
+/// What [`transplant_metadata`] made: `target` with `source`'s metadata, and
+/// the kinds `source` held that `target` could not take (Hayn RV-04): a JPEG
+/// segment past 64 KB, IPTC where the container has no place for it, or a
+/// layout outside the supported ones, which leaves `target` as it was.
+pub struct Transplanted {
+    pub bytes: Vec<u8>,
+    pub dropped: Vec<em::MetaKind>,
+}
+
+/// Copy `source`'s metadata (EXIF/XMP/ICC/IPTC, kept verbatim) into the
 /// already-encoded `target` — e.g. carry camera metadata into a hardware
 /// encoder's AVIF output, which the platform encoder itself can't do. Lossless
-/// container surgery on `target`; returns `target` unchanged when nothing can
-/// be carried safely (the verify-or-bail rule). Runs off the Dart isolate.
-pub fn transplant_metadata(source: Vec<u8>, target: Vec<u8>) -> Vec<u8> {
+/// container surgery on `target`, never a corrupt file; what it could not
+/// carry is reported, not dropped unsaid. Runs off the Dart isolate.
+pub fn transplant_metadata(source: Vec<u8>, target: Vec<u8>) -> Transplanted {
     let meta = em::extract(&source);
-    em::inject(&target, &meta)
+    let em::Injected { bytes, dropped } = em::inject_reporting(&target, &meta);
+    Transplanted { bytes, dropped }
 }
 
 /// Summarise the metadata present in an image. Cheap container scan → sync.

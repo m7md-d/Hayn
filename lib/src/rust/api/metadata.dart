@@ -4,6 +4,7 @@
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
 import '../engine/format.dart';
+import '../engine/metadata.dart';
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
@@ -33,12 +34,12 @@ Future<Uint8List> stripMetadata({
   stripIcc: stripIcc,
 );
 
-/// Copy `source`'s metadata (EXIF/XMP/ICC, kept verbatim) into the
+/// Copy `source`'s metadata (EXIF/XMP/ICC/IPTC, kept verbatim) into the
 /// already-encoded `target` — e.g. carry camera metadata into a hardware
 /// encoder's AVIF output, which the platform encoder itself can't do. Lossless
-/// container surgery on `target`; returns `target` unchanged when nothing can
-/// be carried safely (the verify-or-bail rule). Runs off the Dart isolate.
-Future<Uint8List> transplantMetadata({
+/// container surgery on `target`, never a corrupt file; what it could not
+/// carry is reported, not dropped unsaid. Runs off the Dart isolate.
+Future<Transplanted> transplantMetadata({
   required List<int> source,
   required List<int> target,
 }) => DarkLib.instance.api.crateApiMetadataTransplantMetadata(
@@ -144,4 +145,26 @@ class MetadataSummary {
           hasCamera == other.hasCamera &&
           orientation == other.orientation &&
           tagCount == other.tagCount;
+}
+
+/// What [`transplant_metadata`] made: `target` with `source`'s metadata, and
+/// the kinds `source` held that `target` could not take (Hayn RV-04): a JPEG
+/// segment past 64 KB, IPTC where the container has no place for it, or a
+/// layout outside the supported ones, which leaves `target` as it was.
+class Transplanted {
+  final Uint8List bytes;
+  final List<MetaKind> dropped;
+
+  const Transplanted({required this.bytes, required this.dropped});
+
+  @override
+  int get hashCode => bytes.hashCode ^ dropped.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Transplanted &&
+          runtimeType == other.runtimeType &&
+          bytes == other.bytes &&
+          dropped == other.dropped;
 }

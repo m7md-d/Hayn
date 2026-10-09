@@ -9,6 +9,8 @@ import 'package:integration_test/integration_test.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:hayn/core/capabilities/format_capabilities.dart';
 import 'package:hayn/core/darklib/darklib.dart';
+import 'package:hayn/core/isolates/heavy_work.dart';
+import 'package:hayn/features/image_ops/data/image_crop_task.dart';
 import 'package:hayn/features/image_ops/data/image_encoder.dart';
 import 'package:hayn/features/image_ops/data/region_image.dart';
 import 'package:hayn/features/image_ops/data/source_facts.dart';
@@ -159,6 +161,46 @@ void main() {
       row['peakAboveBeforeMb'] = _mb(peak - before);
       report[name] = row;
       debugPrint('LARGE done $name: $row');
+    }
+    // The crop holds one admission from its bake to its encode (RV-02):
+    // its peak sizes that admission's estimate. Measured with a gate that
+    // reads no memory, so the figure is the crop's own: the whole frame
+    // turned a quarter, the costliest transform, at 12 and 200 MP.
+    final gate = HeavyWork.instance;
+    HeavyWork.instance = HeavyWork(memory: () async => null);
+    try {
+      for (final (name, bytes) in [
+        ('crop12mp', await _fixture('photo-12mp.jpg')),
+        ('crop200mp', source),
+      ]) {
+        final pixels = await _size(bytes);
+        debugPrint('LARGE start $name');
+        report[name] = await _peak(() async {
+          final out = await ImageCropTask.crop(
+            bytes,
+            rotationQuarters: 1,
+            flipH: false,
+            flipV: false,
+            cropFraction: const Rect.fromLTWH(0, 0, 1, 1),
+            quality: 90,
+            caps: caps,
+          );
+          final outSize = await _size(out!.bytes);
+          return {
+            'size': '${pixels.$1}x${pixels.$2}',
+            'format': out.format.name,
+            'backend': out.backend?.name,
+            'outSize': '${outSize.$1}x${outSize.$2}',
+          };
+        });
+        final row = report[name]! as Map<String, Object?>;
+        final above = row['peakAboveBeforeMb'] as int;
+        row['bytesPerPixel'] = (above * 1048576 / (pixels.$1 * pixels.$2))
+            .toStringAsFixed(1);
+        debugPrint('LARGE done $name: $row');
+      }
+    } finally {
+      HeavyWork.instance = gate;
     }
   }, timeout: const Timeout(Duration(minutes: 60)));
 }

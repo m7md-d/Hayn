@@ -1,6 +1,6 @@
 # 21 — مهام الماك
 
-آخر تحديث: 2026-10-09. هذا الملف قناة بين جلسات لينكس والماك. التطوير الرئيسي صار على لينكس ([20-LINUX-WORKFLOW](20-LINUX-WORKFLOW.md))، ولا يستطيع بناء iOS ولا تجربته على الآيفون ولا تشغيل قارئي ImageIO وAVFoundation. **وكيل لينكس يسجل هنا ما يلزم تحققه على الماك، ووكيل الماك ينفذه ويكتب النتيجة.**
+آخر تحديث: 2026-10-09 (M-09 مفتوحة). هذا الملف قناة بين جلسات لينكس والماك. التطوير الرئيسي صار على لينكس ([20-LINUX-WORKFLOW](20-LINUX-WORKFLOW.md))، ولا يستطيع بناء iOS ولا تجربته على الآيفون ولا تشغيل قارئي ImageIO وAVFoundation. **وكيل لينكس يسجل هنا ما يلزم تحققه على الماك، ووكيل الماك ينفذه ويكتب النتيجة.**
 
 **الفرق عن [17-TODO](17-TODO.md):** TODO لما يعجز عنه الجميع الآن لغياب جهاز أو عينة أو إذن. هنا ما يستطيعه الماك فعلًا بأدواته الحالية وبهاتف المستخدم متى وصّله، وينتظر جلسة على الماك فقط.
 
@@ -30,7 +30,7 @@
 | **F3** | قارئ ImageIO المستقل على نواتج F2 | `xcrun swift -module-cache-path /Volumes/CUSU/Development/caches/swift-preservation test_native/inspect_ios_outputs.swift build/ios-preservation/<الجولة>` | يوافق على كل الملفات. وسكربتات `test_native/compare_*.swift` المتعلقة بما تغيّر. وملفات HEIC بالبلاطات من Android: `swift test_native/check_heic_tiles.swift <results>`. وبلاطات AVIF من `ios_region_test.dart`: `swift test_native/compare_region_tiles.swift <results>` |
 | **F4** | اختبار الأداء على الآيفون | `tool/test_performance.sh <معرّف الجهاز>` | **8 من 8** بلا تجاوز للحدود ([18-PERFORMANCE](18-PERFORMANCE.md)). يحتاج iPhone 13 Pro موصولًا ومفتوحًا؛ يبقي التطبيق ويثبّت release بعده |
 | **F5** | لقطات README | `tool/screenshots/generate.sh` | لقطات جديدة من محاكي، بلا تعديل يدوي ([presentation.md](../.claude/rules/presentation.md)) |
-| **F6** | الجسر الحقيقي على الماك | `cargo build --locked` في `native/darklib` ثم `flutter test --no-pub test_native/darklib_host_test.dart --dart-define=DARKLIB_TEST_LIBRARY=<المسار>/libdarklib.dylib` | **14 ناجحة** (منذ 2026-10-03؛ كانت 10 ثم 12 ثم 13) |
+| **F6** | الجسر الحقيقي على الماك | `cargo build --locked` في `native/darklib` ثم `flutter test --no-pub test_native/darklib_host_test.dart --dart-define=DARKLIB_TEST_LIBRARY=<المسار>/libdarklib.dylib` | **17 ناجحة** (منذ 2026-10-09؛ كانت 14 ثم 16) |
 
 **أحد هذه لا يُعاد بلا سبب:** المحاكي (F2) والبناء (F1) يستغرقان وقتًا ويثقلان الماك. لا تضف F2 إلى مهمة إن لم تمس الشفرة التي يغطيها (الجدول التالي).
 
@@ -70,7 +70,23 @@
 
 ## المفتوحة
 
-_لا شيء مفتوح._
+### M-09 · HEIC بعمق 10 على iOS، وشاشة الضغط بلا صورة مصغّرة، ونقل البيانات بتقرير، ومراجعة الكود
+- **الحالة:** مفتوحة
+- **طلبها:** وكيل لينكس، 2026-10-09 (بعد نتيجة M-08 والمراجعة الخارجية [24](24-CODE-REVIEW.md))
+- **ما تغيّر:**
+  - **Swift (`AppDelegate.swift`، `ImageEncoderNative`):** `redraw16Bit` يرسم الصورة في سياق 16 بت للقناة (64 بت للبكسل، `premultipliedLast` أو `noneSkipLast`، في فضاء لونها) حين يُطلب HEIC بعمق 10 والصورة 8، كما نجح في `m08-step4-heic16-mac-20261009.log`. وإن فشل يعيد nil. **لم يُبنَ على لينكس.**
+  - **Dart:** العمق المختار (8 أو 10) يُقرأ من رأس HEIC وAVIF الناتج، وناتج بعمق آخر ليس النتيجة (`depthMismatch`). وتقدير الذاكرة لـHEIC بعمق 10 من مصدر 8 خارج Android ‏9 بايتات للبكسل (لم يُقس). وشاشة الضغط تبني اللوحة من الأصل حين لا صورة مصغّرة (UI-10). وهوية نتيجة المعاينة (RV-01)، والبوابة (RV-02/RV-03)، والقص في قبول واحد.
+  - **DarkLib وFFI:** `transplant_metadata` يعيد `Transplanted { bytes, dropped }`، فأعيد توليد الروابط (ومعها `lib/src/rust/engine/metadata.dart`). وICC في JPEG بأجزاء مرقمة، وقراءته بأرقامها، وIPTC في APP13 (RV-04).
+- **البنود:** IMG-23، UI-10، RV-01 إلى RV-04، RUN-02.
+- **يلزم:** توصيل الآيفون للخطوات 3 إلى 5.
+- **الخطوات:**
+  1. F1 (Swift وFFI تغيّرتا)، وF6 (**17**، فيها «a large profile crosses in numbered chunks; what cannot is recorded»).
+  2. `cargo test --locked` في `native/darklib` (**158**). وF2 (على الآيفون كما في M-08 إن طلب المستخدم، وإلا المحاكي) وF3.
+  3. **`ios_region_test.dart` على الآيفون:** «Compare: checker.avif» يعرض «قبل» و«بعد» بلا صورة مصغّرة، و«Depth»: HEIC بـ«10 بت» من JPEG بعمق 8 يخرج **10** بقراءة DarkLib وImageIO و`sips`، وألوانه كألوان الـ8 (فرق متوسط صغير)، وصورته المصغّرة في Photos. وإن خرج 8 فالمتوقع الآن فشل الترميز بـ`depthMismatch`، لا ملف 8 على أنه 10: سجّله.
+  4. **ذروة HEIC بعمق 10 لـ200 ميقابكسل:** `HAYN_PERF_LARGE=1 tool/test_performance.sh <الجهاز>` بعد إضافة صف HEIC بـ`bitDepth: 10` في `large_image_test.dart` (مؤقتًا، أو دائمًا إن رأيته مفيدًا). المتوقع نحو 8 بايتات للبكسل (+1.5GB) مقابل التقدير 9 (1.7GB)، والمتاح نحو 2.68GB. وفي التشغيل نفسه صفا `crop12mp` و`crop200mp` (القص في قبول واحد).
+  5. F4: لا تجاوز ولا استثناء.
+- **النجاح:** بناء نظيف، وF6 ‏17، وRust ‏158، وF2 ‏11، والخطوات 3 إلى 5 كما وُصفت.
+- **يُعاد إلى لينكس:** عمق HEIC الذي كُتب وألوانه، وذروة HEIC بعمق 10 وزمنه، وصفا القص وبايتاتهما للبكسل على الآيفون، وحجم `Runner.app`، وأي فشل.
 
 ## المنفذة
 

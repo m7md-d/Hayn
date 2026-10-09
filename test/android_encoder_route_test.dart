@@ -9,6 +9,8 @@ import 'package:hayn/features/image_ops/data/image_encoder.dart';
 import 'package:hayn/features/image_ops/data/native_image_encoder.dart';
 import 'package:hayn/features/image_ops/data/source_facts.dart';
 import 'package:hayn/features/settings/providers/preferences_providers.dart';
+import 'package:hayn/src/rust/api/metadata.dart';
+import 'package:hayn/src/rust/engine/metadata.dart';
 import 'package:hayn/src/rust/frb_generated.dart';
 
 import 'support/encoded_headers.dart';
@@ -25,6 +27,26 @@ import 'support/encoded_headers.dart';
 
 class _Api extends Fake implements DarkLibApi {
   final metadataCalls = <String>[];
+  List<MetaKind> dropped = const [];
+
+  /// The depth an output's header reports; null: no header read.
+  int? writtenDepth;
+
+  @override
+  Future<Facts> crateApiInspectInspectImage({required List<int> bytes}) async {
+    final depth = writtenDepth;
+    if (depth == null) throw 'malformed: test';
+    return Facts(
+      transfer: Transfer.noHdrSignal,
+      gainMap: Presence.absent,
+      alpha: Presence.absent,
+      width: 16,
+      height: 12,
+      orientation: 0,
+      bitDepth: depth,
+    );
+  }
+
   final reencodeQualities = <int>[];
   String? reencodeError;
 
@@ -46,12 +68,12 @@ class _Api extends Fake implements DarkLibApi {
   }) async => AlphaKept.lost;
 
   @override
-  Future<Uint8List> crateApiMetadataTransplantMetadata({
+  Future<Transplanted> crateApiMetadataTransplantMetadata({
     required List<int> source,
     required List<int> target,
   }) async {
     metadataCalls.add('transplant');
-    return Uint8List.fromList(target);
+    return Transplanted(bytes: Uint8List.fromList(target), dropped: dropped);
   }
 
   @override
@@ -176,6 +198,19 @@ void main() {
     expect(api.metadataCalls, ['transplant']);
   });
 
+  // RV-04: a kind the output's container cannot take is recorded, not
+  // dropped unsaid; the rest is carried.
+  test('what the output could not take is in the diagnosis', () async {
+    api.dropped = const [MetaKind.iptc];
+    addTearDown(() => api.dropped = const []);
+    final r = await heic(opaque, keepMetadata: true);
+    expect(r.backend, MediaBackend.androidHeic);
+    expect(
+      r.diagnostics.map((d) => d.code),
+      contains(MediaDiagnosticCode.metadataDropped),
+    );
+  });
+
   test('a 12 MP source takes the tiles too, with its profile', () async {
     for (final keepMetadata in [false, true]) {
       api.metadataCalls.clear();
@@ -255,6 +290,44 @@ void main() {
     expect(await depthFor(0, 10), 10);
     expect(await depthFor(0, 8), 8);
     expect(await depthFor(0, null), 8);
+  });
+
+  // IMG-23 (M-08): the depth the user chose binds. iOS ImageIO wrote an
+  // 8-bit HEIC for a 10-bit request; an output of another depth is not the
+  // result, whatever engine made it.
+  test('an output not at the chosen depth is not taken', () async {
+    api.writtenDepth = 8;
+    addTearDown(() => api.writtenDepth = null);
+    ImageEncodingFailure? failure;
+    try {
+      await ImageEncoder.encode(
+        source: source,
+        target: DefaultFormat.heic,
+        quality: 85,
+        facts: opaque,
+        keepMetadata: false,
+        bitDepth: 10,
+      );
+    } on ImageEncodingFailure catch (e) {
+      failure = e;
+    }
+    expect(
+      failure?.diagnostics.map((d) => d.code),
+      contains(MediaDiagnosticCode.depthMismatch),
+    );
+    // At the chosen depth, or "match", it is.
+    api.writtenDepth = 10;
+    expect(
+      (await ImageEncoder.encode(
+        source: source,
+        target: DefaultFormat.heic,
+        quality: 85,
+        facts: opaque,
+        keepMetadata: false,
+        bitDepth: 10,
+      )).backend,
+      MediaBackend.androidHeic,
+    );
   });
 
   test('HEIC depth: no Main10 writes 8, recorded', () async {

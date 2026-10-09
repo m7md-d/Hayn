@@ -106,7 +106,10 @@ abstract final class ImageEncoder {
   ///
   /// Runs through [HeavyWork] (RUN-02) with [memoryEstimate]: it waits its
   /// turn, fails with `insufficientMemory` when it can never fit, and throws
-  /// [HeavyWorkWithdrawn] when [ticket] is withdrawn before it starts.
+  /// [HeavyWorkWithdrawn] when [ticket] is withdrawn before it starts. With
+  /// [withinAdmission], the caller already runs in the admission [ticket]
+  /// holds, whose estimate covers this encode (the crop, RV-02): it does not
+  /// queue again, since a nested admission could wait on its own holder.
   static Future<EncodedImage> encode({
     required Uint8List source,
     required DefaultFormat target,
@@ -116,9 +119,8 @@ abstract final class ImageEncoder {
     bool allowFormatFallback = false,
     bool keepOriginalTime = true,
     int bitDepth = 0,
-    int? maxWidth,
-    int? maxHeight,
     HeavyWorkTicket? ticket,
+    bool withinAdmission = false,
   }) => MediaDiagnostics.trace((trace) async {
     if (target == DefaultFormat.auto) {
       // Auto must be resolved by ImageFormatPolicy before encoding.
@@ -129,15 +131,9 @@ abstract final class ImageEncoder {
       );
       throw ImageEncodingFailure(target, trace.events);
     }
-    Future<EncodedImage> admitted(JpegRoute route) => HeavyWork.instance.run(
-      estimateBytes: memoryEstimate(
-        facts,
-        target,
-        source.length,
-        jpegRoute: route,
-      ),
-      ticket: ticket,
-      body: () => _admitted(
+    final job = ticket ?? HeavyWorkTicket();
+    Future<EncodedImage> admitted(JpegRoute route) {
+      Future<EncodedImage> body() => _admitted(
         trace: trace,
         source: source,
         target: target,
@@ -147,11 +143,23 @@ abstract final class ImageEncoder {
         allowFormatFallback: allowFormatFallback,
         keepOriginalTime: keepOriginalTime,
         bitDepth: bitDepth,
-        maxWidth: maxWidth,
-        maxHeight: maxHeight,
         jpegRoute: route,
-      ),
-    );
+        ticket: job,
+      );
+      if (withinAdmission) return body();
+      return HeavyWork.instance.run(
+        estimateBytes: memoryEstimate(
+          facts,
+          target,
+          source.length,
+          jpegRoute: route,
+          bitDepth: bitDepth,
+        ),
+        ticket: job,
+        body: body,
+      );
+    }
+
     try {
       final route = jpegRoute(source, target, facts);
       try {
@@ -180,9 +188,8 @@ abstract final class ImageEncoder {
     required bool allowFormatFallback,
     required bool keepOriginalTime,
     required int bitDepth,
-    required int? maxWidth,
-    required int? maxHeight,
     required JpegRoute jpegRoute,
+    required HeavyWorkTicket ticket,
   }) async {
     // PQ/HLG samples read as sRGB are a wrong image, so no engine receives the
     // original: only ImageIO's tone-mapped SDR rendition may continue (the
@@ -259,7 +266,12 @@ abstract final class ImageEncoder {
         );
       }
       input = flat;
-      plan = const SourceFacts.sdr(alpha: false);
+      // The flattened PNG keeps the size: what the plan and the gate need.
+      plan = SourceFacts.sdr(
+        alpha: false,
+        width: plan.width,
+        height: plan.height,
+      );
       flattened = true;
     }
     final hasAlpha = plan.alpha;
@@ -274,6 +286,22 @@ abstract final class ImageEncoder {
           MediaOperation.encode,
           MediaDiagnosticCode.formatFallback,
         );
+        // Admitted for the target's estimate: a costlier fallback (HEIC to
+        // WebP is 1 to 17 bytes a pixel) runs only if its own fits (RV-03).
+        final need = memoryEstimate(
+          plan,
+          fmt,
+          input.length,
+          bitDepth: bitDepth,
+        );
+        if (!await HeavyWork.instance.grow(ticket, need)) {
+          MediaDiagnostics.record(
+            MediaBackend.imageEncoder,
+            MediaOperation.encode,
+            MediaDiagnosticCode.insufficientMemory,
+          );
+          continue;
+        }
       }
       EncodedImage? encoded;
       try {
@@ -285,8 +313,6 @@ abstract final class ImageEncoder {
           keepMetadata: keepMetadata,
           keepOriginalTime: keepOriginalTime,
           bitDepth: bitDepth,
-          maxWidth: maxWidth,
-          maxHeight: maxHeight,
           jpegRoute: fmt == target ? jpegRoute : JpegRoute.platform,
         );
       } on DarkLibPreservationFailure {
@@ -302,6 +328,7 @@ abstract final class ImageEncoder {
           );
           continue;
         }
+        if (!await _keepsDepth(encoded, fmt, bitDepth)) continue;
         if (hasAlpha == true) {
           // Alpha values, not channel presence: a platform decode can return
           // a channel that is opaque everywhere (IMG-15).
@@ -361,17 +388,28 @@ abstract final class ImageEncoder {
   /// streaming JPEG path holds DarkLib's copy of the source and two codings of
   /// the output (standard tables, then optimal), each under half a byte per
   /// pixel at quality 95 (+293 MB for a detailed 200 MP image, 110 MB source,
-  /// docs/23-LARGE-IMAGES.md). Unknown size: 0, so only the count limits it.
+  /// docs/23-LARGE-IMAGES.md). A 10-bit HEIC of an 8-bit source off Android
+  /// is drawn at 16 bits a channel first (IMG-23): 8 bytes a pixel, plus one,
+  /// not measured yet (M-09). HEIC on iOS measured +34 MB at 200 MP otherwise
+  /// (M-05), under the byte a pixel. Unknown size: 0, so only the count
+  /// limits it.
   static int memoryEstimate(
     SourceFacts facts,
     DefaultFormat target,
     int sourceBytes, {
     JpegRoute jpegRoute = JpegRoute.platform,
+    int bitDepth = 0,
   }) {
     final w = facts.width, h = facts.height;
     if (w == null || h == null) return 0;
     if (target == DefaultFormat.jpeg && jpegRoute == JpegRoute.stream) {
       return 2 * sourceBytes + w * h + (64 << 20);
+    }
+    if (target == DefaultFormat.heic &&
+        bitDepth == 10 &&
+        (facts.bitDepth ?? 8) <= 8 &&
+        !NativeImageEncoder.android) {
+      return w * h * 9 + 2 * sourceBytes;
     }
     final perPixel = switch (target) {
       DefaultFormat.heic => 1,
@@ -451,8 +489,6 @@ abstract final class ImageEncoder {
     required bool keepMetadata,
     bool keepOriginalTime = true,
     int bitDepth = 0,
-    int? maxWidth,
-    int? maxHeight,
     JpegRoute jpegRoute = JpegRoute.platform,
   }) async {
     final hasAlpha = facts.alpha;
@@ -504,7 +540,7 @@ abstract final class ImageEncoder {
           format: DarkLibFormat.avif,
           quality: quality,
           keepMetadata: keepMetadata,
-          maxEdge: maxWidth ?? 0,
+          maxEdge: 0,
           bitDepth: bitDepth,
         );
         if (dark != null) {
@@ -530,7 +566,7 @@ abstract final class ImageEncoder {
             format: DarkLibFormat.avif,
             quality: quality,
             keepMetadata: keepMetadata,
-            maxEdge: maxWidth ?? 0,
+            maxEdge: 0,
             bitDepth: bitDepth,
           );
           if (bridged != null) {
@@ -587,7 +623,7 @@ abstract final class ImageEncoder {
           format: DarkLibFormat.webp,
           quality: quality,
           keepMetadata: keepMetadata,
-          maxEdge: maxWidth ?? 0,
+          maxEdge: 0,
         );
         if (dark != null) {
           return EncodedImage(
@@ -609,7 +645,7 @@ abstract final class ImageEncoder {
             format: DarkLibFormat.webp,
             quality: quality,
             keepMetadata: keepMetadata,
-            maxEdge: maxWidth ?? 0,
+            maxEdge: 0,
           );
           if (bridged != null) {
             return EncodedImage(
@@ -622,11 +658,9 @@ abstract final class ImageEncoder {
         }
       }
 
-      final noCap = maxWidth == null && maxHeight == null;
-
       // Prefer upright platform pixels for PNG; source preservation remains
       // subject to the colour/HDR limitations in the stabilization plan.
-      if (noCap && format == DefaultFormat.png) {
+      if (format == DefaultFormat.png) {
         final baked = await NativeImageEncoder.bakeUpright(
           source: source,
           keepMetadata: keepMetadata,
@@ -648,8 +682,7 @@ abstract final class ImageEncoder {
       // 2026-10-09). The source's profile and, on request, its metadata
       // carried by DarkLib. No alpha plane: a transparent source has no HEIC
       // on Android (IMG-19).
-      if (noCap &&
-          format == DefaultFormat.heic &&
+      if (format == DefaultFormat.heic &&
           NativeImageEncoder.androidHeic &&
           hasAlpha != true &&
           facts.directHdr != true) {
@@ -673,9 +706,7 @@ abstract final class ImageEncoder {
       // re-encodes it in bands with the stored orientation and the metadata
       // as it is (the EXIF orientation with it); a strip when the user asked.
       // Declined, the encode is admitted again for the platform path.
-      if (noCap &&
-          format == DefaultFormat.jpeg &&
-          jpegRoute == JpegRoute.stream) {
+      if (format == DefaultFormat.jpeg && jpegRoute == JpegRoute.stream) {
         backend = MediaBackend.darklibJpeg;
         var out = isJpeg(source)
             ? await DarkLibCore.jpegReencode(
@@ -700,7 +731,7 @@ abstract final class ImageEncoder {
       // Android JPEG from any other source, or a JPEG the stream declined
       // (IMG-24): 8-bit pixels from the platform decoder and libjpeg-turbo,
       // the source's profile and metadata carried by DarkLib.
-      if (noCap && format == DefaultFormat.jpeg && NativeImageEncoder.android) {
+      if (format == DefaultFormat.jpeg && NativeImageEncoder.android) {
         backend = MediaBackend.androidJpeg;
         final jpeg = await NativeImageEncoder.encodeJpeg(
           source: source,
@@ -726,7 +757,7 @@ abstract final class ImageEncoder {
       // HEIC/JPEG viewers honour). Native returns null off-iOS / on failure, so
       // the plugin below stays the safety net.
       const nativeFormats = {DefaultFormat.heic, DefaultFormat.jpeg};
-      if (noCap && nativeFormats.contains(format)) {
+      if (nativeFormats.contains(format)) {
         final native = await NativeImageEncoder.encode(
           source: source,
           format: format == DefaultFormat.heic ? 'heic' : 'jpeg',
@@ -744,15 +775,15 @@ abstract final class ImageEncoder {
         }
       }
 
-      // Huge default bounds = "keep original dimensions"; a real cap only when
-      // the caller asks for one. flutter_image_compress scales DOWN to fit.
+      // Huge bounds = "keep original dimensions": flutter_image_compress
+      // scales DOWN to fit them.
       backend = MediaBackend.imageCompress;
       final out = await fic.FlutterImageCompress.compressWithList(
         source,
         format: cf,
         quality: quality.clamp(1, 100),
-        minWidth: maxWidth ?? 1000000,
-        minHeight: maxHeight ?? 1000000,
+        minWidth: 1000000,
+        minHeight: 1000000,
         keepExif: keepMetadata && _supportsKeepExif(format),
       );
       return _result(out, format, backend);
@@ -768,6 +799,30 @@ abstract final class ImageEncoder {
       );
       return null;
     }
+  }
+
+  /// Whether [out] has the depth the user chose, 8 or 10, for HEIC or AVIF:
+  /// the choice binds (IMG-23), and an engine writes what it is given — iOS
+  /// ImageIO wrote an 8-bit HEIC for a 10-bit request (M-08), the transitional
+  /// AVIF plugin takes no depth at all. A mismatch is recorded and the output
+  /// is not this format's result. "Match" (0) and unread headers pass.
+  static Future<bool> _keepsDepth(
+    EncodedImage out,
+    DefaultFormat format,
+    int bitDepth,
+  ) async {
+    if (bitDepth != 8 && bitDepth != 10) return true;
+    if (format != DefaultFormat.heic && format != DefaultFormat.avif) {
+      return true;
+    }
+    final written = (await DarkLibCore.inspect(out.bytes))?.bitDepth ?? 0;
+    if (written == 0 || written == bitDepth) return true;
+    MediaDiagnostics.record(
+      out.backend ?? MediaBackend.imageEncoder,
+      MediaOperation.encode,
+      MediaDiagnosticCode.depthMismatch,
+    );
+    return false;
   }
 
   // Container identity only, not proof of complete decoding or HDR fidelity.

@@ -72,9 +72,18 @@ enum MediaDiagnosticCode {
   insufficientMemory,
   depthReduced,
 
+  /// An output whose depth is not the 8 or 10 the user chose (IMG-23): not
+  /// taken as that format's result.
+  depthMismatch,
+
   /// A valid source the engine's path does not take (a progressive or CMYK
   /// JPEG for the streaming re-encode): another path takes it.
   unsupportedSource,
+
+  /// A kind of the source's metadata the output's container could not take
+  /// (a JPEG segment past 64 KB, IPTC outside JPEG): the rest was carried
+  /// (RV-04).
+  metadataDropped,
 }
 
 /// Codes only: never retain media, paths, asset IDs, metadata or raw exceptions.

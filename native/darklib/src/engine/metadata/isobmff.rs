@@ -1819,10 +1819,20 @@ fn rebuild_iloc_drop(b: &[u8], iloc: Bx, src: &Iloc, victims: &HashSet<u32>) -> 
 /// the supported subset (single `mdat`, method-0 items) the input is returned
 /// unchanged — never a corrupt file.
 pub fn inject(b: &[u8], exif: Option<&[u8]>, xmp: Option<&[u8]>, icc: Option<&[u8]>) -> Vec<u8> {
+    try_inject(b, exif, xmp, icc).unwrap_or_else(|| b.to_vec())
+}
+
+/// [`inject`], or `None` outside the supported subset.
+pub fn try_inject(
+    b: &[u8],
+    exif: Option<&[u8]>,
+    xmp: Option<&[u8]>,
+    icc: Option<&[u8]>,
+) -> Option<Vec<u8>> {
     if exif.is_none() && xmp.is_none() && icc.is_none() {
-        return b.to_vec();
+        return Some(b.to_vec());
     }
-    inject_inner(b, exif, xmp, icc).unwrap_or_else(|| b.to_vec())
+    inject_inner(b, exif, xmp, icc)
 }
 
 fn parse_pitm(b: &[u8], pitm: Bx) -> Option<u32> {

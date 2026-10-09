@@ -986,6 +986,20 @@ impl SseDecode for crate::engine::format::ImageFormat {
     }
 }
 
+impl SseDecode for Vec<crate::engine::metadata::MetaKind> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::engine::metadata::MetaKind>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<f32> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1031,6 +1045,20 @@ impl SseDecode for Vec<crate::api::region::RegionTile> {
             ans_.push(<crate::api::region::RegionTile>::sse_decode(deserializer));
         }
         return ans_;
+    }
+}
+
+impl SseDecode for crate::engine::metadata::MetaKind {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::engine::metadata::MetaKind::Exif,
+            1 => crate::engine::metadata::MetaKind::Xmp,
+            2 => crate::engine::metadata::MetaKind::Icc,
+            3 => crate::engine::metadata::MetaKind::Iptc,
+            _ => unreachable!("Invalid variant for MetaKind: {}", inner),
+        };
     }
 }
 
@@ -1145,6 +1173,18 @@ impl SseDecode for crate::engine::inspect::Transfer {
             2 => crate::engine::inspect::Transfer::Pq,
             3 => crate::engine::inspect::Transfer::Hlg,
             _ => unreachable!("Invalid variant for Transfer: {}", inner),
+        };
+    }
+}
+
+impl SseDecode for crate::api::metadata::Transplanted {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_bytes = <Vec<u8>>::sse_decode(deserializer);
+        let mut var_dropped = <Vec<crate::engine::metadata::MetaKind>>::sse_decode(deserializer);
+        return crate::api::metadata::Transplanted {
+            bytes: var_bytes,
+            dropped: var_dropped,
         };
     }
 }
@@ -1418,6 +1458,29 @@ impl flutter_rust_bridge::IntoIntoDart<crate::engine::format::ImageFormat>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::engine::metadata::MetaKind {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::Exif => 0.into_dart(),
+            Self::Xmp => 1.into_dart(),
+            Self::Icc => 2.into_dart(),
+            Self::Iptc => 3.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::engine::metadata::MetaKind
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::engine::metadata::MetaKind>
+    for crate::engine::metadata::MetaKind
+{
+    fn into_into_dart(self) -> crate::engine::metadata::MetaKind {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::metadata::MetadataSummary {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -1550,6 +1613,27 @@ impl flutter_rust_bridge::IntoIntoDart<crate::engine::inspect::Transfer>
     for crate::engine::inspect::Transfer
 {
     fn into_into_dart(self) -> crate::engine::inspect::Transfer {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::metadata::Transplanted {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.bytes.into_into_dart().into_dart(),
+            self.dropped.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::metadata::Transplanted
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::metadata::Transplanted>
+    for crate::api::metadata::Transplanted
+{
+    fn into_into_dart(self) -> crate::api::metadata::Transplanted {
         self
     }
 }
@@ -1714,6 +1798,16 @@ impl SseEncode for crate::engine::format::ImageFormat {
     }
 }
 
+impl SseEncode for Vec<crate::engine::metadata::MetaKind> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::engine::metadata::MetaKind>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<f32> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -1751,6 +1845,24 @@ impl SseEncode for Vec<crate::api::region::RegionTile> {
         for item in self {
             <crate::api::region::RegionTile>::sse_encode(item, serializer);
         }
+    }
+}
+
+impl SseEncode for crate::engine::metadata::MetaKind {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::engine::metadata::MetaKind::Exif => 0,
+                crate::engine::metadata::MetaKind::Xmp => 1,
+                crate::engine::metadata::MetaKind::Icc => 2,
+                crate::engine::metadata::MetaKind::Iptc => 3,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
     }
 }
 
@@ -1845,6 +1957,14 @@ impl SseEncode for crate::engine::inspect::Transfer {
             },
             serializer,
         );
+    }
+}
+
+impl SseEncode for crate::api::metadata::Transplanted {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <Vec<u8>>::sse_encode(self.bytes, serializer);
+        <Vec<crate::engine::metadata::MetaKind>>::sse_encode(self.dropped, serializer);
     }
 }
 

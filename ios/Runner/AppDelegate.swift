@@ -331,7 +331,9 @@ private enum MetadataStripper {
 /// [keepOriginalTime]: when false, the in-file capture date is removed so a
 /// re-dated copy isn't stamped with the original time (time is its own toggle).
 /// [targetDepth]: 0 = match the source; 8 = re-encode the base at 8-bit (colour
-/// precision only — does NOT drop HDR). Higher-than-source is treated as match.
+/// precision only — does NOT drop HDR); 10 = a 10-bit HEIC even from an 8-bit
+/// source, the user's choice (IMG-23): ImageIO writes the depth of the image
+/// it is given, so that image is drawn at 16 bits first.
 ///
 /// Returns nil if the source can't be decoded or the format isn't writable on
 /// this OS (e.g. a device with no HEVC encoder) — the Dart side then falls back.
@@ -365,6 +367,18 @@ private enum ImageEncoderNative {
     // regardless, so an 8-bit photo can still be HDR.
     let force8Bit = targetDepth == 8 && image.bitsPerComponent > 8
     if force8Bit, let flat = Self.redraw8Bit(image) { image = flat }
+    // ImageIO keeps the depth of what it is given: an 8-bit image made a
+    // 10-bit request an 8-bit HEIC (M-08). Drawn at 16 bits, it writes 10
+    // (macOS 15.7.9, M-08 step 4). Costs 8 bytes a pixel while it encodes.
+    let force10Bit = targetDepth == 10 && format.lowercased() == "heic"
+      && image.bitsPerComponent <= 8
+    if force10Bit {
+      guard let deep = Self.redraw16Bit(image) else {
+        NSLog("hayn/encode: 16-bit redraw failed")
+        return nil
+      }
+      image = deep
+    }
 
     let out = NSMutableData()
     guard let dest = CGImageDestinationCreateWithData(
@@ -411,7 +425,7 @@ private enum ImageEncoderNative {
     let result = out as Data
     if result.isEmpty { return nil }
     NSLog("hayn/encode: \(format) q\(quality) keepMeta:\(keepMetadata) "
-      + "keepTime:\(keepOriginalTime) 8bit:\(force8Bit) "
+      + "keepTime:\(keepOriginalTime) 8bit:\(force8Bit) 10bit:\(force10Bit) "
       + "\(data.count) → \(result.count)")
     return result
   }
@@ -454,6 +468,28 @@ private enum ImageEncoderNative {
       tiff.removeValue(forKey: kCGImagePropertyTIFFDateTime)
       props[kCGImagePropertyTIFFDictionary] = tiff
     }
+  }
+
+  /// Redraw an 8-bit image into a 16-bit-per-component bitmap in its own
+  /// colour space (a P3 photo stays P3), keeping an alpha channel if it has
+  /// one, so ImageIO writes the HEIC at 10 bits.
+  static func redraw16Bit(_ image: CGImage) -> CGImage? {
+    let w = image.width, h = image.height
+    guard let space = image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)
+    else { return nil }
+    let a = image.alphaInfo
+    let hasAlpha = !(a == .none || a == .noneSkipFirst || a == .noneSkipLast)
+    // 64 bpp, 16 bpc: one of Quartz's supported RGB formats.
+    let bitmap = hasAlpha
+      ? CGImageAlphaInfo.premultipliedLast.rawValue
+      : CGImageAlphaInfo.noneSkipLast.rawValue
+    guard let ctx = CGContext(
+      data: nil, width: w, height: h, bitsPerComponent: 16,
+      bytesPerRow: 0, space: space, bitmapInfo: bitmap) else {
+      return nil
+    }
+    ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+    return ctx.makeImage()
   }
 
   /// Redraw a (possibly 10/16-bit) image into a standard 8-bit RGB bitmap,

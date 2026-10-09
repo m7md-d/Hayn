@@ -5,6 +5,7 @@ import '../../app/theme/app_theme_extension.dart';
 import '../../app/theme/design_tokens.dart';
 import '../../core/capabilities/format_capabilities.dart';
 import '../../features/image_ops/data/native_avif_encoder.dart';
+import '../../features/image_ops/domain/image_format_policy.dart';
 import '../../features/settings/providers/preferences_providers.dart';
 import 'controls.dart';
 import 'sheets.dart';
@@ -156,11 +157,18 @@ class HaynAdvancedSettingsCard extends ConsumerWidget {
     return effective == DefaultFormat.heic || effective == DefaultFormat.avif;
   }
 
+  /// The depth shown, as it is encoded: a 10 the format does not offer is 8.
+  int _depth(FormatCapabilities caps) => ImageFormatPolicy.depthFor(
+        bitDepth!,
+        format == DefaultFormat.auto ? _auto(caps) : format,
+        caps,
+      );
+
   /// 10 bits for AVIF always (DarkLib), for HEIC where the encoder writes
   /// it (IMG-23).
   bool _offersTenBit(FormatCapabilities caps) {
     final effective = format == DefaultFormat.auto ? _auto(caps) : format;
-    return effective != DefaultFormat.heic || caps.heicTenBit;
+    return ImageFormatPolicy.offersTenBit(effective, caps);
   }
 
   @override
@@ -262,7 +270,7 @@ class HaynAdvancedSettingsCard extends ConsumerWidget {
                 style: theme.textTheme.bodySmall?.copyWith(color: hc.text2)),
             const SizedBox(height: AppSpacing.s2),
             HaynSegmentedPill<int>(
-              value: bitDepth!,
+              value: _depth(caps),
               onChanged: onBitDepthChanged!,
               items: [
                 HaynSegmentItem(value: 0, label: l.compressBitDepthMatch),
@@ -272,8 +280,8 @@ class HaynAdvancedSettingsCard extends ConsumerWidget {
               ],
             ),
             if (sourceBitDepth != null &&
-                bitDepth! > 0 &&
-                bitDepth! > sourceBitDepth!) ...[
+                _depth(caps) > 0 &&
+                _depth(caps) > sourceBitDepth!) ...[
               const SizedBox(height: AppSpacing.s2),
               Row(
                 children: [

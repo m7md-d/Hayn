@@ -13,6 +13,8 @@ import 'package:integration_test/integration_test.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:image/image.dart' as img;
+import 'package:hayn/features/image_ops/domain/image_format_policy.dart';
+import 'package:hayn/core/capabilities/format_capabilities.dart';
 import 'package:hayn/app/app.dart';
 import 'package:hayn/app/l10n/app_localizations.dart';
 import 'package:hayn/app/theme/app_theme.dart';
@@ -1580,22 +1582,49 @@ void main() {
     expect(facts.bitDepth, 10);
     NativeImageEncoder.simulateHeicTenBit(false);
     try {
-      for (final depth in [10, 0]) {
-        final result = await ImageEncoder.encode(
+      // "Match" of a deep source: 8, recorded.
+      final matched = await ImageEncoder.encode(
+        source: source,
+        target: DefaultFormat.heic,
+        quality: 90,
+        facts: facts,
+        keepMetadata: false,
+      );
+      expect((await DarkLibCore.inspect(matched.bytes))!.bitDepth, 8);
+      expect(
+        matched.diagnostics.map((d) => d.code),
+        contains(MediaDiagnosticCode.depthReduced),
+      );
+      // An explicit 10 binds (IMG-23): the screen never sends it here
+      // (ImageFormatPolicy.depthFor), and the encoder does not pass an 8 off
+      // as one.
+      ImageEncodingFailure? refused;
+      try {
+        await ImageEncoder.encode(
           source: source,
           target: DefaultFormat.heic,
           quality: 90,
           facts: facts,
           keepMetadata: false,
-          bitDepth: depth,
+          bitDepth: 10,
         );
-        expect((await DarkLibCore.inspect(result.bytes))!.bitDepth, 8);
-        expect(
-          result.diagnostics.map((d) => d.code),
-          contains(MediaDiagnosticCode.depthReduced),
-          reason: 'depth $depth',
-        );
+      } on ImageEncodingFailure catch (e) {
+        refused = e;
       }
+      expect(
+        refused?.diagnostics.map((d) => d.code),
+        contains(MediaDiagnosticCode.depthMismatch),
+      );
+      const withoutMain10 = FormatCapabilities(
+        supportsHeic: false,
+        supportsHeif: true,
+        supportsAvifHardware: false,
+        supportsWebp: true,
+      );
+      expect(
+        ImageFormatPolicy.depthFor(10, DefaultFormat.heic, withoutMain10),
+        8,
+      );
     } finally {
       NativeImageEncoder.resetHeicTenBit();
     }

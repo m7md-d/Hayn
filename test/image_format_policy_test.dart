@@ -170,4 +170,36 @@ void main() {
       }
     });
   });
+
+  // IMG-23: the encoder holds an output to the depth it is given, so the
+  // screen never gives one the format cannot write. A 10 picked for AVIF,
+  // then HEIC on a device without Main10, was sent as 10 while the picker
+  // showed none: an 8-bit HEIC in silence before, a failed encode after the
+  // depth check.
+  group('ImageFormatPolicy.depthFor', () {
+    const noTen = FormatCapabilities(
+      supportsHeic: false,
+      supportsHeif: true,
+      supportsAvifHardware: false,
+      supportsWebp: true,
+    );
+    const ten = FormatCapabilities(
+      supportsHeic: false,
+      supportsHeif: true,
+      supportsAvifHardware: false,
+      supportsWebp: true,
+      heicTenBit: true,
+    );
+    test('the choice, within what the format offers', () {
+      expect(ImageFormatPolicy.depthFor(10, DefaultFormat.heic, noTen), 8);
+      expect(ImageFormatPolicy.depthFor(10, DefaultFormat.heic, ten), 10);
+      expect(ImageFormatPolicy.depthFor(10, DefaultFormat.avif, noTen), 10);
+      for (final chosen in [0, 8]) {
+        expect(
+          ImageFormatPolicy.depthFor(chosen, DefaultFormat.heic, noTen),
+          chosen,
+        );
+      }
+    });
+  });
 }

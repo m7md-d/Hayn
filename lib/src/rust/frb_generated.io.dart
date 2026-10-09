@@ -16,6 +16,7 @@ import 'engine/codec.dart';
 import 'engine/codec/heif_alpha.dart';
 import 'engine/format.dart';
 import 'engine/inspect.dart';
+import 'engine/metadata.dart';
 import 'engine/verify.dart';
 import 'frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated_io.dart';
@@ -90,6 +91,9 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   ImageFormat dco_decode_image_format(dynamic raw);
 
   @protected
+  List<MetaKind> dco_decode_list_meta_kind(dynamic raw);
+
+  @protected
   Float32List dco_decode_list_prim_f_32_strict(dynamic raw);
 
   @protected
@@ -106,6 +110,9 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
 
   @protected
   List<RegionTile> dco_decode_list_region_tile(dynamic raw);
+
+  @protected
+  MetaKind dco_decode_meta_kind(dynamic raw);
 
   @protected
   MetadataSummary dco_decode_metadata_summary(dynamic raw);
@@ -130,6 +137,9 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
 
   @protected
   Transfer dco_decode_transfer(dynamic raw);
+
+  @protected
+  Transplanted dco_decode_transplanted(dynamic raw);
 
   @protected
   int dco_decode_u_16(dynamic raw);
@@ -206,6 +216,9 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   ImageFormat sse_decode_image_format(SseDeserializer deserializer);
 
   @protected
+  List<MetaKind> sse_decode_list_meta_kind(SseDeserializer deserializer);
+
+  @protected
   Float32List sse_decode_list_prim_f_32_strict(SseDeserializer deserializer);
 
   @protected
@@ -222,6 +235,9 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
 
   @protected
   List<RegionTile> sse_decode_list_region_tile(SseDeserializer deserializer);
+
+  @protected
+  MetaKind sse_decode_meta_kind(SseDeserializer deserializer);
 
   @protected
   MetadataSummary sse_decode_metadata_summary(SseDeserializer deserializer);
@@ -250,6 +266,9 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
 
   @protected
   Transfer sse_decode_transfer(SseDeserializer deserializer);
+
+  @protected
+  Transplanted sse_decode_transplanted(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_16(SseDeserializer deserializer);
@@ -333,6 +352,9 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   void sse_encode_image_format(ImageFormat self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_meta_kind(List<MetaKind> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_prim_f_32_strict(
     Float32List self,
     SseSerializer serializer,
@@ -366,6 +388,9 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
   );
 
   @protected
+  void sse_encode_meta_kind(MetaKind self, SseSerializer serializer);
+
+  @protected
   void sse_encode_metadata_summary(
     MetadataSummary self,
     SseSerializer serializer,
@@ -397,6 +422,9 @@ abstract class DarkLibApiImplPlatform extends BaseApiImpl<DarkLibWire> {
 
   @protected
   void sse_encode_transfer(Transfer self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_transplanted(Transplanted self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_16(int self, SseSerializer serializer);

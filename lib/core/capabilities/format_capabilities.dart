@@ -59,12 +59,13 @@ class FormatCapabilities {
       return const FormatCapabilities(
         supportsHeic: true,
         supportsHeif: false,
-        // FALSE on purpose ("اكشف لا تفترض"): our AVIF encoder (flutter_avif)
-        // is SOFTWARE libaom — it never touches the device's AV1 hardware even
-        // on A17 Pro/iPhone 16. Claiming hardware made `auto` route every photo
-        // (and every crop) to a slow software AVIF encode. With this false,
-        // auto → HEIC (hardware HEVC, fast, correctly oriented), and AVIF stays
-        // a deliberate, software-warned choice in the picker.
+        // FALSE on purpose ("اكشف لا تفترض"): our AVIF encoder is SOFTWARE
+        // (DarkLib's rav1e; flutter_avif's libaom as a transitional fallback)
+        // — it never touches the device's AV1 hardware even on A17 Pro/iPhone
+        // 16. Claiming hardware made `auto` route every photo (and every crop)
+        // to a slow software AVIF encode. With this false, auto → HEIC
+        // (hardware HEVC, fast, correctly oriented), and AVIF stays a
+        // deliberate choice in the picker.
         supportsAvifHardware: false,
         supportsWebp: true,
         heicKeepsAlpha: true,
@@ -72,10 +73,12 @@ class FormatCapabilities {
       );
     }
     if (Platform.isAndroid) {
-      // Android 9 (API 28)+ writes HEIF via HeifWriter (hardware HEVC).
-      // AVIF is left FALSE for the same reason as iOS: our encoder is software
-      // libaom, not the SoC's AV1 block, so auto should prefer the fast
-      // hardware HEIF path and treat AVIF as a deliberate, slower choice.
+      // Android 9 (API 28)+ writes HEIF through MediaCodec's HEVC in bands
+      // (HeicTiles); below 9 there is none and a HEIF request fails (DEV-02).
+      // AVIF is left FALSE for the same reason as iOS: the software encoder
+      // is the default, and the AV1 hardware path (AvifHwEncoder) only
+      // speeds up an explicit AVIF choice, so auto prefers the fast hardware
+      // HEIF path and treats AVIF as a deliberate, slower choice.
       return FormatCapabilities(
         supportsHeic: false,
         supportsHeif: true,

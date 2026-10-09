@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/services.dart' show MethodCall;
 import 'package:flutter/widgets.dart'
     show
@@ -243,9 +244,31 @@ class _LifecycleObserver extends WidgetsBindingObserver {
   }
 }
 
+/// The copies saved by tasks that ended between [prev] and [next]: completed,
+/// and also failed or cancelled, since a batch that stopped partway kept the
+/// copies it saved (RV-07). Each task once, when it reaches its end.
+List<String> freshTaskOutputs(List<TaskState> prev, List<TaskState> next) {
+  bool ended(TaskStatus s) =>
+      s == TaskStatus.completed ||
+      s == TaskStatus.failed ||
+      s == TaskStatus.cancelled;
+  final endedBefore = <String>{
+    for (final t in prev)
+      if (ended(t.status)) t.task.id,
+  };
+  return [
+    for (final t in next)
+      if (ended(t.status) && !endedBefore.contains(t.task.id))
+        ...t.task.outputAssetIds,
+  ];
+}
+
 class LibraryNotifier extends Notifier<LibraryState> {
   AssetPathEntity? _currentPath;
   bool _indexReady = false;
+  // Each load of the grid takes the next number; one that ends after a newer
+  // one started (another filter, sort or album) publishes nothing (RV-05).
+  int _loadGen = 0;
   bool _syncing = false;
   bool _loadingMore = false;
   Timer? _changeDebounce;
@@ -262,20 +285,10 @@ class LibraryNotifier extends Notifier<LibraryState> {
   @override
   LibraryState build() {
     // Fold fresh task outputs (compressed/duplicated copies) into the library
-    // the moment a task completes — immediate + cheap (indexes just those ids),
+    // the moment a task ends — immediate + cheap (indexes just those ids),
     // so new assets appear without waiting for the debounced device-change sync.
     ref.listen<List<TaskState>>(taskRunnerProvider, (prev, next) {
-      final doneBefore = <String>{
-        for (final t in (prev ?? const <TaskState>[]))
-          if (t.status == TaskStatus.completed) t.task.id,
-      };
-      final fresh = <String>[];
-      for (final t in next) {
-        if (t.status == TaskStatus.completed &&
-            !doneBefore.contains(t.task.id)) {
-          fresh.addAll(t.task.outputAssetIds);
-        }
-      }
+      final fresh = freshTaskOutputs(prev ?? const [], next);
       if (fresh.isNotEmpty) unawaited(ingestNewAssets(fresh));
     });
     return const LibraryState();
@@ -385,15 +398,18 @@ class LibraryNotifier extends Notifier<LibraryState> {
     try {
       // Index-backed mode loads the whole spine up front (hasMore == false), so
       // pagination only runs on the album/legacy photo_manager path.
-      if (_currentPath == null) return;
+      final path = _currentPath;
+      if (path == null) return;
+      final gen = _loadGen;
       final start = state.assets.length;
       final end = min(state.totalCount, start + _pageSize);
-      final more =
-          await _currentPath!.getAssetListRange(start: start, end: end);
+      final more = await path.getAssetListRange(start: start, end: end);
       // Badge sizes come from the index (every asset's size is there by id),
       // never asset.file. copyWith re-derives displayAssets from the now-seeded
       // sizes, so a client-side size sort stays correct as we page deeper.
       await _seedSizesFromIndex([for (final a in more) a.id]);
+      // Another album or filter was loaded meanwhile: not its page.
+      if (gen != _loadGen) return;
       state = state.copyWith(
         assets: [...state.assets, ...more],
         hasMore: end < state.totalCount,
@@ -529,6 +545,10 @@ class LibraryNotifier extends Notifier<LibraryState> {
 
   // ── Private ────────────────────────────────────────────────────
 
+  /// The index is built, as after the first sync: the grid reads it.
+  @visibleForTesting
+  void markIndexReady() => _indexReady = true;
+
   /// Routes a fresh load to the index (whole-library, no asset.file) or, inside
   /// an album / before the index is built, the legacy photo_manager path.
   Future<void> _reload() async {
@@ -584,6 +604,7 @@ class LibraryNotifier extends Notifier<LibraryState> {
   /// or bloats. Eagerly resolves byte sizes for the first few screens so top
   /// badges appear at once; the background pass fills the rest.
   Future<void> _loadIndexSpine() async {
+    final gen = ++_loadGen;
     final db = ref.read(mediaIndexDatabaseProvider);
     final q = queryParamsFor(state.filter, state.sortFilter);
 
@@ -637,6 +658,7 @@ class LibraryNotifier extends Notifier<LibraryState> {
         if (e.sizeBytes != null) e.id: e.sizeBytes!,
     });
 
+    if (gen != _loadGen) return; // a newer query's load publishes
     state = state.copyWith(
       // The spine is the whole library; raw entities are materialised per-cell.
       entries: entries,
@@ -649,6 +671,7 @@ class LibraryNotifier extends Notifier<LibraryState> {
   }
 
   Future<void> _loadAlbumsAndAssets() async {
+    final gen = ++_loadGen;
     try {
       final type = _requestType(state.filter);
       final filterOption = _filterOptionFor(state.sortFilter);
@@ -659,6 +682,7 @@ class LibraryNotifier extends Notifier<LibraryState> {
         filterOption: filterOption,
       );
 
+      if (gen != _loadGen) return; // a newer query's load publishes
       if (paths.isEmpty) {
         state = state.copyWith(
           albums: [],
@@ -679,7 +703,6 @@ class LibraryNotifier extends Notifier<LibraryState> {
       } else {
         currentPath = paths.first;
       }
-      _currentPath = currentPath;
 
       final total = await currentPath.assetCountAsync;
       final end = min(total, _pageSize);
@@ -690,6 +713,8 @@ class LibraryNotifier extends Notifier<LibraryState> {
       // list — so a client-side size sort here is correct, and no asset.file.
       await _seedSizesFromIndex([for (final a in raw) a.id]);
 
+      if (gen != _loadGen) return;
+      _currentPath = currentPath;
       state = state.copyWith(
         albums: paths,
         assets: raw,
@@ -698,7 +723,7 @@ class LibraryNotifier extends Notifier<LibraryState> {
         isLoading: false,
       );
     } catch (_) {
-      state = state.copyWith(isLoading: false);
+      if (gen == _loadGen) state = state.copyWith(isLoading: false);
     }
   }
 

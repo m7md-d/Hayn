@@ -113,6 +113,7 @@ guarantee; see the stabilization plan.
 ```rust
 pub fn extract(b: &[u8]) -> Canonical;       // never fails; absent fields = None
 pub fn inject(encoded: &[u8], meta: &Canonical) -> Vec<u8>;
+pub fn inject_reporting(encoded: &[u8], meta: &Canonical) -> Injected; // { bytes, dropped: Vec<MetaKind> }
 ```
 `extract` reads the canonical model; `inject` writes EXIF/XMP/ICC back into already
 -encoded bytes (orientation normalised to 1). AVIF/HEIF: items stored in the file
@@ -120,13 +121,21 @@ or in `idat` (a grid descriptor, as Android's `MediaMuxer` writes it, `mdat`
 first or last); the ICC goes to the primary and, for a grid, to every tile —
 Android reads a grid's colour from its first tile. Pair them around a re-encode to
 carry metadata across a transcode. `inject` returns the input unchanged if it
-can't safely add the items (current verify-or-bail behavior). In JPEG and PNG
+can't safely add the items (verify-or-bail). In JPEG and PNG
 each kind `meta` carries replaces the target's own (a JPEG from Android's
 `Bitmap.compress` already names its bitmap's profile; two would make readers
 drop both, Hayn IMG-24); a kind `meta` lacks stays, and a leading JFIF stays
-first. WebP rebuilds its metadata chunks from `meta`. The current return
-type does not report that degradation; callers cannot treat this as proof of
-metadata preservation. Explicit result diagnostics are planned.
+first. In JPEG an ICC profile goes in numbered APP2 chunks (up to 255 of
+64 KB), IPTC in APP13, and EXIF or XMP past one segment's 64 KB is left out
+(Extended XMP is not written), the target's own of that kind staying.
+`extract` joins ICC chunks by their numbers; a gap, a repeat or a count that
+differs is no profile. WebP rebuilds its metadata chunks from `meta`.
+`inject_reporting` says which kinds `meta` held that the target could not
+take — a segment too large, IPTC outside JPEG, a layout outside the
+supported ones — and `inject` is its bytes (Hayn RV-04). That is what was
+written, not proof that it was read the same way: an independent reader
+still decides preservation. FFI: `api::metadata::transplant_metadata`
+returns `Transplanted { bytes, dropped }`.
 
 ```rust
 let meta  = metadata::extract(src);

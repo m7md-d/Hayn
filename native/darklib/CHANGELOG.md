@@ -113,6 +113,15 @@ the engine API may change between minor versions.
   `docs/` set.
 
 ### Changed
+- **Metadata transplant reports what it could not carry** (Hayn RV-04):
+  `metadata::inject_reporting` → `Injected { bytes, dropped: Vec<MetaKind> }`,
+  and `api::metadata::transplant_metadata` returns `Transplanted { bytes,
+  dropped }` (FFI change). In JPEG an ICC profile past one segment goes in
+  numbered chunks (it was skipped while the target's own was removed, so the
+  output named no profile), IPTC goes into APP13, and EXIF or XMP past 64 KB
+  is reported and leaves the target's own. `extract` joins ICC chunks by
+  their numbers and takes a gap, a repeat or a disagreeing count as no
+  profile. `isobmff::try_inject` returns `None` outside the supported subset.
 - **`metadata::inject` replaces in JPEG and PNG** (Hayn IMG-24): each kind it
   carries (EXIF, XMP, ICC) replaces the target's own instead of being added
   beside it; a kind it lacks stays; JFIF stays the first segment. Before, a

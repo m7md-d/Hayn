@@ -8,6 +8,7 @@ import 'package:hayn/features/image_ops/data/native_image_encoder.dart';
 import 'package:hayn/features/image_ops/data/platform_pixels.dart';
 import 'package:hayn/features/image_ops/data/source_facts.dart';
 import 'package:hayn/features/settings/providers/preferences_providers.dart';
+import 'package:hayn/src/rust/api/metadata.dart';
 import 'package:hayn/src/rust/frb_generated.dart';
 import 'package:image/image.dart' as img;
 
@@ -46,11 +47,12 @@ class _Api extends Fake implements DarkLibApi {
       );
 
   @override
-  Future<Uint8List> crateApiMetadataTransplantMetadata({
+  Future<Transplanted> crateApiMetadataTransplantMetadata({
     required List<int> source,
     required List<int> target,
-  }) async =>
-      carries ? Uint8List.fromList(target) : Future.error('malformed: test');
+  }) async => carries
+      ? Transplanted(bytes: Uint8List.fromList(target), dropped: const [])
+      : Future.error('malformed: test');
 
   /// A Display P3-like profile space: the display call passes it on, since
   /// Android's decoder ignores a HEIC's profile (IMG-21).

@@ -9,6 +9,7 @@ import 'package:photo_manager/photo_manager.dart';
 
 import '../../../core/capabilities/format_capabilities.dart';
 import '../../../core/diagnostics/media_diagnostics.dart';
+import '../../../core/isolates/heavy_work.dart';
 import '../../../core/isolates/media_task.dart';
 import '../../../core/isolates/task_progress.dart';
 import '../../settings/providers/preferences_providers.dart';
@@ -63,6 +64,7 @@ class ImageCropTask extends MediaTask {
   String? get sourceAssetId => assetId;
 
   bool _cancelled = false;
+  HeavyWorkTicket? _ticket;
 
   @override
   Stream<TaskEvent> run() async* {
@@ -75,12 +77,119 @@ class ImageCropTask extends MediaTask {
     }
     if (_cancelled) return;
 
+    final EncodedImage? encoded;
+    try {
+      encoded = await crop(
+        src,
+        rotationQuarters: rotationQuarters,
+        flipH: flipH,
+        flipV: flipV,
+        cropFraction: cropFraction,
+        quality: quality,
+        caps: _caps,
+        ticket: _ticket = HeavyWorkTicket(),
+        cancelled: () => _cancelled,
+      );
+    } on HeavyWorkWithdrawn {
+      return; // cancelled while it waited its turn
+    }
+    if (encoded == null || _cancelled) return;
+
+    final saved = await GallerySaver.saveImage(
+      encoded.bytes,
+      filename: await outputFilename(entity, encoded.extension, suffix: 'crop'),
+      creationDate: entity.createDateTime,
+      latitude: entity.latitude,
+      longitude: entity.longitude,
+    );
+    if (saved == null) throw StateError('Crop save failed');
+    outputAssetIds.add(saved.id);
+    if (_cancelled) return;
+    yield const TaskProgress(progress: 1, phase: '1/1');
+    yield const TaskSucceeded();
+  }
+
+  /// [src] (the original's bytes) rotated, flipped, cropped and encoded by
+  /// the Auto policy: what [run] saves. Null when [cancelled] turned true.
+  ///
+  /// Every stage runs in one [HeavyWork] admission (RV-02): the platform
+  /// bake, the full decode to RGBA, the isolate's copy and transform, then
+  /// the encode, which runs within it rather than queueing again. Before,
+  /// only the encode waited its turn, so two crops of large photos decoded
+  /// side by side with no ceiling.
+  static Future<EncodedImage?> crop(
+    Uint8List src, {
+    required int rotationQuarters,
+    required bool flipH,
+    required bool flipV,
+    required Rect cropFraction,
+    required int quality,
+    required FormatCapabilities caps,
+    HeavyWorkTicket? ticket,
+    bool Function()? cancelled,
+  }) async {
+    bool stop() => cancelled?.call() ?? false;
+    final facts = await SourceInspector.inspect(src);
+    final held = ticket ?? HeavyWorkTicket();
+    try {
+      return await HeavyWork.instance.run(
+        estimateBytes: memoryEstimate(facts, src.length),
+        ticket: held,
+        body: () => _crop(
+          src,
+          facts,
+          held,
+          rotationQuarters: rotationQuarters,
+          flipH: flipH,
+          flipV: flipV,
+          cropFraction: cropFraction,
+          quality: quality,
+          caps: caps,
+          stop: stop,
+        ),
+      );
+    } on InsufficientMemory {
+      MediaDiagnostics.record(
+        MediaBackend.imageEncoder,
+        MediaOperation.encode,
+        MediaDiagnosticCode.insufficientMemory,
+      );
+      rethrow;
+    }
+  }
+
+  /// Peak memory of [crop] for a source with [facts], for [HeavyWork]:
+  /// bytes per pixel above what the app held before, measured on a 195 MP
+  /// JPEG turned a quarter on the Galaxy S25 Edge (20.7, +3853 MB, 2026-10-09,
+  /// docs/18-PERFORMANCE.md) and rounded up, plus twice the source bytes. The
+  /// RGBA decode, its copy into the isolate and package:image's rotated and
+  /// cropped copies are all whole. Unknown size: 0, so only the count limits
+  /// it.
+  static int memoryEstimate(SourceFacts facts, int sourceBytes) {
+    final w = facts.width, h = facts.height;
+    if (w == null || h == null) return 0;
+    return w * h * _bytesPerPixel + 2 * sourceBytes;
+  }
+
+  static const _bytesPerPixel = 21;
+
+  static Future<EncodedImage?> _crop(
+    Uint8List src,
+    SourceFacts facts,
+    HeavyWorkTicket admission, {
+    required int rotationQuarters,
+    required bool flipH,
+    required bool flipV,
+    required Rect cropFraction,
+    required int quality,
+    required FormatCapabilities caps,
+    required bool Function() stop,
+  }) async {
     // The crop is 8-bit SDR. For an HDR original, the platform's SDR
     // rendition is the input (upright, like the preview). PQ/HLG without it is
     // refused; a gain map without it decodes its SDR base below. On Android,
     // AVIF/HEIC always take the platform bridge: Flutter misreads their 10-bit
     // pixels (IMG-13). Not surfaced to the user.
-    final facts = await SourceInspector.inspect(src);
     var pixels = src;
     // On Android every source takes the bridge for its stored values, and
     // the crop carries the source's profile, so a P3 photo stays P3. Flutter
@@ -132,7 +241,7 @@ class ImageCropTask extends MediaTask {
       }
       pixels = baked ?? src;
     }
-    if (_cancelled) return;
+    if (stop()) return null;
 
     // Decode through the PLATFORM ENGINE (ui.instantiateImageCodec), which on
     // iOS natively decodes HEIC/HEIF (and JPEG/PNG/WebP) — package:image can't.
@@ -141,7 +250,7 @@ class ImageCropTask extends MediaTask {
     // raw RGBA + dimensions and hand those to the isolate for the pixel work.
     final decoded = await _decodeRgba(pixels);
     if (decoded == null) throw StateError('Crop failed to decode');
-    if (_cancelled) return;
+    if (stop()) return null;
 
     // Pixel transform off the main isolate (package:image is pure Dart).
     // Copy fields into locals so the closure captures only sendable values
@@ -160,14 +269,14 @@ class ImageCropTask extends MediaTask {
       () => transformRgba(rgba, w, h, rq, fh, fv, fl, ft, fw, fhgt),
     );
     if (cropped == null) throw StateError('Crop failed to encode');
-    if (_cancelled) return;
+    if (stop()) return null;
     // The stored values need the source's profile to mean what they did;
     // without it a P3 crop would read as sRGB.
-    var named = cropped;
+    var named = cropped.png;
     if (rawValues) {
       final carried = await ImageEncoder.carryMetadata(
         src,
-        cropped,
+        named,
         keepMetadata: false,
       );
       if (carried == null) {
@@ -180,42 +289,39 @@ class ImageCropTask extends MediaTask {
       }
       named = carried;
     }
-    yield const TaskProgress(progress: 0.6, phase: 'encoding');
 
     final hasAlpha = await ImageProbe.hasAlpha(named);
+    // The crop's own size: a crop of a giant photo may still be giant
+    // (RUN-01), and the encode's plan needs to know.
     final target = ImageFormatPolicy.resolve(
       choice: DefaultFormat.auto,
       hasAlpha: hasAlpha,
-      caps: _caps,
+      caps: caps,
+      giant: ImageFormatPolicy.isGiant(
+        width: cropped.width,
+        height: cropped.height,
+      ),
     );
-    final encoded = await ImageEncoder.encode(
+    return ImageEncoder.encode(
       source: named,
       target: target.format,
       allowFormatFallback:
           true, // This task explicitly uses Auto format policy.
       quality: quality,
-      facts: SourceFacts.sdr(alpha: hasAlpha),
+      facts: SourceFacts.sdr(
+        alpha: hasAlpha,
+        width: cropped.width,
+        height: cropped.height,
+      ),
       keepMetadata: false, // cropped → original EXIF dims are stale
+      ticket: admission,
+      withinAdmission: true,
     );
-    if (_cancelled) return;
-
-    final saved = await GallerySaver.saveImage(
-      encoded.bytes,
-      filename: await outputFilename(entity, encoded.extension, suffix: 'crop'),
-      creationDate: entity.createDateTime,
-      latitude: entity.latitude,
-      longitude: entity.longitude,
-    );
-    if (saved == null) throw StateError('Crop save failed');
-    outputAssetIds.add(saved.id);
-    if (_cancelled) return;
-    yield const TaskProgress(progress: 1, phase: '1/1');
-    yield const TaskSucceeded();
   }
 
   /// Decode [src] to raw RGBA + dimensions via the platform engine (handles
   /// HEIC on iOS, with EXIF orientation already applied). Null on failure.
-  Future<({Uint8List rgba, int width, int height})?> _decodeRgba(
+  static Future<({Uint8List rgba, int width, int height})?> _decodeRgba(
     Uint8List src,
   ) async {
     try {
@@ -235,7 +341,10 @@ class ImageCropTask extends MediaTask {
   }
 
   @override
-  Future<void> cancel() async => _cancelled = true;
+  Future<void> cancel() async {
+    _cancelled = true;
+    _ticket?.withdraw();
+  }
 
   @override
   Future<void> cleanup() async {}
@@ -243,9 +352,10 @@ class ImageCropTask extends MediaTask {
 
 /// Top-level so it can run in `Isolate.run`. Builds an image from raw RGBA
 /// (the engine already applied EXIF orientation — no baking) then rotate →
-/// flips (matching the editor's display order) → crop, returns lossless PNG.
-/// Exposed (not private) so it's unit-testable with synthetic raw pixels.
-Uint8List? transformRgba(
+/// flips (matching the editor's display order) → crop, returns lossless PNG
+/// and its size. Exposed (not private) so it's unit-testable with synthetic
+/// raw pixels.
+({Uint8List png, int width, int height})? transformRgba(
   Uint8List rgba,
   int width,
   int height,
@@ -288,5 +398,5 @@ Uint8List? transformRgba(
   final w = (fw * im.width).round().clamp(1, im.width - x);
   final h = (fh * im.height).round().clamp(1, im.height - y);
   im = img.copyCrop(im, x: x, y: y, width: w, height: h);
-  return img.encodePng(im);
+  return (png: img.encodePng(im), width: w, height: h);
 }

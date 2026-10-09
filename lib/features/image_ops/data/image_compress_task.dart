@@ -4,6 +4,7 @@ import 'package:photo_manager/photo_manager.dart';
 
 import '../../../core/capabilities/format_capabilities.dart';
 import '../../../core/diagnostics/media_diagnostics.dart';
+import '../../../core/isolates/heavy_work.dart';
 import '../../../core/isolates/media_task.dart';
 import '../../../core/isolates/task_progress.dart';
 import '../../settings/providers/preferences_providers.dart';
@@ -81,6 +82,9 @@ class ImageCompressTask extends MediaTask {
   int get itemCount => assetIds.length;
 
   bool _cancelled = false;
+  // The encode's place in the heavy-work gate: a cancel withdraws it if it
+  // has not started (RUN-02), instead of letting it run to be dropped.
+  HeavyWorkTicket? _ticket;
 
   @override
   Stream<TaskEvent> run() async* {
@@ -132,7 +136,10 @@ class ImageCompressTask extends MediaTask {
               keepMetadata: keepMetadata,
               keepOriginalTime: keepOriginalTime,
               bitDepth: bitDepth,
+              ticket: _ticket = HeavyWorkTicket(),
             );
+          } on HeavyWorkWithdrawn {
+            return; // cancelled while it waited its turn
           } catch (_) {
             MediaDiagnostics.record(
               MediaBackend.taskRunner,
@@ -210,6 +217,7 @@ class ImageCompressTask extends MediaTask {
   @override
   Future<void> cancel() async {
     _cancelled = true;
+    _ticket?.withdraw();
   }
 
   @override
